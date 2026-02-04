@@ -1,5 +1,5 @@
-#ifndef INCLUDE_GALOISRING_INVERSE_HPP_
-#define INCLUDE_GALOISRING_INVERSE_HPP_
+#ifndef GALOISRING_INVERSE_HPP_
+#define GALOISRING_INVERSE_HPP_
 
 #include <NTL/ZZ.h>
 #include <NTL/ZZ_p.h>
@@ -36,4 +36,4 @@ NTL::ZZ_pE Inv(NTL::ZZ_pE a, long s);
 // Call: ZZ_pE a_inv = Inv2(a, F, p, s, k);
 NTL::ZZ_pE Inv2(NTL::ZZ_pE a, NTL::ZZ_pX F, NTL::ZZ p, long s, long k);
 
-#endif  // INCLUDE_GALOISRING_INVERSE_HPP_
+#endif  // GALOISRING_INVERSE_HPP_

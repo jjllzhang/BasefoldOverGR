@@ -1,5 +1,5 @@
-#ifndef INCLUDE_GALOISRING_UTILS_HPP_
-#define INCLUDE_GALOISRING_UTILS_HPP_
+#ifndef GALOISRING_UTILS_HPP_
+#define GALOISRING_UTILS_HPP_
 
 #include <NTL/ZZ.h>
 #include <NTL/ZZX.h>
@@ -144,4 +144,4 @@ std::vector<std::vector<long>> splitVector(const std::vector<long> &input,
 // void interpolate_for_GR_generate_cache(ZZ_pEX& f, const vec_ZZ_pE& a, const
 // vec_ZZ_pE& b, ZZ p, long l, long s); void interpolate_for_GR_cache(ZZ_pEX& f,
 // const vec_ZZ_pE& a, const vec_ZZ_pE& b, ZZ p, long l, long s);
-#endif  // INCLUDE_GALOISRING_UTILS_HPP_
+#endif  // GALOISRING_UTILS_HPP_

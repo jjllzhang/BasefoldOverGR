@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <iostream>
+#include <string>
+#include <vector>
 
 using std::copy;
 using std::cout;
@@ -12,30 +14,28 @@ using std::string;
 using std::stringstream;
 using std::vector;
 
-using NTL::BuildIrred;
-using NTL::DivRem;
-using NTL::IsZero;
-using NTL::LogicError;
-using NTL::SetCoeff;
-using NTL::ZZ;
-using NTL::ZZ_p;
-using NTL::ZZ_pE;
-using NTL::ZZ_pEPush;
-using NTL::ZZ_pEX;
-using NTL::ZZ_pX;
-using NTL::vec_ZZ_pE;
 using NTL::add;
+using NTL::BuildIrred;
 using NTL::clear;
 using NTL::coeff;
 using NTL::conv;
 using NTL::deg;
+using NTL::DivRem;
 using NTL::interpolate;
+using NTL::IsZero;
+using NTL::LogicError;
 using NTL::mul;
 using NTL::power;
 using NTL::rep;
 using NTL::set;
+using NTL::SetCoeff;
 using NTL::sub;
 using NTL::to_ZZ_p;
+using NTL::vec_ZZ_pE;
+using NTL::ZZ;
+using NTL::ZZ_pE;
+using NTL::ZZ_pEX;
+using NTL::ZZ_pX;
 
 /*
     Returns all positive divisors of n (in ascending order).
@@ -118,7 +118,6 @@ void VeczzpE2Veclong(const vec_ZZ_pE &v1, vector<long> &m, long s) {
 string Veclong2String(const std::vector<long> &vec) {
   stringstream ss;
   for (size_t i = 0; i < vec.size(); ++i) {
-
     ss << vec[i];
   }
   return ss.str();
@@ -275,10 +274,9 @@ vector<long> SplitAndPadVector(const vector<long> &input, long segmentLength,
 
   long n = input.size() / numSegments;
 
-  for (size_t i = 0; i < numSegments; ++i) {
+  for (long i = 0; i < numSegments; ++i) {
     auto segmentStart = input.begin() + i * n;
-    auto segmentEnd =
-        (i + 1) * n <= input.size() ? segmentStart + n : input.end();
+    auto segmentEnd = segmentStart + n;
 
     vector<long> segment(segmentStart, segmentEnd);
     vector<long> paddedSegment = PadVectorToLength(segment, segmentLength);
@@ -294,14 +292,12 @@ vector<long> SplitAndPadVector(const vector<long> &input, long segmentLength,
    ZZ_p/ZZ_pE contexts are initialized. Usage: Long2ZZpEX(flat, poly, s);
 */
 void Long2ZZpEX(const vector<long> &result, ZZ_pEX &V, long s) {
-
   long index = 0;
 
   long n = result.size() / s;
   for (long j = 0; j < n; j++) {
     ZZ_pX polyRep;
     for (long k = 0; k < s; k++) {
-
       SetCoeff(polyRep, k, to_ZZ_p(result[index++]));
     }
     ZZ_pE a;
@@ -317,13 +313,11 @@ void Long2ZZpEX(const vector<long> &result, ZZ_pEX &V, long s) {
     Usage: Long2ZZpEX2(flat, poly, s, n);
 */
 void Long2ZZpEX2(const vector<long> &result, ZZ_pEX &V, long s, long n) {
-
   long index = 0;
 
   for (long j = 0; j < n; j++) {
     ZZ_pX polyRep;
     for (long k = 0; k < s; k++) {
-
       SetCoeff(polyRep, k, to_ZZ_p(result[index++]));
     }
     ZZ_pE a;
@@ -402,7 +396,7 @@ void FindPrimitivePoly(ZZ_pX &g, ZZ p, long n) {
     ZZ_pX f;
     SetCoeff(f, 0, -1);
     flag = 1;
-    for (int i = 0; i < factors.size() - 1; i++) {
+    for (size_t i = 0; i + 1 < factors.size(); ++i) {
       if (factors[i] <= n)
         continue;
 
@@ -430,6 +424,7 @@ void FindPrimitivePoly(ZZ_pX &g, ZZ p, long n) {
 */
 void interpolate_for_GR(ZZ_pEX &f, const vec_ZZ_pE &a, const vec_ZZ_pE &b, ZZ p,
                         long l, long s) {
+  (void)p;
   if (l == 1) {
     interpolate(f, a, b);
     return;
@@ -452,7 +447,6 @@ void interpolate_for_GR(ZZ_pEX &f, const vec_ZZ_pE &a, const vec_ZZ_pE &b, ZZ p,
   res.SetLength(m);
 
   for (k = 0; k < m; k++) {
-
     const ZZ_pE &aa = a[k];
 
     set(t1);
@@ -477,9 +471,9 @@ void interpolate_for_GR(ZZ_pEX &f, const vec_ZZ_pE &a, const vec_ZZ_pE &b, ZZ p,
 
     res[k] = t1;
     if (k < m - 1) {
-      if (k == 0)
+      if (k == 0) {
         prod[0] = -prod[0];
-      else {
+      } else {
         t1 = -a[k];
         add(prod[k], t1, prod[k - 1]);
         for (i = k - 1; i >= 1; i--) {

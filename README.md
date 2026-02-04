@@ -84,18 +84,7 @@
 
 项目提供了一个简单的测试程序 `tests/test_galois_ring.cpp`，覆盖了主要工具函数、求逆、插值，以及 Hensel 提升/本原元素的基本 smoke test。
 
-在安装好 NTL/GMP 后，可在项目根目录编译并运行：
-
-```bash
-g++ -std=c++17 -O2 -Wall -Wextra -pedantic -Iinclude \
-  tests/test_galois_ring.cpp \
-  src/GaloisRing/utils.cpp src/GaloisRing/Inverse.cpp src/GaloisRing/HenselLift.cpp src/GaloisRing/PrimitiveElement.cpp \
-  -lntl -lgmp -lm -o test_galois_ring
-
-./test_galois_ring
-```
-
-也可以使用 CMake（推荐 out-of-source 构建）：
+在安装好 NTL/GMP 后，使用 CMake（推荐 out-of-source 构建）：
 
 ```bash
 cmake -S . -B build

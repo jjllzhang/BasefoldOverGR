@@ -22,7 +22,6 @@ using NTL::power;
     Usage: ZZ_pE alpha = FindPrimitiveElement(p, k, s);
 */
 ZZ_pE FindPrimitiveElement(ZZ p, long k, long s) {
-
   ZZ q1 = power(p, s);
   ZZ q3 = power(p, k);
   ZZ q6 = power(p, k - 1);

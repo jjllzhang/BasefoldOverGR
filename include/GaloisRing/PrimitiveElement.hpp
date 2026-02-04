@@ -1,5 +1,5 @@
-#ifndef INCLUDE_GALOISRING_PRIMITIVEELEMENT_HPP_
-#define INCLUDE_GALOISRING_PRIMITIVEELEMENT_HPP_
+#ifndef GALOISRING_PRIMITIVEELEMENT_HPP_
+#define GALOISRING_PRIMITIVEELEMENT_HPP_
 
 #include <NTL/ZZ.h>
 #include <NTL/ZZ_p.h>
@@ -20,4 +20,4 @@
 // Call: ZZ_pE alpha = FindPrimitiveElement(p, k, s);
 NTL::ZZ_pE FindPrimitiveElement(NTL::ZZ p, long k, long s);
 
-#endif  // INCLUDE_GALOISRING_PRIMITIVEELEMENT_HPP_
+#endif  // GALOISRING_PRIMITIVEELEMENT_HPP_

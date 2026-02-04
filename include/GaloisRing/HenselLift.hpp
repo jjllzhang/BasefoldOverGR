@@ -1,5 +1,5 @@
-#ifndef INCLUDE_GALOISRING_HENSELLIFT_HPP_
-#define INCLUDE_GALOISRING_HENSELLIFT_HPP_
+#ifndef GALOISRING_HENSELLIFT_HPP_
+#define GALOISRING_HENSELLIFT_HPP_
 
 #include <NTL/ZZ.h>
 #include <NTL/ZZ_p.h>
@@ -22,4 +22,4 @@
 void HenselLift(NTL::ZZ_pX &g_, const NTL::ZZ_pX &f, const NTL::ZZ_pX &g,
                 const NTL::ZZ p, long n);
 
-#endif  // INCLUDE_GALOISRING_HENSELLIFT_HPP_
+#endif  // GALOISRING_HENSELLIFT_HPP_

@@ -27,13 +27,11 @@ using NTL::ZZ_pX;
    system whose solution corresponds to the inverse element's coefficients.
 */
 void Inv_matrix_1(mat_ZZ_p &A, ZZ_pE &a, long d) {
-
   ZZ_pX poly = rep(a);
   A.SetDims(d, 2 * d - 1);
   clear(A);
 
   for (int i = 0; i < d; i++) {
-
     int index = i;
     for (int j = 0; j < d; j++) {
       A[i][j + index] = coeff(poly, j);
@@ -48,7 +46,6 @@ void Inv_matrix_1(mat_ZZ_p &A, ZZ_pE &a, long d) {
    system.
 */
 void Inv_matrix_2(mat_ZZ_p &A, long d) {
-
   A.SetDims(2 * d - 1, d);
   clear(A);
 
@@ -78,7 +75,6 @@ void Inv_matrix_2(mat_ZZ_p &A, long d) {
     Usage: ZZ_pE a_inv = Inv(a, s);
 */
 ZZ_pE Inv(ZZ_pE a, long s) {
-
   if (s == 1)
     return inv(a);
 
@@ -124,7 +120,6 @@ ZZ_pE Inv(ZZ_pE a, long s) {
     conv(r_pE, r_inverse);
 
     return a_inverse * r_pE;
-
   } catch (const NTL::InvModErrorObject &e) {
     ZZ_pE a;
     clear(a);
@@ -139,7 +134,6 @@ ZZ_pE Inv(ZZ_pE a, long s) {
    power(p, i));
 */
 ZZ_pX ZZpXMod(ZZ_pX &a, ZZ n) {
-
   long d = deg(a);
   ZZ_pX res;
   for (int i = 0; i <= d; i++) {
@@ -158,7 +152,6 @@ ZZ_pX ZZpXMod(ZZ_pX &a, ZZ n) {
    then converts back to ZZ_p. Usage: ZZ_pX a_div = ZZpXDiv(a, power(p, i));
 */
 ZZ_pX ZZpXDiv(ZZ_pX &a, ZZ n) {
-
   long d = deg(a);
   ZZ_pX res;
   for (int i = 0; i <= d; i++) {
@@ -177,7 +170,6 @@ ZZ_pX ZZpXDiv(ZZ_pX &a, ZZ n) {
    to ZZ_p. Usage: ZZ_pX a_mul = ZZpXMul(a, power(p, i));
 */
 ZZ_pX ZZpXMul(ZZ_pX &a, ZZ n) {
-
   long d = deg(a);
   ZZ_pX res;
   for (int i = 0; i <= d; i++) {
@@ -196,7 +188,7 @@ ZZ_pX ZZpXMul(ZZ_pX &a, ZZ n) {
     The output satisfies: a ≡ sum_{i=0}^{k-1} a_i * p^i (mod p^k).
 */
 Vec<ZZ_pX> Inv_ai(ZZ_pX a, ZZ p, long s, long k) {
-
+  (void)s;
   Vec<ZZ_pX> res, v1;
 
   for (int i = 1; i <= k; i++) {
@@ -208,7 +200,6 @@ Vec<ZZ_pX> Inv_ai(ZZ_pX a, ZZ p, long s, long k) {
 
   for (int i = 1; i < k; i++) {
     ZZ_pX b = v1[i] - v1[i - 1];
-    long d = deg(b);
 
     ZZ n = power(p, i);
     ZZ_pX c = ZZpXDiv(b, n);
@@ -229,7 +220,6 @@ Vec<ZZ_pX> Inv_ai(ZZ_pX a, ZZ p, long s, long k) {
     Usage: ZZ_pE a_inv = Inv2(a, F, p, s, k);
 */
 ZZ_pE Inv2(ZZ_pE a, ZZ_pX F, ZZ p, long s, long k) {
-
   ZZ_pX a_x = rep(a);
 
   Vec<ZZ_pX> a_i = Inv_ai(a_x, p, s, k);
