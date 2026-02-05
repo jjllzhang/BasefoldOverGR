@@ -24,9 +24,8 @@ NTL::ZZ_pE Inv(NTL::ZZ_pE a, long s);
 //
 // Notes:
 //   - This function re-initializes ZZ_p::init(...) internally (switching
-//   between p, p^2, ..., p^k).
-//     If you rely on an existing ZZ_p modulus in surrounding code, wrap the
-//     call in ZZ_pPush/ZZ_pBak.
+//     between p, p^2, ..., p^k), but preserves the incoming ZZ_p context (it
+//     restores it on return).
 //
 // Preconditions:
 //   - F is the modulus polynomial used to define the ZZ_pE extension (degree

@@ -13,10 +13,10 @@
 // Z_{p^(n+1)}[x] such that g_ | f (mod p^(n+1)) and g_ ≡ g (mod p).
 //
 // Notes:
-//   - This function calls ZZ_p::init(...) internally for p, p^2, ..., p^(n+1)
-//   and thus changes
-//     the global ZZ_p modulus context. Wrap the call in ZZ_pPush/ZZ_pBak if
-//     needed.
+//   - This function calls ZZ_p::init(...) internally for p, p^2, ..., p^(n+1),
+//     but preserves the incoming ZZ_p context (it restores it on return).
+//   - The output polynomial g_ is computed modulo p^(n+1); to operate on g_,
+//     make sure ZZ_p::init(p^(n+1)) is active in the calling code.
 //
 // Call: HenselLift(g_lift, f_mod_p, g_mod_p, p, n);
 void HenselLift(NTL::ZZ_pX &g_, const NTL::ZZ_pX &f, const NTL::ZZ_pX &g,

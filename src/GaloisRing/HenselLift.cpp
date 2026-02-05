@@ -5,6 +5,7 @@ using NTL::SetCoeff;
 using NTL::XGCD;
 using NTL::ZZ;
 using NTL::ZZ_p;
+using NTL::ZZ_pBak;
 using NTL::ZZ_pX;
 using NTL::power;
 
@@ -50,10 +51,14 @@ void HenselLift(ZZ_pX &g_, ZZ_pX &h_, ZZ_pX &s_, ZZ_pX &t_, const ZZ_pX &f,
 
     Side effects:
       - Re-initializes ZZ_p modulus multiple times (p, p^2, ..., p^(n+1)).
+      - The incoming ZZ_p context is restored on return.
 
     Usage: HenselLift(g_lift, f_mod_p, g_mod_p, p, n);
 */
 void HenselLift(ZZ_pX &g_, const ZZ_pX &f, const ZZ_pX &g, const ZZ p, long n) {
+  ZZ_pBak modulus_bak;
+  modulus_bak.save();
+
   ZZ_p::init(p);
 
   ZZ_pX h = f / g;

@@ -248,7 +248,9 @@ void TestInverse_Field() {
     set(one);
     CHECK_EQ(a * a_inv_custom, one);
 
+    const ZZ modulus_before = ZZ_p::modulus();
     const ZZ_pE a_inv2 = Inv2(a, F, p, s, /*k=*/1);
+    CHECK_EQ(ZZ_p::modulus(), modulus_before);
     CHECK_EQ(a * a_inv2, one);
     CHECK_EQ(a_inv2, inv(a));
 }
@@ -355,6 +357,7 @@ void TestHenselLift_Smoke() {
     const ZZ mod = power(p, n + 1);
 
     ZZ_pPush p_push(p);
+    const ZZ modulus_before = ZZ_p::modulus();
 
     ZZ_pX f_mod_p;
     SetCoeff(f_mod_p, 2, 1);
@@ -372,16 +375,20 @@ void TestHenselLift_Smoke() {
     clear(g_lift);
     HenselLift(g_lift, f_mod_p, g_mod_p, p, n);
 
-    CHECK_EQ(ZZ_p::modulus(), mod);
+    // Context safety: HenselLift should not leak its internal ZZ_p::init calls.
+    CHECK_EQ(ZZ_p::modulus(), modulus_before);
 
-    // Verify divisibility in Z/(p^(n+1)) [x] by rebuilding f in the current modulus.
-    ZZ_pX f_lift;
-    SetCoeff(f_lift, 2, 1);
-    SetCoeff(f_lift, 0, -1);
+    // Verify divisibility in Z/(p^(n+1)) [x].
+    {
+        ZZ_pPush mod_push(mod);
+        ZZ_pX f_lift;
+        SetCoeff(f_lift, 2, 1);
+        SetCoeff(f_lift, 0, -1);
 
-    ZZ_pX q, r;
-    DivRem(q, r, f_lift, g_lift);
-    CHECK(IsZero(r));
+        ZZ_pX q, r;
+        DivRem(q, r, f_lift, g_lift);
+        CHECK(IsZero(r));
+    }
 
     // Verify g_lift ≡ g (mod p) coefficient-wise.
     auto ReduceCoeffModP = [&](const ZZ_pX& poly, long i) -> ZZ {
@@ -404,9 +411,29 @@ void TestPrimitiveElement_Smoke() {
     const long k = 1;
     const long s = 30;
 
-    ZZ_pPush p_push(p);
+    const ZZ mod = power(p, k);
+    ZZ_pPush p_push(mod);
+
+    // Initialize the same modulus polynomial as the current implementation in PrimitiveElement.cpp.
+    ZZ_pX F;
+    SetCoeff(F, 30, 1);
+    SetCoeff(F, 16, 1);
+    SetCoeff(F, 15, 1);
+    SetCoeff(F, 1, 1);
+    SetCoeff(F, 0, 1);
+    ZZ_pEPush e_push(F);
+
+    const ZZ modulus_before = ZZ_p::modulus();
+    const ZZ_pX modulus_poly_before = ZZ_pE::modulus().val();
+    const long degree_before = ZZ_pE::degree();
 
     ZZ_pE pe = FindPrimitiveElement(p, k, s);
+
+    // Context safety: FindPrimitiveElement should restore both ZZ_p and ZZ_pE contexts.
+    CHECK_EQ(ZZ_p::modulus(), modulus_before);
+    CHECK(ZZ_pE::initialized());
+    CHECK_EQ(ZZ_pE::degree(), degree_before);
+    CHECK_EQ(ZZ_pE::modulus().val(), modulus_poly_before);
 
     ZZ_pX H;
     SetCoeff(H, 1, 1);

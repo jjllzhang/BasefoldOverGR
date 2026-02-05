@@ -17,6 +17,7 @@ using NTL::vec_ZZ_p;
 using NTL::XGCD;
 using NTL::ZZ;
 using NTL::ZZ_p;
+using NTL::ZZ_pBak;
 using NTL::ZZ_pE;
 using NTL::ZZ_pX;
 
@@ -220,6 +221,9 @@ Vec<ZZ_pX> Inv_ai(ZZ_pX a, ZZ p, long s, long k) {
     Usage: ZZ_pE a_inv = Inv2(a, F, p, s, k);
 */
 ZZ_pE Inv2(ZZ_pE a, ZZ_pX F, ZZ p, long s, long k) {
+  ZZ_pBak modulus_bak;
+  modulus_bak.save();
+
   ZZ_pX a_x = rep(a);
 
   Vec<ZZ_pX> a_i = Inv_ai(a_x, p, s, k);
