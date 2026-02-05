@@ -7,6 +7,7 @@ add_library(galoisring
   src/GaloisRing/Inverse.cpp
   src/GaloisRing/HenselLift.cpp
   src/GaloisRing/PrimitiveElement.cpp
+  src/BaseFold/FoldableCode.cpp
 )
 
 target_include_directories(galoisring PUBLIC
@@ -33,8 +34,12 @@ if(M_LIBRARY)
   target_link_libraries(galoisring PUBLIC ${M_LIBRARY})
 endif()
 
-add_executable(test_galois_ring tests/test_galois_ring.cpp)
+add_executable(test_galois_ring tests/test_galois_ring_basic.cpp)
 target_link_libraries(test_galois_ring PRIVATE galoisring)
+
+add_executable(test_foldable_codes tests/test_foldable_codes.cpp)
+target_link_libraries(test_foldable_codes PRIVATE galoisring)
 
 enable_testing()
 add_test(NAME test_galois_ring COMMAND $<TARGET_FILE:test_galois_ring>)
+add_test(NAME test_foldable_codes COMMAND $<TARGET_FILE:test_foldable_codes>)

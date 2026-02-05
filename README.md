@@ -4,6 +4,8 @@
 
 > 说明：NTL 的 `ZZ_p`/`ZZ_pX`/`ZZ_pE` 等类型依赖全局模数上下文（例如 `ZZ_p::init(mod)`、`ZZ_pE::init(F)`）。调用本项目函数前请确保相关上下文已正确初始化。
 
+此外，本仓库还包含一份基于 `main.pdf` 的 **Foldable Codes over Binary Field (`F_{2^s}`)** 的编码实现（Algorithm 1 / `Encd`），用于构造 `(c, k0, d)`-foldable linear code 的编码过程。
+
 ## 目录结构
 
 ```
@@ -14,14 +16,20 @@
 │       ├── Inverse.hpp
 │       ├── HenselLift.hpp
 │       └── PrimitiveElement.hpp
+│   └── BaseFold
+│       └── FoldableCode.hpp
 ├── src
 │   └── GaloisRing
 │       ├── utils.cpp
 │       ├── Inverse.cpp
 │       ├── HenselLift.cpp
 │       └── PrimitiveElement.cpp
+│   └── BaseFold
+│       └── FoldableCode.cpp
 └── tests
-    └── test_galois_ring.cpp
+    ├── test_common.hpp
+    ├── test_galois_ring_basic.cpp
+    └── test_foldable_codes.cpp
 ```
 
 ## 文件说明
@@ -76,13 +84,26 @@
   - 以 `b = x (mod F)` 为基础返回 `b^(p^{k-1})`（常见于 Teichmüller 代表/单位根相关构造）。
   - 注意：当前 `F` 的系数是硬编码示例，实际使用时应替换为与你的 `p,s` 匹配的不可约/primitive 多项式。
 
+### `include/BaseFold/FoldableCode.hpp` / `src/BaseFold/FoldableCode.cpp`
+
+- Foldable code 的编码实现：
+  - 参数结构 `basefold::FoldableCodeParams`：`c, k0, d, zeta, G0, diag_T`。
+    - `G0`：一个 `[n0=ck0, k0]` 的 MDS 线性码生成矩阵（实现中不强制验证 MDS 性质，仅检查维度）。
+    - `diag_T[i]`：对角矩阵 `Ti` 的对角元（向量表示），长度必须为 `n_i = c*k0*2^i`，且每一项必须是非零域元素。
+    - `zeta`：固定的 `ζ ∈ F_{2^s}^×` 且 `ζ != 1`。
+  - 编码接口 `basefold::EncodeFoldable(out, msg, params)`：输入 `msg ∈ F_{2^s}^{k_d}`，输出 `out ∈ F_{2^s}^{n_d}`，其中 `k_d = k0*2^d`、`n_d = c*k_d`。
+  - NTL 上下文前置条件：调用前需先 `ZZ_p::init(2)`，并用次数为 `s` 的不可约多项式初始化 `ZZ_pE::init(F)` 以构造 `F_{2^s}`。
+
 ## 依赖
 
 - NTL（以及其底层依赖 GMP）。编译/链接方式因系统环境而异。
 
 ## 测试
 
-项目提供了一个简单的测试程序 `tests/test_galois_ring.cpp`，覆盖了主要工具函数、求逆、插值，以及 Hensel 提升/本原元素的基本 smoke test。
+项目提供两组测试：
+
+- `tests/test_galois_ring_basic.cpp`：覆盖主要工具函数、求逆、插值，以及 Hensel 提升/本原元素的基本 smoke test。
+- `tests/test_foldable_codes.cpp`：覆盖 foldable code 编码的正确性测试（递归编码结果与显式构造的 `G_d` 乘法结果一致）。
 
 在安装好 NTL/GMP 后，使用 CMake（推荐 out-of-source 构建）：
 
