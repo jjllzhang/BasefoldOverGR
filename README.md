@@ -4,7 +4,12 @@
 
 > 说明：NTL 的 `ZZ_p`/`ZZ_pX`/`ZZ_pE` 等类型依赖全局模数上下文（例如 `ZZ_p::init(mod)`、`ZZ_pE::init(F)`）。调用本项目函数前请确保相关上下文已正确初始化。
 
-此外，本仓库还包含一份基于 `main.pdf` 的 **Foldable Codes over Binary Field (`F_{2^s}`)** 的编码实现（Algorithm 1 / `Encd`），用于构造 `(c, k0, d)`-foldable linear code 的编码过程。
+此外，本仓库还包含一份 `(c, k0, d)`-foldable linear code 的编码过程实现，支持在有限域 `F_{p^s}` 与 Galois ring `GR(p^k,s)` 上运行（见 `include/BaseFold/FoldableCode.hpp`）。该编码实现可用于 BaseFold 论文中的 IOPP 与 PCS 构造。
+
+同时，仓库中也实现了 BaseFold 论文里的：
+
+- BaseFold IOPP（folding + query，一并支持有限域与 Galois ring，见 `include/BaseFold/IOPP.hpp`）。
+- 一个最小化的、基于 **Merkle + Fiat–Shamir** 的非交互 BaseFold PCS 单点求值证明（目前实现的是 `k0==1` 版本，见 `include/BaseFold/BaseFoldPCS.hpp`）。
 
 ## 目录结构
 
@@ -17,7 +22,11 @@
 │       ├── HenselLift.hpp
 │       └── PrimitiveElement.hpp
 │   └── BaseFold
-│       └── FoldableCode.hpp
+│       ├── FoldableCode.hpp
+│       ├── IOPP.hpp
+│       ├── Multilinear.hpp
+│       ├── Sumcheck.hpp
+│       └── BaseFoldPCS.hpp
 ├── src
 │   └── GaloisRing
 │       ├── utils.cpp
@@ -25,11 +34,19 @@
 │       ├── HenselLift.cpp
 │       └── PrimitiveElement.cpp
 │   └── BaseFold
-│       └── FoldableCode.cpp
+│       ├── FoldableCode.cpp
+│       ├── IOPP.cpp
+│       ├── Multilinear.cpp
+│       ├── Sumcheck.cpp
+│       └── BaseFoldPCS.cpp
+├── bench
+│   └── bench_pcs_commit.cpp
 └── tests
     ├── test_common.hpp
     ├── test_galois_ring_basic.cpp
-    └── test_foldable_codes.cpp
+    ├── test_foldable_codes.cpp
+    ├── test_iopp.cpp
+    └── test_pcs.cpp
 ```
 
 ## 文件说明
@@ -93,9 +110,27 @@
     - `zeta`：固定的 `ζ`，在域上要求 `ζ != 0,1`；在 Galois ring 上要求 `ζ` 与 `(1-ζ)` 都是单位元（等价于 `π(ζ) != 1`）。
     - `p`：可选的素数 `p`（用于在 Galois ring `GR(p^s,r)` 场景下做 unit 校验；若不设置则跳过 unit 校验，仅做非零检查）。
   - 编码接口 `basefold::EncodeFoldable(out, msg, params)`：输入 `msg ∈ R^{k_d}`，输出 `out ∈ R^{n_d}`，其中 `k_d = k0*2^d`、`n_d = c*k_d`。
+  - 额外提供 `basefold::EncodeFoldableUnchecked(...)`：用于 bench/热路径，**跳过参数与长度校验**（调用者需自行保证参数正确）。
   - NTL 上下文前置条件：
     - 域 `F_{p^r}`：先 `ZZ_p::init(p)`，再用次数为 `r` 的不可约多项式初始化 `ZZ_pE::init(F)`；
     - Galois ring `GR(p^s,r)`：先 `ZZ_p::init(p^s)`，再用“模 p 约化后不可约”的次数为 `r` 多项式初始化 `ZZ_pE::init(F)`。
+
+### `include/BaseFold/IOPP.hpp` / `src/BaseFold/IOPP.cpp`
+
+- BaseFold IOPP（Protocol 2/3）实现：
+  - folding prover：`ProverCommitAll/ProverCommitRound`
+  - query verifier：`VerifyQueryFromOracles/VerifyQueryFromMerkleOpenings`
+  - Merkle 承诺与 opening：`MerkleCommitOracle/MerkleOpenOracle/MerkleVerifyOpening`
+
+### `include/BaseFold/BaseFoldPCS.hpp` / `src/BaseFold/BaseFoldPCS.cpp`
+
+- 一个最小化的非交互 BaseFold PCS 单点求值证明（Protocol 4 + Merkle + Fiat–Shamir）：
+  - `BaseFoldPCSCommit/ProveEval/VerifyEval`
+  - 目前实现限制为 `k0==1`（对应 `Basefold_over_GR.pdf` 的 Protocol 4 版本）。
+
+### `bench/bench_pcs_commit.cpp`
+
+- 编码性能基准：测量 **去掉校验后的纯编码时间**（`EncodeFoldableUnchecked`），支持由命令行分别指定有限域与 Galois ring 的上下文参数。
 
 ## 依赖
 
@@ -103,10 +138,12 @@
 
 ## 测试
 
-项目提供两组测试：
+项目提供如下测试：
 
 - `tests/test_galois_ring_basic.cpp`：覆盖主要工具函数、求逆、插值，以及 Hensel 提升/本原元素的基本 smoke test。
 - `tests/test_foldable_codes.cpp`：覆盖 foldable code 编码的正确性测试（递归编码结果与显式构造的 `G_d` 乘法结果一致）。
+- `tests/test_iopp.cpp`：覆盖 BaseFold IOPP（有限域与 GR）commit/query 与 Merkle openings。
+- `tests/test_pcs.cpp`：覆盖 BaseFold PCS（有限域与 GR）生成 proof 并验证通过（以及篡改后应失败）。
 
 在安装好 NTL/GMP 后，使用 CMake（推荐 out-of-source 构建）：
 
@@ -114,4 +151,22 @@
 cmake -S . -B build
 cmake --build build
 ctest --test-dir build
+```
+
+## Bench
+
+构建后可运行：
+
+```bash
+./build/bench_pcs_commit --help
+```
+
+示例：
+
+```bash
+# GF(2^2) with F(x)=x^2+x+1 and zeta=x
+./build/bench_pcs_commit --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --d 16 --reps 5 --warmup 1
+
+# GR(4,2) with the same extension polynomial and zeta=x
+./build/bench_pcs_commit --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --reps 5 --warmup 1
 ```

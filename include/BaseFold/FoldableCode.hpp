@@ -61,6 +61,18 @@ long CodewordLength(const FoldableCodeParams &params);
 void EncodeFoldable(NTL::vec_ZZ_pE &out, const NTL::vec_ZZ_pE &msg,
                     const FoldableCodeParams &params);
 
+// Unchecked version of EncodeFoldable for benchmarking/hot paths.
+//
+// Differences vs EncodeFoldable:
+// - Does NOT call ValidateParams (so it skips unit checks and dimension checks).
+// - Does NOT check msg length.
+//
+// Preconditions (caller responsibility):
+// - params is well-formed and consistent (G0/diag_T sizes match c,k0,d).
+// - msg has length k0 * 2^d.
+void EncodeFoldableUnchecked(NTL::vec_ZZ_pE &out, const NTL::vec_ZZ_pE &msg,
+                             const FoldableCodeParams &params);
+
 } // namespace basefold
 
 #endif // BASEFOLD_FOLDABLECODE_HPP_

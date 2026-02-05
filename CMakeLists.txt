@@ -52,6 +52,9 @@ target_link_libraries(test_iopp PRIVATE galoisring)
 add_executable(test_pcs tests/test_pcs.cpp)
 target_link_libraries(test_pcs PRIVATE galoisring)
 
+add_executable(bench_pcs_commit bench/bench_pcs_commit.cpp)
+target_link_libraries(bench_pcs_commit PRIVATE galoisring)
+
 enable_testing()
 add_test(NAME test_galois_ring COMMAND $<TARGET_FILE:test_galois_ring>)
 add_test(NAME test_foldable_codes COMMAND $<TARGET_FILE:test_foldable_codes>)

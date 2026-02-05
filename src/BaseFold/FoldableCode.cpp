@@ -130,6 +130,39 @@ void EncodeRec(vec_ZZ_pE &out, const vec_ZZ_pE &msg, long level,
   }
 }
 
+void EncodeRecUnchecked(vec_ZZ_pE &out, const vec_ZZ_pE &msg, long level,
+                        const FoldableCodeParams &params) {
+  if (level == 0) {
+    mul(out, msg, params.G0);  // row-vector * matrix
+    return;
+  }
+
+  const long half_k = msg.length() / 2;
+
+  vec_ZZ_pE ml, mr;
+  ml.SetLength(half_k);
+  mr.SetLength(half_k);
+  for (long i = 0; i < half_k; ++i) {
+    ml[i] = msg[i];
+    mr[i] = msg[i + half_k];
+  }
+
+  vec_ZZ_pE l, r;
+  EncodeRecUnchecked(l, ml, level - 1, params);
+  EncodeRecUnchecked(r, mr, level - 1, params);
+
+  const vec_ZZ_pE &t =
+      params.diag_T[static_cast<std::size_t>(level - 1)];  // length n_{level-1}
+  const long half_n = l.length();
+
+  out.SetLength(2 * half_n);
+  for (long i = 0; i < half_n; ++i) {
+    const NTL::ZZ_pE tr = t[i] * r[i];
+    out[i] = l[i] + tr;
+    out[i + half_n] = l[i] + params.zeta * tr;
+  }
+}
+
 }  // namespace
 
 long MessageLength(const FoldableCodeParams &params) {
@@ -152,6 +185,11 @@ void EncodeFoldable(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
   }
 
   EncodeRec(out, msg, params.d, params);
+}
+
+void EncodeFoldableUnchecked(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
+                             const FoldableCodeParams &params) {
+  EncodeRecUnchecked(out, msg, params.d, params);
 }
 
 }  // namespace basefold
