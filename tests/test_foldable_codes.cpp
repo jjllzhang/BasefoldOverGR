@@ -1,5 +1,6 @@
 #include <exception>
 #include <iostream>
+#include <random>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -23,7 +24,9 @@ using NTL::ZZ_pX;
 using std::cerr;
 using std::cout;
 using std::exception;
+using std::mt19937;
 using std::ostringstream;
+using std::uniform_int_distribution;
 using std::string;
 using std::size_t;
 using std::vector;
@@ -31,6 +34,21 @@ using std::vector;
 int g_failures = 0;
 
 namespace {
+
+ZZ_pE ElemFromIndexGF4(int idx, const ZZ_pE &alpha) {
+  const ZZ_pE one = testutil::ConstZZpE(1);
+  if (idx == 0) return ZZ_pE(0);
+  if (idx == 1) return one;
+  if (idx == 2) return alpha;
+  return alpha + one;
+}
+
+ZZ_pE NonZeroElemFromIndexGF4(int idx, const ZZ_pE &alpha) {
+  const ZZ_pE one = testutil::ConstZZpE(1);
+  if (idx == 0) return one;
+  if (idx == 1) return alpha;
+  return alpha + one;
+}
 
 string ElemToCoeffString(const ZZ_pE &element) {
   const long s = ZZ_pE::degree();
@@ -54,6 +72,51 @@ void PrintVec(const char *label, const vec_ZZ_pE &vec) {
   for (long i = 0; i < vec.length(); ++i) {
     cout << "    " << i << ": " << ElemToCoeffString(vec[i]) << "\n";
   }
+}
+
+mat_ZZ_pE BuildVandermondeG0(long k0, const vec_ZZ_pE &points) {
+  mat_ZZ_pE G0;
+  const long n0 = points.length();
+  G0.SetDims(k0, n0);
+
+  for (long j = 0; j < n0; ++j) {
+    ZZ_pE cur = testutil::ConstZZpE(1);
+    for (long r = 0; r < k0; ++r) {
+      G0[r][j] = cur;
+      cur *= points[j];
+    }
+  }
+
+  return G0;
+}
+
+vector<vec_ZZ_pE> SampleDiagT(long c, long k0, long d, const ZZ_pE &alpha,
+                              mt19937 &rng) {
+  uniform_int_distribution<int> dist_nonzero(0, 2);
+  vector<vec_ZZ_pE> diag_T;
+  diag_T.resize(static_cast<size_t>(d));
+
+  for (long level = 0; level < d; ++level) {
+    const long ni = c * k0 * (1L << level);
+    diag_T[static_cast<size_t>(level)].SetLength(ni);
+    for (long i = 0; i < ni; ++i) {
+      const int choice = dist_nonzero(rng);
+      diag_T[static_cast<size_t>(level)][i] =
+          NonZeroElemFromIndexGF4(choice, alpha);
+    }
+  }
+
+  return diag_T;
+}
+
+vec_ZZ_pE SampleMessage(long k0, long d, const ZZ_pE &alpha, mt19937 &rng) {
+  uniform_int_distribution<int> dist_any(0, 3);
+  vec_ZZ_pE msg;
+  msg.SetLength(k0 * (1L << d));
+  for (long i = 0; i < msg.length(); ++i) {
+    msg[i] = ElemFromIndexGF4(dist_any(rng), alpha);
+  }
+  return msg;
 }
 
 mat_ZZ_pE BuildFoldableGeneratorMatrix(const mat_ZZ_pE &G0,
@@ -182,11 +245,111 @@ void TestFoldableEncode_OverBinaryField() {
   }
 }
 
+void TestFoldableEncode_Randomized() {
+  testutil::PrintInfo(
+      "Randomized: multiple (c,k0,d), random diag_T and random messages");
+
+  const ZZ p = to_ZZ(2);
+  ZZ_pPush p_push(p);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush e_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const unsigned int seed = 1337U;
+  testutil::PrintInfo("PRNG seed = 1337");
+  mt19937 rng(seed);
+
+  struct Case {
+    long c;
+    long k0;
+    long d;
+    int trials;
+    int messages;
+  };
+
+  const vector<Case> cases = {
+      {2, 2, 0, 4, 16}, {2, 2, 1, 4, 16}, {2, 2, 3, 3, 8},
+      {1, 4, 2, 3, 8},  {4, 1, 4, 2, 8},  {1, 3, 2, 3, 8},
+  };
+
+  uniform_int_distribution<int> dist_zeta(0, 1);
+  for (size_t case_id = 0; case_id < cases.size(); ++case_id) {
+    const Case &cs = cases[case_id];
+    const long n0 = cs.c * cs.k0;
+    CHECK_LE(n0, 4);
+
+    ostringstream hdr;
+    hdr << "Case " << case_id << ": c=" << cs.c << ", k0=" << cs.k0
+        << ", d=" << cs.d << " (n0=" << n0 << "), trials=" << cs.trials
+        << ", messages=" << cs.messages;
+    testutil::PrintInfo(hdr.str());
+
+    vec_ZZ_pE points;
+    points.SetLength(n0);
+    for (long j = 0; j < n0; ++j) {
+      points[j] = ElemFromIndexGF4(static_cast<int>(j), alpha);
+    }
+
+    const mat_ZZ_pE G0 = BuildVandermondeG0(cs.k0, points);
+
+    for (int trial = 0; trial < cs.trials; ++trial) {
+      const vector<vec_ZZ_pE> diag_T =
+          SampleDiagT(cs.c, cs.k0, cs.d, alpha, rng);
+      const ZZ_pE zeta =
+          dist_zeta(rng) == 0 ? alpha : (alpha + testutil::ConstZZpE(1));
+
+      basefold::FoldableCodeParams params;
+      params.c = cs.c;
+      params.k0 = cs.k0;
+      params.d = cs.d;
+      params.zeta = zeta;
+      params.G0 = G0;
+      params.diag_T = diag_T;
+
+      const mat_ZZ_pE Gd = BuildFoldableGeneratorMatrix(G0, diag_T, zeta);
+
+      for (int msg_id = 0; msg_id < cs.messages; ++msg_id) {
+        const vec_ZZ_pE msg = SampleMessage(cs.k0, cs.d, alpha, rng);
+
+        vec_ZZ_pE got;
+        basefold::EncodeFoldable(got, msg, params);
+
+        vec_ZZ_pE expected;
+        mul(expected, msg, Gd);
+
+        CHECK_EQ(got.length(), expected.length());
+        for (long i = 0; i < got.length(); ++i) {
+          if (got[i] != expected[i]) {
+            ostringstream where;
+            where << "Mismatch at idx=" << i << " (trial=" << trial
+                  << ", msg_id=" << msg_id << ")";
+            testutil::PrintInfo(where.str());
+            PrintVec("msg", msg);
+            PrintVec("got", got);
+            PrintVec("expected", expected);
+            CHECK_EQ(got[i], expected[i]);
+            return;
+          }
+        }
+      }
+    }
+  }
+}
+
 } // namespace
 
 int main() {
   try {
     RUN_TEST(TestFoldableEncode_OverBinaryField);
+    RUN_TEST(TestFoldableEncode_Randomized);
   } catch (const exception &e) {
     cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;
