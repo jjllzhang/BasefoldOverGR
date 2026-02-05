@@ -87,12 +87,15 @@
 ### `include/BaseFold/FoldableCode.hpp` / `src/BaseFold/FoldableCode.cpp`
 
 - Foldable code 的编码实现：
-  - 参数结构 `basefold::FoldableCodeParams`：`c, k0, d, zeta, G0, diag_T`。
+  - 参数结构 `basefold::FoldableCodeParams`：`c, k0, d, p, zeta, G0, diag_T`。
     - `G0`：一个 `[n0=ck0, k0]` 的 MDS 线性码生成矩阵（实现中不强制验证 MDS 性质，仅检查维度）。
-    - `diag_T[i]`：对角矩阵 `Ti` 的对角元（向量表示），长度必须为 `n_i = c*k0*2^i`，且每一项必须是非零域元素。
-    - `zeta`：固定的 `ζ ∈ F_{2^s}^×` 且 `ζ != 1`。
-  - 编码接口 `basefold::EncodeFoldable(out, msg, params)`：输入 `msg ∈ F_{2^s}^{k_d}`，输出 `out ∈ F_{2^s}^{n_d}`，其中 `k_d = k0*2^d`、`n_d = c*k_d`。
-  - NTL 上下文前置条件：调用前需先 `ZZ_p::init(2)`，并用次数为 `s` 的不可约多项式初始化 `ZZ_pE::init(F)` 以构造 `F_{2^s}`。
+    - `diag_T[i]`：对角矩阵 `Ti` 的对角元（向量表示），长度必须为 `n_i = c*k0*2^i`。在域上要求每一项非零；在 Galois ring 上要求每一项是单位元（unit）。
+    - `zeta`：固定的 `ζ`，在域上要求 `ζ != 0,1`；在 Galois ring 上要求 `ζ` 与 `(1-ζ)` 都是单位元（等价于 `π(ζ) != 1`）。
+    - `p`：可选的素数 `p`（用于在 Galois ring `GR(p^s,r)` 场景下做 unit 校验；若不设置则跳过 unit 校验，仅做非零检查）。
+  - 编码接口 `basefold::EncodeFoldable(out, msg, params)`：输入 `msg ∈ R^{k_d}`，输出 `out ∈ R^{n_d}`，其中 `k_d = k0*2^d`、`n_d = c*k_d`。
+  - NTL 上下文前置条件：
+    - 域 `F_{p^r}`：先 `ZZ_p::init(p)`，再用次数为 `r` 的不可约多项式初始化 `ZZ_pE::init(F)`；
+    - Galois ring `GR(p^s,r)`：先 `ZZ_p::init(p^s)`，再用“模 p 约化后不可约”的次数为 `r` 多项式初始化 `ZZ_pE::init(F)`。
 
 ## 依赖
 

@@ -2,9 +2,15 @@
 
 #include <NTL/mat_ZZ_pE.h>
 
+using NTL::ZZ;
 using NTL::LogicError;
+using NTL::coeff;
 using NTL::mul;
+using NTL::rep;
+using NTL::set;
 using NTL::vec_ZZ_pE;
+using NTL::ZZ_pE;
+using NTL::ZZ_pX;
 
 namespace basefold {
 namespace {
@@ -19,6 +25,22 @@ long Pow2(long e) {
   return 1L << e;
 }
 
+bool IsUnitByReductionModP(const ZZ_pE &a, const ZZ &p) {
+  if (p <= 1) {
+    return a != 0;
+  }
+  if (a == 0) return false;
+
+  const ZZ_pX poly = rep(a);
+  const long r = ZZ_pE::degree();
+  for (long i = 0; i < r; ++i) {
+    ZZ c = rep(coeff(poly, i));
+    c %= p;
+    if (c != 0) return true;
+  }
+  return false;
+}
+
 void ValidateParams(const FoldableCodeParams &params) {
   if (params.c <= 0) LogicError("EncodeFoldable: c must be positive");
   if (params.k0 <= 0) LogicError("EncodeFoldable: k0 must be positive");
@@ -31,6 +53,16 @@ void ValidateParams(const FoldableCodeParams &params) {
 
   if (params.zeta == 0) LogicError("EncodeFoldable: zeta must be non-zero");
   if (params.zeta == 1) LogicError("EncodeFoldable: zeta must not equal 1");
+  if (params.p > 1) {
+    if (!IsUnitByReductionModP(params.zeta, params.p)) {
+      LogicError("EncodeFoldable: zeta must be a unit");
+    }
+    ZZ_pE one;
+    set(one);
+    if (!IsUnitByReductionModP(one - params.zeta, params.p)) {
+      LogicError("EncodeFoldable: 1-zeta must be a unit");
+    }
+  }
 
   if (static_cast<long>(params.diag_T.size()) != params.d) {
     LogicError("EncodeFoldable: diag_T must have size d");
@@ -42,8 +74,12 @@ void ValidateParams(const FoldableCodeParams &params) {
       LogicError("EncodeFoldable: diag_T[i] has wrong length");
     }
     for (long j = 0; j < ni; ++j) {
-      if (params.diag_T[static_cast<std::size_t>(i)][j] == 0) {
+      const ZZ_pE &tij = params.diag_T[static_cast<std::size_t>(i)][j];
+      if (tij == 0) {
         LogicError("EncodeFoldable: diag_T[i] entries must be non-zero");
+      }
+      if (params.p > 1 && !IsUnitByReductionModP(tij, params.p)) {
+        LogicError("EncodeFoldable: diag_T[i] entries must be units");
       }
     }
   }
@@ -119,4 +155,3 @@ void EncodeFoldable(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
 }
 
 }  // namespace basefold
-
