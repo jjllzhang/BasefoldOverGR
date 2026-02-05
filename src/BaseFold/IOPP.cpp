@@ -5,18 +5,19 @@
 #include <NTL/ZZ_pX.h>
 #include <NTL/mat_ZZ_pE.h>
 
-#include "GaloisRing/Inverse.hpp"
+#include <openssl/evp.h>
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <openssl/evp.h>
+#include "GaloisRing/Inverse.hpp"
 
 using NTL::BytesFromZZ;
 using NTL::coeff;

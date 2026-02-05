@@ -1,8 +1,3 @@
-#include <exception>
-#include <iostream>
-#include <sstream>
-#include <string>
-
 #include <NTL/ZZ.h>
 #include <NTL/ZZ_p.h>
 #include <NTL/ZZ_pE.h>
@@ -10,9 +5,15 @@
 #include <NTL/mat_ZZ_pE.h>
 #include <NTL/vec_ZZ_pE.h>
 
+#include <exception>
+#include <functional>
+#include <iostream>
+#include <sstream>
+#include <string>
+
 #include "BaseFold/FoldableCode.hpp"
 #include "BaseFold/IOPP.hpp"
-#include "test_common.hpp"
+#include "tests/test_common.hpp"
 
 using NTL::conv;
 using NTL::mat_ZZ_pE;

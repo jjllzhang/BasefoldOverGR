@@ -43,15 +43,19 @@ endif()
 
 add_executable(test_galois_ring tests/test_galois_ring_basic.cpp)
 target_link_libraries(test_galois_ring PRIVATE galoisring)
+target_include_directories(test_galois_ring PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(test_foldable_codes tests/test_foldable_codes.cpp)
 target_link_libraries(test_foldable_codes PRIVATE galoisring)
+target_include_directories(test_foldable_codes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(test_iopp tests/test_iopp.cpp)
 target_link_libraries(test_iopp PRIVATE galoisring)
+target_include_directories(test_iopp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(test_pcs tests/test_pcs.cpp)
 target_link_libraries(test_pcs PRIVATE galoisring)
+target_include_directories(test_pcs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(bench_pcs_commit bench/bench_pcs_commit.cpp)
 target_link_libraries(bench_pcs_commit PRIVATE galoisring)

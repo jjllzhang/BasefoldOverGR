@@ -9,7 +9,7 @@
 #include "GaloisRing/PrimitiveElement.hpp"
 #include "GaloisRing/utils.hpp"
 
-#include "test_common.hpp"
+#include "tests/test_common.hpp"
 
 using NTL::clear;
 using NTL::coeff;

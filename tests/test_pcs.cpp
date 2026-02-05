@@ -1,8 +1,3 @@
-#include <exception>
-#include <iostream>
-#include <sstream>
-#include <string>
-
 #include <NTL/ZZ.h>
 #include <NTL/ZZ_p.h>
 #include <NTL/ZZ_pE.h>
@@ -10,9 +5,16 @@
 #include <NTL/mat_ZZ_pE.h>
 #include <NTL/vec_ZZ_pE.h>
 
+#include <exception>
+#include <functional>
+#include <iostream>
+#include <sstream>
+#include <string>
+#include <vector>
+
 #include "BaseFold/BaseFoldPCS.hpp"
 #include "BaseFold/Multilinear.hpp"
-#include "test_common.hpp"
+#include "tests/test_common.hpp"
 
 using NTL::conv;
 using NTL::mat_ZZ_pE;
@@ -206,4 +208,3 @@ int main() {
   cerr << "\n" << g_failures << " test(s) failed.\n";
   return 1;
 }
-

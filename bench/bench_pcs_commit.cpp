@@ -1,17 +1,18 @@
+#include <NTL/ZZ.h>
+#include <NTL/ZZ_p.h>
+#include <NTL/ZZ_pE.h>
+#include <NTL/ZZ_pX.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 #include <string>
 #include <vector>
-
-#include <NTL/ZZ.h>
-#include <NTL/ZZ_p.h>
-#include <NTL/ZZ_pE.h>
-#include <NTL/ZZ_pX.h>
 
 #include "BaseFold/FoldableCode.hpp"
 
@@ -60,8 +61,9 @@ Stats ComputeStats(const std::vector<double> &xs) {
 
 double MsSince(const std::chrono::steady_clock::time_point &a,
                const std::chrono::steady_clock::time_point &b) {
-  using namespace std::chrono;
-  return duration_cast<duration<double, std::milli>>(b - a).count();
+  return std::chrono::duration_cast<
+             std::chrono::duration<double, std::milli>>(b - a)
+      .count();
 }
 
 long Pow2Checked(long e) {

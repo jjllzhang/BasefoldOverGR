@@ -1,15 +1,16 @@
+#include <NTL/ZZ.h>
+#include <NTL/ZZ_p.h>
+#include <NTL/ZZ_pE.h>
+#include <NTL/ZZ_pX.h>
+
 #include <cstdint>
 #include <cstdlib>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 #include <string>
 #include <vector>
-
-#include <NTL/ZZ.h>
-#include <NTL/ZZ_p.h>
-#include <NTL/ZZ_pE.h>
-#include <NTL/ZZ_pX.h>
 
 #include "BaseFold/BaseFoldPCS.hpp"
 #include "BaseFold/Multilinear.hpp"

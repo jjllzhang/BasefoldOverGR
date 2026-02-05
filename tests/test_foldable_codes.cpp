@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "BaseFold/FoldableCode.hpp"
-#include "test_common.hpp"
+#include "tests/test_common.hpp"
 
 using NTL::conv;
 using NTL::coeff;
