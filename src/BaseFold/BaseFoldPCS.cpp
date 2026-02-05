@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "BaseFold/Multilinear.hpp"
+#include "BaseFold/Profile.hpp"
 
 using NTL::BytesFromZZ;
 using NTL::coeff;
@@ -129,7 +130,7 @@ Bytes SerializeFieldElement(const FieldElement &x) {
   if (r <= 0)
     LogicError("SerializeFieldElement: invalid extension degree");
 
-  const ZZ_pX poly = rep(x);
+  const ZZ_pX &poly = rep(x);
   Bytes out;
   AppendU64(out, static_cast<std::uint64_t>(r));
   for (long i = 0; i < r; ++i) {
@@ -185,6 +186,11 @@ class Sha256Transcript {
 
   void AbsorbBytes(const Bytes &data) {
     state_ = TaggedHash(static_cast<Byte>(0x01), state_, data);
+  }
+
+  void AbsorbDigest(const Digest &digest) {
+    const Bytes tmp(digest.begin(), digest.end());
+    AbsorbBytes(tmp);
   }
 
   void AbsorbFieldElement(const FieldElement &x) {
@@ -328,7 +334,7 @@ void ValidateParamsOrThrow(const FoldableCodeParams &params) {
 void AbsorbPublicInput(Sha256Transcript &transcript, const MerkleRoot &commitment,
                        const std::vector<FieldElement> &z,
                        const FieldElement &y) {
-  transcript.AbsorbBytes(commitment);
+  transcript.AbsorbDigest(commitment);
   for (const FieldElement &zi : z) {
     transcript.AbsorbFieldElement(zi);
   }
@@ -419,7 +425,7 @@ BaseFoldPCSEvalProof BaseFoldPCSProveEvalUnchecked(
         MerkleTree::Build(oracles.pi[static_cast<std::size_t>(i)]);
     const MerkleRoot root_i = merkle[static_cast<std::size_t>(i)].Root();
     proof.commitments.roots_by_level[static_cast<std::size_t>(i)] = root_i;
-    transcript.AbsorbBytes(root_i);
+    transcript.AbsorbDigest(root_i);
 
     sumcheck.ReceiveChallenge(r_i);
     if (i > 0) {
@@ -473,6 +479,10 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
                            long num_queries,
                            const BaseFoldPCSEvalProof &proof,
                            const FoldableCodeParams &params) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->pcs_verify_ns : nullptr,
+                    prof ? &prof->pcs_verify_calls : nullptr);
+
   ValidateParamsOrThrow(params);
   if (params.k0 != 1)
     return false;
@@ -511,7 +521,7 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
         transcript.ChallengeFieldElement("r/" + std::to_string(i));
     r_by_level[static_cast<std::size_t>(i)] = r_i;
 
-    transcript.AbsorbBytes(
+    transcript.AbsorbDigest(
         proof.commitments.roots_by_level[static_cast<std::size_t>(i)]);
     if (i > 0) {
       transcript.AbsorbQuadraticPoly(

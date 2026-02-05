@@ -53,32 +53,37 @@ vec_ZZ_pE BooleanEvalTableFromMonomialCoeffs(const vec_ZZ_pE &coeffs, long k) {
   return eval;
 }
 
-std::vector<ZZ_pE> PrefixEqProducts(const std::vector<ZZ_pE> &z, long k_minus_1) {
-  if (k_minus_1 < 0)
-    LogicError("PrefixEqProducts: negative k_minus_1");
-  if (k_minus_1 > static_cast<long>(z.size()))
-    LogicError("PrefixEqProducts: k_minus_1 exceeds dimension");
+std::vector<vec_ZZ_pE> PrecomputePrefixEqByVars(
+    const std::vector<ZZ_pE> &z) {
+  const long d = static_cast<long>(z.size());
+  if (d < 0) LogicError("PrecomputePrefixEqByVars: negative dimension");
 
+  std::vector<vec_ZZ_pE> out;
+  if (d == 0) return out;
+
+  out.resize(static_cast<std::size_t>(d));
   const ZZ_pE one = One();
-  std::vector<ZZ_pE> prod;
-  prod.resize(1);
-  prod[0] = one;
 
-  for (long var = 0; var < k_minus_1; ++var) {
-    const ZZ_pE z_var = z[static_cast<std::size_t>(var)];
+  out[0].SetLength(1);
+  out[0][0] = one;
+
+  // out[t] uses z[0..t-1] and has length 2^t.
+  for (long t = 1; t < d; ++t) {
+    const ZZ_pE z_var = z[static_cast<std::size_t>(t - 1)];
     const ZZ_pE f0 = one - z_var;  // factor(var, 0)
     const ZZ_pE f1 = z_var;        // factor(var, 1)
 
-    const std::size_t old = prod.size();
-    prod.resize(old * 2);
-    for (std::size_t mask = 0; mask < old; ++mask) {
-      const ZZ_pE base = prod[mask];
-      prod[mask] = base * f0;
-      prod[mask + old] = base * f1;
+    const vec_ZZ_pE &prev = out[static_cast<std::size_t>(t - 1)];
+    const long old = prev.length();
+    out[static_cast<std::size_t>(t)].SetLength(2 * old);
+    for (long mask = 0; mask < old; ++mask) {
+      const ZZ_pE base = prev[mask];
+      out[static_cast<std::size_t>(t)][mask] = base * f0;
+      out[static_cast<std::size_t>(t)][mask + old] = base * f1;
     }
   }
 
-  return prod;
+  return out;
 }
 
 }  // namespace
@@ -98,7 +103,8 @@ SumcheckProver::SumcheckProver(const FieldVec &f_coeffs,
     LogicError("SumcheckProver: z dimension mismatch");
 
   cur_k_ = d_;
-  coeffs_rem_ = f_coeffs;
+  f_eval_table_ = BooleanEvalTableFromMonomialCoeffs(f_coeffs, d_);
+  prefix_eq_by_vars_ = PrecomputePrefixEqByVars(z_);
   suffix_eq_prod_ = One();
 }
 
@@ -107,15 +113,17 @@ QuadraticPoly SumcheckProver::CurrentPolynomial() const {
     LogicError("SumcheckProver::CurrentPolynomial: no remaining variables");
 
   const long k = cur_k_;
-  const long n = coeffs_rem_.length();
+  const long n = f_eval_table_.length();
   if (n != (1L << k))
     LogicError("SumcheckProver::CurrentPolynomial: internal length mismatch");
 
-  const vec_ZZ_pE eval = BooleanEvalTableFromMonomialCoeffs(coeffs_rem_, k);
   const long half = 1L << (k - 1);
 
-  const std::vector<ZZ_pE> prefix = PrefixEqProducts(z_, k - 1);
-  if (static_cast<long>(prefix.size()) != half)
+  if (static_cast<long>(prefix_eq_by_vars_.size()) != d_)
+    LogicError("SumcheckProver::CurrentPolynomial: prefix table size mismatch");
+  const vec_ZZ_pE &prefix =
+      prefix_eq_by_vars_[static_cast<std::size_t>(k - 1)];
+  if (prefix.length() != half)
     LogicError("SumcheckProver::CurrentPolynomial: prefix size mismatch");
 
   const ZZ_pE one = One();
@@ -131,13 +139,13 @@ QuadraticPoly SumcheckProver::CurrentPolynomial() const {
 
   for (long mask = 0; mask < half; ++mask) {
     const ZZ_pE common =
-        prefix[static_cast<std::size_t>(mask)] * suffix_eq_prod_;
+        prefix[mask] * suffix_eq_prod_;
 
     const ZZ_pE eq0 = common * factor0;
     const ZZ_pE delta_eq = common * delta_factor;
 
-    const ZZ_pE f0 = eval[mask];
-    const ZZ_pE f1 = eval[mask + half];
+    const ZZ_pE f0 = f_eval_table_[mask];
+    const ZZ_pE f1 = f_eval_table_[mask + half];
     const ZZ_pE delta_f = f1 - f0;
 
     out.a0 += f0 * eq0;
@@ -153,7 +161,7 @@ void SumcheckProver::ReceiveChallenge(const FieldElement &r_kminus1) {
     LogicError("SumcheckProver::ReceiveChallenge: no remaining variables");
 
   const long k = cur_k_;
-  const long n = coeffs_rem_.length();
+  const long n = f_eval_table_.length();
   if (n != (1L << k))
     LogicError("SumcheckProver::ReceiveChallenge: internal length mismatch");
 
@@ -161,9 +169,11 @@ void SumcheckProver::ReceiveChallenge(const FieldElement &r_kminus1) {
 
   const long half = n / 2;
   for (long i = 0; i < half; ++i) {
-    coeffs_rem_[i] = coeffs_rem_[i] + coeffs_rem_[i + half] * r_kminus1;
+    const ZZ_pE f0 = f_eval_table_[i];
+    const ZZ_pE f1 = f_eval_table_[i + half];
+    f_eval_table_[i] = f0 + (f1 - f0) * r_kminus1;
   }
-  coeffs_rem_.SetLength(half);
+  f_eval_table_.SetLength(half);
   --cur_k_;
 }
 
@@ -199,4 +209,3 @@ bool CheckSumcheckRelations(const std::vector<QuadraticPoly> &h_by_level,
 }
 
 }  // namespace basefold
-

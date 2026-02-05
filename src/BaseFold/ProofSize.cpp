@@ -15,7 +15,7 @@ std::size_t SerializedFieldElementSize(const FieldElement &x) {
   if (r <= 0)
     NTL::LogicError("SerializedFieldElementSize: invalid extension degree");
 
-  const NTL::ZZ_pX poly = NTL::rep(x);
+  const NTL::ZZ_pX &poly = NTL::rep(x);
   std::size_t total = 8;  // degree r as u64
   for (long i = 0; i < r; ++i) {
     const NTL::ZZ c = NTL::rep(NTL::coeff(poly, i));
@@ -28,18 +28,11 @@ std::size_t SerializedFieldElementSize(const FieldElement &x) {
 }
 
 std::size_t SerializedMerkleOpeningSize(const MerkleOpening &o) {
+  static constexpr std::size_t kHashBytes = 32;
   std::size_t total = 0;
   total += 8;  // index as u64
   total += SerializedFieldElementSize(o.value);
-
-  if (o.auth_path.sibling_hashes.size() != o.auth_path.sibling_is_left.size()) {
-    NTL::LogicError("SerializedMerkleOpeningSize: auth_path size mismatch");
-  }
-
-  for (const Bytes &h : o.auth_path.sibling_hashes) {
-    total += h.size();  // hash bytes (sha256 in current implementation)
-  }
-  total += o.auth_path.sibling_is_left.size();  // 1 byte per direction bit
+  total += o.auth_path.sibling_hashes.size() * kHashBytes;
   return total;
 }
 
@@ -83,4 +76,3 @@ double BaseFoldPCSEvalProofSizeKB(const BaseFoldPCSEvalProof &proof) {
 }
 
 }  // namespace basefold
-

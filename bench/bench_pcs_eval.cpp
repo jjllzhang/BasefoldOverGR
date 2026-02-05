@@ -16,6 +16,7 @@
 
 #include "BaseFold/BaseFoldPCS.hpp"
 #include "BaseFold/Multilinear.hpp"
+#include "BaseFold/Profile.hpp"
 
 using NTL::conv;
 using NTL::LogicError;
@@ -245,6 +246,8 @@ struct BenchResult {
   Stats prover;
   Stats verifier;
   std::uint64_t sink = 0;
+  basefold::Profile profile;
+  bool has_profile = false;
 };
 
 BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
@@ -253,6 +256,7 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
                              long num_queries,
                              const basefold::FoldableCodeParams &params,
                              bool checked_prover,
+                             bool enable_profile,
                              int warmup, int reps) {
   if (warmup < 0) LogicError("RunEvalBenchmark: warmup must be >= 0");
   if (reps <= 0) LogicError("RunEvalBenchmark: reps must be > 0");
@@ -262,6 +266,9 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
   std::vector<double> verifier_ms;
   prover_ms.reserve(static_cast<std::size_t>(reps));
   verifier_ms.reserve(static_cast<std::size_t>(reps));
+
+  basefold::Profile prof;
+  basefold::ResetProfile(prof);
 
   std::uint64_t sink = 0;
 
@@ -277,8 +284,13 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
         proof.commitments.roots_by_level[static_cast<std::size_t>(params.d)];
 
     const auto t2 = std::chrono::steady_clock::now();
-    const bool ok =
-        basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params);
+    bool ok = false;
+    if (enable_profile && iter >= 0) {
+      basefold::ProfileGuard guard(&prof);
+      ok = basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params);
+    } else {
+      ok = basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params);
+    }
     const auto t3 = std::chrono::steady_clock::now();
 
     if (!ok) {
@@ -300,6 +312,8 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
   out.prover = ComputeStats(prover_ms);
   out.verifier = ComputeStats(verifier_ms);
   out.sink = sink;
+  out.profile = prof;
+  out.has_profile = enable_profile;
   return out;
 }
 
@@ -323,6 +337,9 @@ void PrintResult(const std::string &label, long mod, long c, long d,
             << r.verifier.min_ms << ", max " << r.verifier.max_ms << ")\n";
 
   std::cout << "  sink    " << r.sink << "\n";
+  if (r.has_profile) {
+    basefold::PrintProfile(std::cout, r.profile);
+  }
 }
 
 bool ParseLong(const char *s, long &out) {
@@ -367,7 +384,7 @@ void PrintHelp() {
       << "bench_pcs_eval (PCS prove+verify, includes Merkle+FS)\n\n"
       << "Usage:\n"
       << "  bench_pcs_eval [--mode field|ring|both] [--c <int>] [--d <int>]\n"
-      << "               [--queries <int>] [--checked] [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
+      << "               [--queries <int>] [--checked] [--profile] [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
       << "               [--field-mod <int>] [--field-F <a0,a1,...>] [--field-zeta <b0,b1,...>]\n"
       << "               [--ring-mod <int>]  [--ring-p <int>] [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
       << "Notes:\n"
@@ -380,7 +397,8 @@ void PrintHelp() {
 }
 
 void RunOneContext(const ContextSpec &spec, long c, long d, long num_queries,
-                   bool checked_prover, int warmup, int reps,
+                   bool checked_prover, bool enable_profile, int warmup,
+                   int reps,
                    std::uint64_t seed) {
   if (spec.mod <= 1) LogicError("RunOneContext: modulus must be > 1");
 
@@ -403,8 +421,9 @@ void RunOneContext(const ContextSpec &spec, long c, long d, long num_queries,
   const std::vector<ZZ_pE> z = MakeDeterministicPoint(d, seed ^ 0xdeadbeefULL);
   const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
 
-  const BenchResult r = RunEvalBenchmark(f_coeffs, z, y, num_queries, params,
-                                        checked_prover, warmup, reps);
+  const BenchResult r =
+      RunEvalBenchmark(f_coeffs, z, y, num_queries, params, checked_prover,
+                       enable_profile, warmup, reps);
   PrintResult(spec.label, spec.mod, c, d, num_queries, warmup, reps, r);
 }
 
@@ -415,6 +434,7 @@ int main(int argc, char **argv) {
   long c = 2;
   long num_queries = 4;
   bool checked_prover = false;
+  bool enable_profile = false;
   int warmup = 1;
   int reps = 3;
   std::uint64_t seed = 0;
@@ -478,6 +498,8 @@ int main(int argc, char **argv) {
       }
     } else if (arg == "--checked") {
       checked_prover = true;
+    } else if (arg == "--profile") {
+      enable_profile = true;
     } else if (arg == "--warmup") {
       if (!ParseInt(NeedValue("--warmup"), warmup) || warmup < 0) {
         std::cerr << "Invalid --warmup\n";
@@ -528,11 +550,11 @@ int main(int argc, char **argv) {
       return 2;
     }
     if (do_field)
-      RunOneContext(field, c, d, num_queries, checked_prover, warmup, reps,
-                    seed);
+      RunOneContext(field, c, d, num_queries, checked_prover, enable_profile,
+                    warmup, reps, seed);
     if (do_ring)
-      RunOneContext(ring, c, d, num_queries, checked_prover, warmup, reps,
-                    seed);
+      RunOneContext(ring, c, d, num_queries, checked_prover, enable_profile,
+                    warmup, reps, seed);
   } catch (const std::exception &e) {
     std::cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;

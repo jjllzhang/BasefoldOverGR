@@ -26,6 +26,7 @@
 │       ├── IOPP.hpp
 │       ├── Multilinear.hpp
 │       ├── Sumcheck.hpp
+│       ├── Profile.hpp
 │       ├── ProofSize.hpp
 │       └── BaseFoldPCS.hpp
 ├── src
@@ -126,6 +127,15 @@
   - query verifier：`VerifyQueryFromOracles/VerifyQueryFromMerkleOpenings`
   - Merkle 承诺与 opening：`MerkleCommitOracle/MerkleOpenOracle/MerkleVerifyOpening`
 
+### `include/BaseFold/Profile.hpp`
+
+- 轻量、可选的 profiler（bench-oriented）：用于把 verifier 的时间拆分到 Merkle、折叠一致性（`EvalLineAt`）与环算术（如求逆）等模块。
+- 核心接口：
+  - `basefold::Profile`：累计器（ns + calls）。
+  - `basefold::ProfileGuard`：在当前线程启用/关闭 profiling（基于 `thread_local`）。
+  - `basefold::ScopedTimer`：RAII 计时器（仅在启用 profiling 时计时，默认开销极低）。
+  - `basefold::PrintProfile`：格式化输出 profile 结果。
+
 ### `include/BaseFold/BaseFoldPCS.hpp` / `src/BaseFold/BaseFoldPCS.cpp`
 
 - 一个最小化的非交互 BaseFold PCS 单点求值证明（Protocol 4 + Merkle + Fiat–Shamir）：
@@ -146,6 +156,7 @@
 
 - PCS eval proof 性能基准：测量 prover time 与 verifier time（Merkle + Fiat–Shamir）。
 - 默认 prover 走 `BaseFoldPCSProveEvalUnchecked`；如需把校验也算进 prover time，可加 `--checked`。
+- 可加 `--profile` 输出 verifier 内部耗时拆分（profile 会在 `reps` 次迭代上累加，不包含 `warmup`；建议 `--warmup 0 --reps 1` 方便阅读）。
 
 ### `bench/bench_pcs_proof_size.cpp`
 
@@ -176,6 +187,13 @@ ctest --test-dir build
 
 ## Bench
 
+如需更稳定/可对比的性能数据，建议使用 Release 构建（Debug/未优化构建用于 correctness 测试即可）：
+
+```bash
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release
+```
+
 构建后可运行：
 
 ```bash
@@ -203,6 +221,9 @@ ctest --test-dir build
 # 如需将这些检查也计入 prover time，可添加 --checked：
 ./build/bench_pcs_eval --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4 --checked --reps 3 --warmup 1
 
+# Verifier profiling（建议用 Release 构建；为便于阅读建议 warmup=0 reps=1）
+./build-release/bench_pcs_eval --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4 --profile --warmup 0 --reps 1
+
 # PCS eval proof size estimate (GR(4,2))
 ./build/bench_pcs_proof_size --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4
 
@@ -212,6 +233,32 @@ ctest --test-dir build
 # 只根据参数做近似/上界估算（不运行 prover），可加 --formula：
 ./build/bench_pcs_proof_size --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4 --formula
 ```
+
+### Verifier profiling（`--profile`）
+
+`bench_pcs_eval --profile` 会在 verifier 阶段打印一个 breakdown（数值用 `...` 省略）：
+
+```text
+[Ring] ...  queries=4  warmup=0 reps=1
+  verifier mean ... ms
+  [profile]
+    BaseFoldPCSVerifyEval total: ... ms  (calls 1)
+    VerifyQueryFromMerkleOpenings: ... ms  (calls 4)
+    MerkleVerifyOpening:         ... ms  (calls ...)
+    EvalLineAt:                  ... ms  (calls ...)
+    ...
+    Outside queries:             ... ms
+```
+
+- `BaseFoldPCSVerifyEval total`：总 verifier 时间。
+- `VerifyQueryFromMerkleOpenings`：所有 query 的检查时间（calls=queries），其中包含 Merkle opening 校验与 folding 一致性检查。
+- `Inside queries other` / `Outside queries`：帮助定位“query 内/外”的其它开销（如 transcript、sumcheck relation check、`EqPolynomial` 等）。
+
+#### 验证完整性说明（不会减少 proof 校验步骤）
+
+- `--profile` 只是在关键函数周围打点计时，不改变任何验证逻辑。
+- verifier 近期的主要加速来自工程优化：对 `FoldableCodeParams` 的合法性检查做缓存，避免在热路径上重复扫描 `diag_T`。这不会减少 Merkle opening 校验次数、folding 一致性检查次数，也不会减少 sumcheck 关系检查等协议级验证步骤。
+- 该缓存假设 `FoldableCodeParams` 在构造后是不可变配置（尤其 `diag_T/zeta/G0`）。如果调用方原地修改 `params`，缓存可能导致后续不再重复触发参数错误检查；但这属于 API 误用，与 proof 验证完整性无关。
 
 ## Proof size（估算）
 

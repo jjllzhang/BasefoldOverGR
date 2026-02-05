@@ -171,7 +171,7 @@ std::uint64_t MerkleOpeningBytes(std::uint64_t leaf_count,
   unsigned __int128 total = 0;
   total += 8;  // index
   total += field_elem_bytes;
-  total += static_cast<unsigned __int128>(height) * (kHashBytes + 1);  // sibling hashes + direction bits
+  total += static_cast<unsigned __int128>(height) * kHashBytes;  // sibling hashes
 
   if (total > std::numeric_limits<std::uint64_t>::max())
     LogicError("MerkleOpeningBytes: overflow");

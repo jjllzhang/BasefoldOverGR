@@ -1,4 +1,5 @@
 #include "BaseFold/IOPP.hpp"
+#include "BaseFold/Profile.hpp"
 
 #include <NTL/ZZ.h>
 #include <NTL/ZZ_p.h>
@@ -32,7 +33,12 @@ using NTL::ZZ_pE;
 using NTL::ZZ_pX;
 
 namespace basefold {
+
+thread_local Profile *g_active_profile = nullptr;
+
 namespace {
+
+constexpr std::size_t kSha256DigestBytes = 32;
 
 long Pow2Checked(long e) {
   if (e < 0)
@@ -47,37 +53,40 @@ void ValidateParamsOrThrow(const FoldableCodeParams &params) {
   (void)MessageLength(params);
 }
 
-void AppendU64(Bytes &out, std::uint64_t v) {
+void WriteU64BE(Byte *out, std::uint64_t v) {
   for (int i = 7; i >= 0; --i) {
-    out.push_back(static_cast<Byte>((v >> (8 * i)) & 0xff));
+    out[7 - i] = static_cast<Byte>((v >> (8 * i)) & 0xff);
   }
 }
 
-Bytes ZZToBytes(const ZZ &x) {
-  const long n = NumBytes(x);
-  Bytes out;
-  out.resize(static_cast<std::size_t>(n));
-  if (n > 0) {
-    BytesFromZZ(reinterpret_cast<unsigned char *>(out.data()), x, n);
-  }
-  return out;
-}
+struct FieldEncodingInfo {
+  long degree = 0;        // extension degree r
+  long coeff_bytes = 0;   // fixed big-endian bytes per ZZ_p coefficient
+};
 
-Bytes SerializeFieldElement(const FieldElement &x) {
+FieldEncodingInfo CurrentFieldEncodingInfo() {
   const long r = ZZ_pE::degree();
-  if (r <= 0)
-    LogicError("SerializeFieldElement: invalid extension degree");
+  if (r <= 0) LogicError("CurrentFieldEncodingInfo: invalid extension degree");
 
-  const ZZ_pX poly = rep(x);
-  Bytes out;
-  AppendU64(out, static_cast<std::uint64_t>(r));
-  for (long i = 0; i < r; ++i) {
-    const ZZ c = rep(coeff(poly, i));
-    const Bytes c_bytes = ZZToBytes(c);
-    AppendU64(out, static_cast<std::uint64_t>(c_bytes.size()));
-    out.insert(out.end(), c_bytes.begin(), c_bytes.end());
+  static thread_local ZZ cached_modulus;
+  static thread_local long cached_r = 0;
+  static thread_local long cached_coeff_bytes = 0;
+  static thread_local bool has_cache = false;
+
+  const ZZ modulus = NTL::ZZ_p::modulus();
+  if (!has_cache || r != cached_r || modulus != cached_modulus) {
+    cached_modulus = modulus;
+    cached_r = r;
+    const ZZ max_coeff = modulus - 1;
+    const long bytes = NumBytes(max_coeff);
+    cached_coeff_bytes = (bytes > 0) ? bytes : 1;
+    has_cache = true;
   }
-  return out;
+
+  FieldEncodingInfo info;
+  info.degree = cached_r;
+  info.coeff_bytes = cached_coeff_bytes;
+  return info;
 }
 
 bool IsUnitInBaseRing(const NTL::ZZ_p &a) {
@@ -87,10 +96,28 @@ bool IsUnitInBaseRing(const NTL::ZZ_p &a) {
   return g == 1;
 }
 
+bool BaseModulusIsPrime() {
+  static thread_local ZZ cached_modulus;
+  static thread_local bool cached_is_prime = false;
+  static thread_local bool has_cache = false;
+
+  const ZZ modulus = NTL::ZZ_p::modulus();
+  if (!has_cache || modulus != cached_modulus) {
+    cached_modulus = modulus;
+    cached_is_prime = NTL::ProbPrime(modulus);
+    has_cache = true;
+  }
+  return cached_is_prime;
+}
+
 bool IsUnit(const ZZ_pE &a) {
   if (a == 0) return false;
-  const NTL::ZZ_pX poly = rep(a);
   const long r = ZZ_pE::degree();
+  if (r <= 0) LogicError("IsUnit: invalid extension degree");
+  if (r == 1) {
+    return IsUnitInBaseRing(coeff(rep(a), 0));
+  }
+  const NTL::ZZ_pX &poly = rep(a);
   for (long i = 0; i < r; ++i) {
     if (IsUnitInBaseRing(coeff(poly, i))) return true;
   }
@@ -98,83 +125,165 @@ bool IsUnit(const ZZ_pE &a) {
 }
 
 bool TryInvertUnit(ZZ_pE &inv_out, const ZZ_pE &a) {
-  if (!IsUnit(a)) return false;
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->try_invert_unit_ns : nullptr,
+                    prof ? &prof->try_invert_unit_calls : nullptr);
 
+  if (a == 0) return false;
   const long r = ZZ_pE::degree();
   if (r <= 0) LogicError("TryInvertUnit: invalid extension degree");
 
-  if (r == 1) {
-    const NTL::ZZ a_rep = NTL::rep(coeff(rep(a), 0));
-    NTL::ZZ inv_rep;
-    if (NTL::InvModStatus(inv_rep, a_rep, NTL::ZZ_p::modulus()) != 0) return false;
-    NTL::ZZ_p inv_base;
-    NTL::conv(inv_base, inv_rep);
-    NTL::ZZ_pX poly;
-    NTL::clear(poly);
-    NTL::SetCoeff(poly, 0, inv_base);
-    NTL::conv(inv_out, poly);
+  // Context-aware single-entry cache: inversions are often repeated (e.g. when
+  // diag_T is constant, all folding denominators match).
+  static thread_local bool cache_valid = false;
+  static thread_local ZZ cache_modulus;
+  static thread_local long cache_r = 0;
+  static thread_local ZZ_pE cache_a;
+  static thread_local ZZ_pE cache_inv;
+
+  const ZZ modulus = NTL::ZZ_p::modulus();
+  if (cache_valid && cache_r == r && modulus == cache_modulus && a == cache_a) {
+    if (prof != nullptr) ++prof->try_invert_unit_cache_hits;
+    inv_out = cache_inv;
     return true;
   }
 
-  inv_out = Inv(a, r);
-  if (inv_out == 0) return false;
-  ZZ_pE one;
-  NTL::set(one);
-  return a * inv_out == one;
+  ZZ_pE inv_candidate;
+  bool ok = false;
+
+  if (BaseModulusIsPrime()) {
+    try {
+      inv_candidate = NTL::inv(a);
+      ok = true;
+    } catch (...) {
+      ok = false;
+    }
+    if (!ok) return false;
+  } else {
+    bool is_unit = false;
+    if (prof != nullptr) {
+      ScopedTimer is_unit_timer(&prof->is_unit_ns, &prof->is_unit_calls);
+      is_unit = IsUnit(a);
+    } else {
+      is_unit = IsUnit(a);
+    }
+    if (!is_unit) return false;
+
+    if (r == 1) {
+      if (prof != nullptr) {
+        ScopedTimer inv_timer(&prof->inv_fallback_ns,
+                              &prof->inv_fallback_calls);
+        const NTL::ZZ a_rep = NTL::rep(coeff(rep(a), 0));
+        NTL::ZZ inv_rep;
+        if (NTL::InvModStatus(inv_rep, a_rep, NTL::ZZ_p::modulus()) != 0)
+          return false;
+        NTL::ZZ_p inv_base;
+        NTL::conv(inv_base, inv_rep);
+        NTL::ZZ_pX poly;
+        NTL::clear(poly);
+        NTL::SetCoeff(poly, 0, inv_base);
+        NTL::conv(inv_candidate, poly);
+        ok = true;
+      } else {
+        const NTL::ZZ a_rep = NTL::rep(coeff(rep(a), 0));
+        NTL::ZZ inv_rep;
+        if (NTL::InvModStatus(inv_rep, a_rep, NTL::ZZ_p::modulus()) != 0)
+          return false;
+        NTL::ZZ_p inv_base;
+        NTL::conv(inv_base, inv_rep);
+        NTL::ZZ_pX poly;
+        NTL::clear(poly);
+        NTL::SetCoeff(poly, 0, inv_base);
+        NTL::conv(inv_candidate, poly);
+        ok = true;
+      }
+    } else {
+      if (prof != nullptr) {
+        ScopedTimer inv_timer(&prof->inv_fallback_ns,
+                              &prof->inv_fallback_calls);
+        inv_candidate = Inv(a, r);
+      } else {
+        inv_candidate = Inv(a, r);
+      }
+      if (inv_candidate == 0) return false;
+      ZZ_pE one;
+      NTL::set(one);
+      ok = (a * inv_candidate == one);
+    }
+
+    if (!ok) return false;
+  }
+
+  inv_out = inv_candidate;
+
+  cache_valid = true;
+  cache_modulus = modulus;
+  cache_r = r;
+  cache_a = a;
+  cache_inv = inv_candidate;
+
+  return true;
 }
 
-Bytes Sha256(const Byte *data, std::size_t len) {
-  Bytes digest;
-  digest.resize(32);
+Digest Sha256Digest(const Byte *data, std::size_t len) {
+  Digest out;
+  static_assert(out.size() == kSha256DigestBytes,
+                "Digest must be SHA-256 sized");
   unsigned int out_len = 0;
-  const int ok = EVP_Digest(static_cast<const void *>(data), len,
-                            reinterpret_cast<unsigned char *>(digest.data()),
-                            &out_len, EVP_sha256(), nullptr);
+  const int ok =
+      EVP_Digest(static_cast<const void *>(data), len,
+                 reinterpret_cast<unsigned char *>(out.data()), &out_len,
+                 EVP_sha256(), nullptr);
   if (ok != 1) {
-    LogicError("Sha256: EVP_Digest failed");
+    LogicError("Sha256Digest: EVP_Digest failed");
   }
-  if (out_len != digest.size()) {
-    LogicError("Sha256: unexpected digest size");
+  if (out_len != out.size()) {
+    LogicError("Sha256Digest: unexpected digest size");
   }
-  return digest;
+  return out;
 }
 
-Bytes Sha256(const Bytes &data) { return Sha256(data.data(), data.size()); }
-
-Bytes HashWithPrefix(Byte prefix, const Bytes &payload) {
-  Bytes in;
-  in.reserve(1 + payload.size());
-  in.push_back(prefix);
-  in.insert(in.end(), payload.begin(), payload.end());
-  return Sha256(in);
+Digest HashWithPrefix(Byte prefix) {
+  return Sha256Digest(&prefix, 1);
 }
 
-Bytes HashNode(const Bytes &left, const Bytes &right) {
-  Bytes in;
-  in.reserve(1 + left.size() + right.size());
-  in.push_back(static_cast<Byte>(0x01));
-  in.insert(in.end(), left.begin(), left.end());
-  in.insert(in.end(), right.begin(), right.end());
-  return Sha256(in);
+Digest HashNode(const Digest &left, const Digest &right) {
+  std::array<Byte, 1 + 2 * kSha256DigestBytes> in{};
+  in[0] = static_cast<Byte>(0x01);
+  std::memcpy(in.data() + 1, left.data(), left.size());
+  std::memcpy(in.data() + 1 + left.size(), right.data(), right.size());
+  return Sha256Digest(in.data(), in.size());
 }
 
-Bytes HashLeaf(long index, const FieldElement &value) {
-  Bytes in;
-  in.reserve(1 + 8 + 64);
-  in.push_back(static_cast<Byte>(0x00));
-  AppendU64(in, static_cast<std::uint64_t>(index));
-  const Bytes enc = SerializeFieldElement(value);
-  in.insert(in.end(), enc.begin(), enc.end());
-  return Sha256(in);
+Digest HashLeaf(long index, const FieldElement &value) {
+  const FieldEncodingInfo enc = CurrentFieldEncodingInfo();
+  const std::size_t coeff_bytes = static_cast<std::size_t>(enc.coeff_bytes);
+  const std::size_t payload_bytes =
+      1 + 8 + static_cast<std::size_t>(enc.degree) * coeff_bytes;
+
+  static thread_local std::vector<Byte> in;
+  in.resize(payload_bytes);
+  in[0] = static_cast<Byte>(0x00);
+  WriteU64BE(in.data() + 1, static_cast<std::uint64_t>(index));
+
+  const ZZ_pX &poly = rep(value);
+  std::size_t off = 1 + 8;
+  for (long i = 0; i < enc.degree; ++i) {
+    const ZZ c = rep(coeff(poly, i));
+    BytesFromZZ(reinterpret_cast<unsigned char *>(in.data() + off), c,
+                enc.coeff_bytes);
+    off += coeff_bytes;
+  }
+
+  return Sha256Digest(in.data(), in.size());
 }
 
-Bytes HashRootWithCount(long leaf_count, const Bytes &raw_root) {
-  Bytes in;
-  in.reserve(1 + 8 + raw_root.size());
-  in.push_back(static_cast<Byte>(0x03));
-  AppendU64(in, static_cast<std::uint64_t>(leaf_count));
-  in.insert(in.end(), raw_root.begin(), raw_root.end());
-  return Sha256(in);
+Digest HashRootWithCount(long leaf_count, const Digest &raw_root) {
+  std::array<Byte, 1 + 8 + kSha256DigestBytes> in{};
+  in[0] = static_cast<Byte>(0x03);
+  WriteU64BE(in.data() + 1, static_cast<std::uint64_t>(leaf_count));
+  std::memcpy(in.data() + 1 + 8, raw_root.data(), raw_root.size());
+  return Sha256Digest(in.data(), in.size());
 }
 
 std::size_t ExpectedMerkleHeight(long leaf_count) {
@@ -191,15 +300,14 @@ std::size_t ExpectedMerkleHeight(long leaf_count) {
   return height;
 }
 
-Bytes MerkleRootRaw(const std::vector<Bytes> &leaf_hashes) {
-  if (leaf_hashes.empty())
-    return HashWithPrefix(static_cast<Byte>(0x04), {});
+Digest MerkleRootRaw(std::vector<Digest> level) {
+  if (level.empty())
+    return HashWithPrefix(static_cast<Byte>(0x04));
 
-  std::vector<Bytes> level = leaf_hashes;
   while (level.size() > 1) {
     if (level.size() % 2 == 1)
       level.push_back(level.back());
-    std::vector<Bytes> next;
+    std::vector<Digest> next;
     next.reserve(level.size() / 2);
     for (std::size_t i = 0; i < level.size(); i += 2) {
       next.push_back(HashNode(level[i], level[i + 1]));
@@ -346,6 +454,10 @@ void FoldingPoints(FieldElement &x_left, FieldElement &x_right,
 FieldElement EvalLineAt(const FieldElement &x, const FieldElement &x1,
                         const FieldElement &y1, const FieldElement &x2,
                         const FieldElement &y2) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->eval_line_at_ns : nullptr,
+                    prof ? &prof->eval_line_at_calls : nullptr);
+
   const FieldElement denom = x2 - x1;
   if (denom == 0)
     LogicError("EvalLineAt: x1 must not equal x2");
@@ -504,18 +616,22 @@ bool VerifyQueryFromOracles(const IOPPQueryPlan &plan,
 }
 
 MerkleRoot MerkleCommitOracle(const Oracle &oracle) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->merkle_commit_oracle_ns : nullptr,
+                    prof ? &prof->merkle_commit_oracle_calls : nullptr);
+
   const long leaf_count = oracle.length();
   if (leaf_count < 0)
     LogicError("MerkleCommitOracle: invalid leaf count");
   if (leaf_count == 0)
-    return HashRootWithCount(0, MerkleRootRaw({}));
+    return HashRootWithCount(0, HashWithPrefix(static_cast<Byte>(0x04)));
 
-  std::vector<Bytes> leaf_hashes;
+  std::vector<Digest> leaf_hashes;
   leaf_hashes.reserve(static_cast<std::size_t>(leaf_count));
   for (long i = 0; i < leaf_count; ++i) {
     leaf_hashes.push_back(HashLeaf(i, oracle[i]));
   }
-  const Bytes raw_root = MerkleRootRaw(leaf_hashes);
+  const Digest raw_root = MerkleRootRaw(std::move(leaf_hashes));
   return HashRootWithCount(leaf_count, raw_root);
 }
 
@@ -525,7 +641,7 @@ MerkleOpening MerkleOpenOracle(const Oracle &oracle, long index) {
     LogicError("MerkleOpenOracle: index out of range");
   }
 
-  std::vector<Bytes> level;
+  std::vector<Digest> level;
   level.reserve(static_cast<std::size_t>(leaf_count));
   for (long i = 0; i < leaf_count; ++i) {
     level.push_back(HashLeaf(i, oracle[i]));
@@ -534,7 +650,6 @@ MerkleOpening MerkleOpenOracle(const Oracle &oracle, long index) {
   MerkleAuthPath path;
   const std::size_t height = ExpectedMerkleHeight(leaf_count);
   path.sibling_hashes.reserve(height);
-  path.sibling_is_left.reserve(height);
 
   long idx = index;
   while (level.size() > 1) {
@@ -543,9 +658,8 @@ MerkleOpening MerkleOpenOracle(const Oracle &oracle, long index) {
 
     const long sibling = (idx % 2 == 0) ? (idx + 1) : (idx - 1);
     path.sibling_hashes.push_back(level[static_cast<std::size_t>(sibling)]);
-    path.sibling_is_left.push_back(idx % 2 == 1);
 
-    std::vector<Bytes> next;
+    std::vector<Digest> next;
     next.reserve(level.size() / 2);
     for (std::size_t i = 0; i < level.size(); i += 2) {
       next.push_back(HashNode(level[i], level[i + 1]));
@@ -563,6 +677,10 @@ MerkleOpening MerkleOpenOracle(const Oracle &oracle, long index) {
 
 bool MerkleVerifyOpening(const MerkleRoot &root, long leaf_count,
                          const MerkleOpening &opening) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->merkle_verify_opening_ns : nullptr,
+                    prof ? &prof->merkle_verify_opening_calls : nullptr);
+
   if (leaf_count < 0)
     return false;
   if (opening.index < 0 || opening.index >= leaf_count)
@@ -571,20 +689,20 @@ bool MerkleVerifyOpening(const MerkleRoot &root, long leaf_count,
   const std::size_t expected_height = ExpectedMerkleHeight(leaf_count);
   if (opening.auth_path.sibling_hashes.size() != expected_height)
     return false;
-  if (opening.auth_path.sibling_is_left.size() != expected_height)
-    return false;
 
-  Bytes cur = HashLeaf(opening.index, opening.value);
+  Digest cur = HashLeaf(opening.index, opening.value);
+  long idx = opening.index;
   for (std::size_t i = 0; i < expected_height; ++i) {
-    const Bytes &sib = opening.auth_path.sibling_hashes[i];
-    if (opening.auth_path.sibling_is_left[i]) {
+    const Digest &sib = opening.auth_path.sibling_hashes[i];
+    if (idx % 2 == 1) {
       cur = HashNode(sib, cur);
     } else {
       cur = HashNode(cur, sib);
     }
+    idx /= 2;
   }
 
-  const Bytes expected_root = HashRootWithCount(leaf_count, cur);
+  const Digest expected_root = HashRootWithCount(leaf_count, cur);
   return expected_root == root;
 }
 
@@ -596,14 +714,14 @@ MerkleTree MerkleTree::Build(const Oracle &oracle) {
   MerkleTree t;
   t.leaf_count_ = leaf_count;
   t.levels_.clear();
-  t.raw_root_.clear();
+  t.raw_root_ = Digest{};
 
   if (leaf_count == 0) {
-    t.raw_root_ = HashWithPrefix(static_cast<Byte>(0x04), {});
+    t.raw_root_ = HashWithPrefix(static_cast<Byte>(0x04));
     return t;
   }
 
-  std::vector<Bytes> level;
+  std::vector<Digest> level;
   level.reserve(static_cast<std::size_t>(leaf_count));
   for (long i = 0; i < leaf_count; ++i) {
     level.push_back(HashLeaf(i, oracle[i]));
@@ -612,13 +730,13 @@ MerkleTree MerkleTree::Build(const Oracle &oracle) {
   while (level.size() > 1) {
     if (level.size() % 2 == 1)
       level.push_back(level.back());
-    t.levels_.push_back(level);
 
-    std::vector<Bytes> next;
+    std::vector<Digest> next;
     next.reserve(level.size() / 2);
     for (std::size_t i = 0; i < level.size(); i += 2) {
       next.push_back(HashNode(level[i], level[i + 1]));
     }
+    t.levels_.push_back(std::move(level));
     level = std::move(next);
   }
 
@@ -641,14 +759,12 @@ MerkleOpening MerkleTree::Open(const Oracle &oracle, long index) const {
   MerkleAuthPath path;
   const std::size_t height = ExpectedMerkleHeight(leaf_count_);
   path.sibling_hashes.reserve(height);
-  path.sibling_is_left.reserve(height);
 
   long idx = index;
   for (std::size_t h = 0; h < height; ++h) {
-    const std::vector<Bytes> &level = levels_[h];
+    const std::vector<Digest> &level = levels_[h];
     const long sibling = (idx % 2 == 0) ? (idx + 1) : (idx - 1);
     path.sibling_hashes.push_back(level[static_cast<std::size_t>(sibling)]);
-    path.sibling_is_left.push_back(idx % 2 == 1);
     idx /= 2;
   }
 
@@ -673,13 +789,17 @@ FiatShamirDeriveChallenges(FiatShamirTranscript &transcript,
   if (params.d == 0)
     return out;
 
-  transcript.AbsorbBytes(
-      commitments.roots_by_level[static_cast<std::size_t>(params.d)]);
+  {
+    const MerkleRoot &root_d =
+        commitments.roots_by_level[static_cast<std::size_t>(params.d)];
+    transcript.AbsorbBytes(root_d.data(), root_d.size());
+  }
   for (long i = params.d; i-- > 0;) {
     out.alphas[static_cast<std::size_t>(i)] =
         transcript.ChallengeFieldElement("alpha/" + std::to_string(i));
-    transcript.AbsorbBytes(
-        commitments.roots_by_level[static_cast<std::size_t>(i)]);
+    const MerkleRoot &root_i =
+        commitments.roots_by_level[static_cast<std::size_t>(i)];
+    transcript.AbsorbBytes(root_i.data(), root_i.size());
   }
 
   return out;
@@ -716,6 +836,10 @@ bool VerifyQueryFromMerkleOpenings(const IOPPQueryPlan &plan,
                                    const IOPPQueryMerkleOpenings &openings,
                                    const IOPPMerkleCommitments &commitments,
                                    const FoldableCodeParams &params) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->verify_query_merkle_ns : nullptr,
+                    prof ? &prof->verify_query_merkle_calls : nullptr);
+
   ValidateParamsOrThrow(params);
   if (static_cast<long>(commitments.roots_by_level.size()) != params.d + 1) {
     return false;

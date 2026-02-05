@@ -1,5 +1,6 @@
 #include "BaseFold/FoldableCode.hpp"
 
+#include <NTL/ZZ_p.h>
 #include <NTL/mat_ZZ_pE.h>
 
 using NTL::ZZ;
@@ -42,6 +43,27 @@ bool IsUnitByReductionModP(const ZZ_pE &a, const ZZ &p) {
 }
 
 void ValidateParams(const FoldableCodeParams &params) {
+  static thread_local bool cache_valid = false;
+  static thread_local const FoldableCodeParams *cache_params = nullptr;
+  static thread_local ZZ cache_modulus;
+  static thread_local long cache_degree = 0;
+  static thread_local long cache_c = 0;
+  static thread_local long cache_k0 = 0;
+  static thread_local long cache_d = 0;
+  static thread_local long cache_g0_rows = 0;
+  static thread_local long cache_g0_cols = 0;
+  static thread_local ZZ cache_p;
+
+  if (cache_valid && cache_params == &params &&
+      cache_modulus == NTL::ZZ_p::modulus() &&
+      cache_degree == ZZ_pE::degree() && cache_c == params.c &&
+      cache_k0 == params.k0 && cache_d == params.d &&
+      cache_g0_rows == params.G0.NumRows() &&
+      cache_g0_cols == params.G0.NumCols() && cache_p == params.p &&
+      static_cast<long>(params.diag_T.size()) == params.d) {
+    return;
+  }
+
   if (params.c <= 0) LogicError("EncodeFoldable: c must be positive");
   if (params.k0 <= 0) LogicError("EncodeFoldable: k0 must be positive");
   if (params.d < 0) LogicError("EncodeFoldable: d must be non-negative");
@@ -83,6 +105,17 @@ void ValidateParams(const FoldableCodeParams &params) {
       }
     }
   }
+
+  cache_valid = true;
+  cache_params = &params;
+  cache_modulus = NTL::ZZ_p::modulus();
+  cache_degree = ZZ_pE::degree();
+  cache_c = params.c;
+  cache_k0 = params.k0;
+  cache_d = params.d;
+  cache_g0_rows = params.G0.NumRows();
+  cache_g0_cols = params.G0.NumCols();
+  cache_p = params.p;
 }
 
 vec_ZZ_pE Encode0(const vec_ZZ_pE &msg, const FoldableCodeParams &params) {

@@ -47,7 +47,16 @@ class SumcheckProver {
   std::vector<FieldElement> z_;
 
   long cur_k_ = 0;
-  FieldVec coeffs_rem_;
+  // Evaluation table of the current multilinear polynomial obtained from `f`
+  // after fixing the suffix variables to verifier challenges.
+  // Length is always 2^cur_k_.
+  FieldVec f_eval_table_;
+
+  // Precomputed prefix products for eq_z over boolean assignments:
+  //   prefix_eq_by_vars_[t][mask] = ∏_{i=0}^{t-1} factor(z_i, bit_i(mask))
+  // where `t` is the number of variables included.
+  // Stored for t = 0..d_-1, so prefix_eq_by_vars_.size() == d_ when d_>0.
+  std::vector<FieldVec> prefix_eq_by_vars_;
 
   // Product of eq_z factors for variables already fixed to challenges
   // (i.e., variables in {cur_k_+1, ..., d_}).
@@ -66,4 +75,3 @@ bool CheckSumcheckRelations(const std::vector<QuadraticPoly> &h_by_level,
 }  // namespace basefold
 
 #endif  // BASEFOLD_SUMCHECK_HPP_
-

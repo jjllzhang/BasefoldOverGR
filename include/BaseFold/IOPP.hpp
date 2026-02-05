@@ -4,6 +4,7 @@
 #include <NTL/ZZ_pE.h>
 #include <NTL/vec_ZZ_pE.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -48,6 +49,7 @@ using Oracle = NTL::vec_ZZ_pE;
 
 using Byte = std::uint8_t;
 using Bytes = std::vector<Byte>;
+using Digest = std::array<Byte, 32>;
 
 // Returns k_i = k0 * 2^i (message length of C_i).
 long MessageLengthAtLevel(const FoldableCodeParams &params, long level);
@@ -185,11 +187,9 @@ bool VerifyQueryFromOracles(const IOPPQueryPlan &plan,
 // A Merkle authentication path for one leaf.
 // Conventions:
 // - sibling_hashes[k] is the sibling digest at height k (starting from the leaf
-//   level), and sibling_is_left[k] indicates whether that sibling digest is on
-//   the left side of the concatenation at that height.
+//   level).
 struct MerkleAuthPath {
-  std::vector<Bytes> sibling_hashes;
-  std::vector<bool> sibling_is_left;
+  std::vector<Digest> sibling_hashes;
 };
 
 // One opened leaf in a Merkle-committed oracle.
@@ -200,7 +200,7 @@ struct MerkleOpening {
 };
 
 // A Merkle commitment to an oracle π_i (root digest).
-using MerkleRoot = Bytes;
+using MerkleRoot = Digest;
 
 // Computes the Merkle root for an oracle.
 MerkleRoot MerkleCommitOracle(const Oracle &oracle);
@@ -235,8 +235,8 @@ class MerkleTree {
 
  private:
   long leaf_count_ = 0;
-  Bytes raw_root_;
-  std::vector<std::vector<Bytes>> levels_;  // padded levels used for openings
+  Digest raw_root_{};
+  std::vector<std::vector<Digest>> levels_;  // padded levels used for openings
 };
 
 // Minimal Fiat-Shamir transcript interface.
