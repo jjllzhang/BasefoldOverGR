@@ -1,0 +1,209 @@
+#include <exception>
+#include <iostream>
+#include <sstream>
+#include <string>
+
+#include <NTL/ZZ.h>
+#include <NTL/ZZ_p.h>
+#include <NTL/ZZ_pE.h>
+#include <NTL/ZZ_pX.h>
+#include <NTL/mat_ZZ_pE.h>
+#include <NTL/vec_ZZ_pE.h>
+
+#include "BaseFold/BaseFoldPCS.hpp"
+#include "BaseFold/Multilinear.hpp"
+#include "test_common.hpp"
+
+using NTL::conv;
+using NTL::mat_ZZ_pE;
+using NTL::SetCoeff;
+using NTL::to_ZZ;
+using NTL::vec_ZZ_pE;
+using NTL::ZZ;
+using NTL::ZZ_pE;
+using NTL::ZZ_pEPush;
+using NTL::ZZ_pPush;
+using NTL::ZZ_pX;
+using std::cerr;
+using std::cout;
+using std::exception;
+using std::ostringstream;
+using std::string;
+
+int g_failures = 0;
+
+namespace {
+
+basefold::FoldableCodeParams BuildParamsGF4_k0_1(const ZZ &p, const ZZ_pE &alpha) {
+  const long c = 2;
+  const long k0 = 1;
+  const long d = 2;
+  const long n0 = c * k0;
+
+  basefold::FoldableCodeParams params;
+  params.c = c;
+  params.k0 = k0;
+  params.d = d;
+  params.p = p;
+  params.zeta = alpha;
+
+  const ZZ_pE one = testutil::ConstZZpE(1);
+
+  mat_ZZ_pE G0;
+  G0.SetDims(k0, n0);
+  G0[0][0] = one;
+  G0[0][1] = alpha;
+  params.G0 = G0;
+
+  params.diag_T.resize(static_cast<std::size_t>(d));
+  params.diag_T[0].SetLength(/*n0=*/2);
+  params.diag_T[0][0] = one;
+  params.diag_T[0][1] = one;
+
+  params.diag_T[1].SetLength(/*n1=*/4);
+  for (long i = 0; i < 4; ++i) {
+    params.diag_T[1][i] = one;
+  }
+
+  return params;
+}
+
+basefold::FoldableCodeParams BuildParamsGR42(const ZZ &p, const ZZ_pE &alpha) {
+  const long c = 2;
+  const long k0 = 1;
+  const long d = 2;
+  const long n0 = c * k0;
+
+  basefold::FoldableCodeParams params;
+  params.c = c;
+  params.k0 = k0;
+  params.d = d;
+  params.p = p;
+  params.zeta = alpha;
+
+  mat_ZZ_pE G0;
+  G0.SetDims(k0, n0);
+  const ZZ_pE one = testutil::ConstZZpE(1);
+  G0[0][0] = one;
+  G0[0][1] = alpha;
+  params.G0 = G0;
+
+  params.diag_T.resize(static_cast<std::size_t>(d));
+
+  params.diag_T[0].SetLength(/*n0=*/2);
+  params.diag_T[0][0] = one;
+  params.diag_T[0][1] = alpha;
+
+  params.diag_T[1].SetLength(/*n1=*/4);
+  params.diag_T[1][0] = alpha + one;
+  params.diag_T[1][1] = one;
+  params.diag_T[1][2] = alpha;
+  params.diag_T[1][3] = alpha + one;
+
+  return params;
+}
+
+void TestPCS_EvalProof_GF4() {
+  testutil::PrintInfo("PCS: eval proof verifies over GF(2^2)");
+
+  const ZZ p = to_ZZ(2);
+  ZZ_pPush p_push(p);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush e_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::FoldableCodeParams params = BuildParamsGF4_k0_1(p, alpha);
+
+  vec_ZZ_pE f_coeffs;
+  f_coeffs.SetLength(basefold::MessageLength(params));
+  f_coeffs[0] = testutil::ConstZZpE(0);
+  f_coeffs[1] = testutil::ConstZZpE(1);
+  f_coeffs[2] = alpha;
+  f_coeffs[3] = alpha + testutil::ConstZZpE(1);
+
+  const std::vector<ZZ_pE> z = {alpha, alpha + testutil::ConstZZpE(1)};
+  const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
+
+  const basefold::MerkleRoot C = basefold::BaseFoldPCSCommit(f_coeffs, params);
+  const long num_queries = 3;
+  const basefold::BaseFoldPCSEvalProof proof =
+      basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries, params);
+
+  CHECK(basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params));
+
+  const ZZ_pE y_bad = y + testutil::ConstZZpE(1);
+  CHECK(!basefold::BaseFoldPCSVerifyEval(C, z, y_bad, num_queries, proof, params));
+}
+
+void TestPCS_EvalProof_GR42() {
+  testutil::PrintInfo("PCS: eval proof verifies over GR(4,2)");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ mod = ZZ(4);
+  ZZ_pPush mod_push(mod);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush e_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::FoldableCodeParams params = BuildParamsGR42(p, alpha);
+
+  vec_ZZ_pE f_coeffs;
+  f_coeffs.SetLength(basefold::MessageLength(params));
+  f_coeffs[0] = testutil::ConstZZpE(0);
+  f_coeffs[1] = testutil::ConstZZpE(1);
+  f_coeffs[2] = alpha;
+  f_coeffs[3] = testutil::ConstZZpE(2);
+
+  const std::vector<ZZ_pE> z = {alpha + testutil::ConstZZpE(1), testutil::ConstZZpE(3)};
+  const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
+
+  const basefold::MerkleRoot C = basefold::BaseFoldPCSCommit(f_coeffs, params);
+  const long num_queries = 4;
+  const basefold::BaseFoldPCSEvalProof proof =
+      basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries, params);
+
+  CHECK(basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params));
+
+  const ZZ_pE y_bad = y + testutil::ConstZZpE(1);
+  CHECK(!basefold::BaseFoldPCSVerifyEval(C, z, y_bad, num_queries, proof, params));
+}
+
+}  // namespace
+
+int main() {
+  try {
+    RUN_TEST(TestPCS_EvalProof_GF4);
+    RUN_TEST(TestPCS_EvalProof_GR42);
+  } catch (const exception &e) {
+    cerr << "Unhandled std::exception: " << e.what() << "\n";
+    return 2;
+  } catch (...) {
+    cerr << "Unhandled non-std exception\n";
+    return 2;
+  }
+
+  if (g_failures == 0) {
+    cout << "\nAll tests passed.\n";
+    return 0;
+  }
+
+  cerr << "\n" << g_failures << " test(s) failed.\n";
+  return 1;
+}
+

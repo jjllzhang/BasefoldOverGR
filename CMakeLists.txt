@@ -9,6 +9,9 @@ add_library(galoisring
   src/GaloisRing/PrimitiveElement.cpp
   src/BaseFold/FoldableCode.cpp
   src/BaseFold/IOPP.cpp
+  src/BaseFold/Multilinear.cpp
+  src/BaseFold/Sumcheck.cpp
+  src/BaseFold/BaseFoldPCS.cpp
 )
 
 target_include_directories(galoisring PUBLIC
@@ -46,7 +49,11 @@ target_link_libraries(test_foldable_codes PRIVATE galoisring)
 add_executable(test_iopp tests/test_iopp.cpp)
 target_link_libraries(test_iopp PRIVATE galoisring)
 
+add_executable(test_pcs tests/test_pcs.cpp)
+target_link_libraries(test_pcs PRIVATE galoisring)
+
 enable_testing()
 add_test(NAME test_galois_ring COMMAND $<TARGET_FILE:test_galois_ring>)
 add_test(NAME test_foldable_codes COMMAND $<TARGET_FILE:test_foldable_codes>)
 add_test(NAME test_iopp COMMAND $<TARGET_FILE:test_iopp>)
+add_test(NAME test_pcs COMMAND $<TARGET_FILE:test_pcs>)
