@@ -12,6 +12,7 @@ add_library(galoisring
   src/BaseFold/Multilinear.cpp
   src/BaseFold/Sumcheck.cpp
   src/BaseFold/BaseFoldPCS.cpp
+  src/BaseFold/ProofSize.cpp
 )
 
 target_include_directories(galoisring PUBLIC
@@ -57,6 +58,9 @@ target_link_libraries(bench_pcs_commit PRIVATE galoisring)
 
 add_executable(bench_pcs_eval bench/bench_pcs_eval.cpp)
 target_link_libraries(bench_pcs_eval PRIVATE galoisring)
+
+add_executable(bench_pcs_proof_size bench/bench_pcs_proof_size.cpp)
+target_link_libraries(bench_pcs_proof_size PRIVATE galoisring)
 
 enable_testing()
 add_test(NAME test_galois_ring COMMAND $<TARGET_FILE:test_galois_ring>)

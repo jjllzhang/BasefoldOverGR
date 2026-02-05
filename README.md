@@ -26,6 +26,7 @@
 │       ├── IOPP.hpp
 │       ├── Multilinear.hpp
 │       ├── Sumcheck.hpp
+│       ├── ProofSize.hpp
 │       └── BaseFoldPCS.hpp
 ├── src
 │   └── GaloisRing
@@ -38,9 +39,12 @@
 │       ├── IOPP.cpp
 │       ├── Multilinear.cpp
 │       ├── Sumcheck.cpp
+│       ├── ProofSize.cpp
 │       └── BaseFoldPCS.cpp
 ├── bench
-│   └── bench_pcs_commit.cpp
+│   ├── bench_pcs_commit.cpp
+│   ├── bench_pcs_eval.cpp
+│   └── bench_pcs_proof_size.cpp
 └── tests
     ├── test_common.hpp
     ├── test_galois_ring_basic.cpp
@@ -128,9 +132,26 @@
   - `BaseFoldPCSCommit/ProveEval/VerifyEval`
   - 目前实现限制为 `k0==1`（对应 `Basefold_over_GR.pdf` 的 Protocol 4 版本）。
 
+### `include/BaseFold/ProofSize.hpp` / `src/BaseFold/ProofSize.cpp`
+
+- BaseFold PCS proof size 的估算函数（bench-oriented）：
+  - `basefold::BaseFoldPCSEvalProofSizeBytes(proof)`
+  - `basefold::BaseFoldPCSEvalProofSizeKB(proof)`（KiB, 1024 bytes）
+
 ### `bench/bench_pcs_commit.cpp`
 
 - 编码性能基准：测量 **去掉校验后的纯编码时间**（`EncodeFoldableUnchecked`），支持由命令行分别指定有限域与 Galois ring 的上下文参数。
+
+### `bench/bench_pcs_eval.cpp`
+
+- PCS eval proof 性能基准：测量 prover time 与 verifier time（Merkle + Fiat–Shamir）。
+- 默认 prover 走 `BaseFoldPCSProveEvalUnchecked`；如需把校验也算进 prover time，可加 `--checked`。
+
+### `bench/bench_pcs_proof_size.cpp`
+
+- PCS eval proof size 估算：
+  - 不带 `--formula`：生成一次 **真实 proof** 并输出估算的 proof size（KB）；默认使用 `BaseFoldPCSProveEval`（包含参数/长度检查与 `claimed_y==f(z)` 校验）。
+  - 带 `--formula`：完全不运行 prover，仅根据输入参数用公式给出近似/上界估算。
 
 ## 依赖
 
@@ -160,6 +181,7 @@ ctest --test-dir build
 ```bash
 ./build/bench_pcs_commit --help
 ./build/bench_pcs_eval --help
+./build/bench_pcs_proof_size --help
 ```
 
 示例：
@@ -171,9 +193,31 @@ ctest --test-dir build
 # GR(4,2) with the same extension polynomial and zeta=x
 ./build/bench_pcs_commit --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --reps 5 --warmup 1
 
-# PCS eval proof prover/verifier time + proof size (GF(2^2))
+# PCS eval proof prover/verifier time (GF(2^2))
 ./build/bench_pcs_eval --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --d 16 --queries 4 --reps 3 --warmup 1
 
-# PCS eval proof prover/verifier time + proof size (GR(4,2))
+# PCS eval proof prover/verifier time (GR(4,2))
 ./build/bench_pcs_eval --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4 --reps 3 --warmup 1
+
+# 注意：bench_pcs_eval 默认使用 BaseFoldPCSProveEvalUnchecked（跳过参数/长度校验与 claimed_y==f(z) 重算）。
+# 如需将这些检查也计入 prover time，可添加 --checked：
+./build/bench_pcs_eval --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4 --checked --reps 3 --warmup 1
+
+# PCS eval proof size estimate (GR(4,2))
+./build/bench_pcs_proof_size --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4
+
+# PCS eval proof size estimate (GF(2^2))
+./build/bench_pcs_proof_size --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --d 16 --queries 4
+
+# 只根据参数做近似/上界估算（不运行 prover），可加 --formula：
+./build/bench_pcs_proof_size --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4 --formula
 ```
+
+## Proof size（估算）
+
+本仓库提供了一个 bench-oriented 的 proof size 估算函数（单位 KiB）：
+
+- `basefold::BaseFoldPCSEvalProofSizeKB(proof)`（见 `include/BaseFold/ProofSize.hpp`）
+  也可以直接使用 `bench/bench_pcs_proof_size.cpp`：
+  - 不带 `--formula`：生成真实 proof 并输出估算大小；
+  - 带 `--formula`：仅参数估计（不运行 prover）。

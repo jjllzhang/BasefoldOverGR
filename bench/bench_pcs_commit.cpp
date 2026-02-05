@@ -235,11 +235,9 @@ BenchResult RunEncodeBenchmark(const vec_ZZ_pE &f_coeffs,
     const auto t1 = std::chrono::steady_clock::now();
 
     if (pi_d.length() > 0) {
-      const ZZ_pX rep0 = NTL::rep(pi_d[0]);
-      const ZZ c0 = NTL::rep(NTL::coeff(rep0, 0));
-      long c0_long = 0;
-      NTL::conv(c0_long, c0);
-      sink ^= static_cast<std::uint64_t>(c0_long & 0xff);
+      // Touch a single output element to discourage aggressive dead-code
+      // elimination without adding heavy conversions that slow the benchmark.
+      sink ^= static_cast<std::uint64_t>(pi_d[0] != ZZ_pE(0));
     }
 
     if (iter >= 0) {

@@ -1,5 +1,3 @@
-#include <algorithm>
-#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <iomanip>
@@ -15,6 +13,7 @@
 
 #include "BaseFold/BaseFoldPCS.hpp"
 #include "BaseFold/Multilinear.hpp"
+#include "BaseFold/ProofSize.hpp"
 
 using NTL::conv;
 using NTL::LogicError;
@@ -36,34 +35,6 @@ struct ContextSpec {
   std::vector<long> F_coeffs;     // extension modulus polynomial coefficients
   std::vector<long> zeta_coeffs;  // ζ element coefficients
 };
-
-struct Stats {
-  double mean_ms = 0.0;
-  double min_ms = 0.0;
-  double max_ms = 0.0;
-};
-
-Stats ComputeStats(const std::vector<double> &xs) {
-  Stats out;
-  if (xs.empty())
-    return out;
-  double sum = 0.0;
-  out.min_ms = xs[0];
-  out.max_ms = xs[0];
-  for (double v : xs) {
-    sum += v;
-    out.min_ms = std::min(out.min_ms, v);
-    out.max_ms = std::max(out.max_ms, v);
-  }
-  out.mean_ms = sum / static_cast<double>(xs.size());
-  return out;
-}
-
-double MsSince(const std::chrono::steady_clock::time_point &a,
-               const std::chrono::steady_clock::time_point &b) {
-  using namespace std::chrono;
-  return duration_cast<duration<double, std::milli>>(b - a).count();
-}
 
 long Pow2Checked(long e) {
   if (e < 0) LogicError("Pow2Checked: negative exponent");
@@ -144,6 +115,112 @@ void ValidateMonic(const std::vector<long> &coeffs, long mod,
         std::string(what) + ": leading coefficient must be 1 (monic)";
     LogicError(msg.c_str());
   }
+}
+
+long PolyDegree(const std::vector<long> &coeffs, long mod) {
+  if (coeffs.empty())
+    LogicError("PolyDegree: empty polynomial");
+  long last = static_cast<long>(coeffs.size()) - 1;
+  while (last > 0 &&
+         NormalizeMod(coeffs[static_cast<std::size_t>(last)], mod) == 0) {
+    --last;
+  }
+  return last;
+}
+
+std::uint64_t FixedCoeffByteWidth(long mod) {
+  if (mod <= 1)
+    LogicError("FixedCoeffByteWidth: mod must be > 1");
+  std::uint64_t x = static_cast<std::uint64_t>(mod - 1);
+  int bits = 0;
+  while (x > 0) {
+    ++bits;
+    x >>= 1;
+  }
+  return static_cast<std::uint64_t>((bits + 7) / 8);
+}
+
+std::uint64_t FixedFieldElementBytes(long mod, long ext_degree) {
+  if (ext_degree <= 0)
+    LogicError("FixedFieldElementBytes: ext_degree must be > 0");
+  const std::uint64_t coeff_bytes = FixedCoeffByteWidth(mod);
+  return 8ULL +
+         static_cast<std::uint64_t>(ext_degree) * (8ULL + coeff_bytes);
+}
+
+std::size_t MerkleHeight(std::uint64_t leaf_count) {
+  if (leaf_count <= 1)
+    return 0;
+  std::size_t height = 0;
+  std::uint64_t n = leaf_count;
+  while (n > 1) {
+    if (n & 1ULL)
+      n += 1;
+    n /= 2;
+    ++height;
+  }
+  return height;
+}
+
+std::uint64_t MerkleOpeningBytes(std::uint64_t leaf_count,
+                                 std::uint64_t field_elem_bytes) {
+  static constexpr std::uint64_t kHashBytes = 32;
+
+  const std::size_t height = MerkleHeight(leaf_count);
+  unsigned __int128 total = 0;
+  total += 8;  // index
+  total += field_elem_bytes;
+  total += static_cast<unsigned __int128>(height) * (kHashBytes + 1);  // sibling hashes + direction bits
+
+  if (total > std::numeric_limits<std::uint64_t>::max())
+    LogicError("MerkleOpeningBytes: overflow");
+  return static_cast<std::uint64_t>(total);
+}
+
+std::uint64_t EstimateEvalProofSizeFormulaBytes(long mod, long c, long d,
+                                                long num_queries,
+                                                long ext_degree) {
+  static constexpr std::uint64_t kHashBytes = 32;
+  if (c <= 0)
+    LogicError("EstimateEvalProofSizeFormulaBytes: c must be > 0");
+  if (d < 0)
+    LogicError("EstimateEvalProofSizeFormulaBytes: d must be >= 0");
+  if (num_queries < 0)
+    LogicError("EstimateEvalProofSizeFormulaBytes: queries must be >= 0");
+
+  const std::uint64_t fe_bytes = FixedFieldElementBytes(mod, ext_degree);
+
+  unsigned __int128 total = 0;
+  total += static_cast<unsigned __int128>(d + 1) * kHashBytes;          // roots
+  total += static_cast<unsigned __int128>(d) * 3ULL * fe_bytes;         // sumcheck polys
+  total += static_cast<unsigned __int128>(c) * fe_bytes;                // pi0_full
+
+  std::vector<std::uint64_t> open_bytes;
+  open_bytes.resize(static_cast<std::size_t>(d + 1));
+
+  std::uint64_t leaf_count = static_cast<std::uint64_t>(c);
+  for (long level = 0; level <= d; ++level) {
+    open_bytes[static_cast<std::size_t>(level)] =
+        MerkleOpeningBytes(leaf_count, fe_bytes);
+    if (level < d) {
+      if (leaf_count > std::numeric_limits<std::uint64_t>::max() / 2ULL) {
+        LogicError("EstimateEvalProofSizeFormulaBytes: overflow in n_i");
+      }
+      leaf_count *= 2ULL;
+    }
+  }
+
+  unsigned __int128 per_query = 0;
+  for (long i = 0; i < d; ++i) {
+    per_query += open_bytes[static_cast<std::size_t>(i)];          // folded at level i
+    per_query += 2ULL * open_bytes[static_cast<std::size_t>(i + 1)];  // left+right at level i+1
+  }
+
+  total += static_cast<unsigned __int128>(num_queries) * per_query;
+
+  if (total > std::numeric_limits<std::uint64_t>::max())
+    LogicError("EstimateEvalProofSizeFormulaBytes: overflow");
+  return static_cast<std::uint64_t>(total);
 }
 
 basefold::FoldableCodeParams BuildParams_k0_1(long c, long d, const ZZ &prime_p,
@@ -239,90 +316,6 @@ std::vector<ZZ_pE> MakeDeterministicPoint(long d, std::uint64_t seed) {
   return z;
 }
 
-struct BenchResult {
-  Stats prover;
-  Stats verifier;
-  std::uint64_t sink = 0;
-};
-
-BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
-                             const std::vector<ZZ_pE> &z,
-                             const ZZ_pE &y,
-                             long num_queries,
-                             const basefold::FoldableCodeParams &params,
-                             bool checked_prover,
-                             int warmup, int reps) {
-  if (warmup < 0) LogicError("RunEvalBenchmark: warmup must be >= 0");
-  if (reps <= 0) LogicError("RunEvalBenchmark: reps must be > 0");
-  if (num_queries < 0) LogicError("RunEvalBenchmark: num_queries must be >= 0");
-
-  std::vector<double> prover_ms;
-  std::vector<double> verifier_ms;
-  prover_ms.reserve(static_cast<std::size_t>(reps));
-  verifier_ms.reserve(static_cast<std::size_t>(reps));
-
-  std::uint64_t sink = 0;
-
-  for (int iter = -warmup; iter < reps; ++iter) {
-    const auto t0 = std::chrono::steady_clock::now();
-    const basefold::BaseFoldPCSEvalProof proof = checked_prover
-        ? basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries, params)
-        : basefold::BaseFoldPCSProveEvalUnchecked(f_coeffs, z, y, num_queries,
-                                                  params);
-    const auto t1 = std::chrono::steady_clock::now();
-
-    const basefold::MerkleRoot &C =
-        proof.commitments.roots_by_level[static_cast<std::size_t>(params.d)];
-
-    const auto t2 = std::chrono::steady_clock::now();
-    const bool ok =
-        basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params);
-    const auto t3 = std::chrono::steady_clock::now();
-
-    if (!ok) {
-      LogicError("RunEvalBenchmark: verification failed");
-    }
-
-    // Prevent over-optimization: fold in a few bytes.
-    if (!C.empty())
-      sink ^= static_cast<std::uint64_t>(C[0]);
-    sink ^= static_cast<std::uint64_t>(ok);
-
-    if (iter >= 0) {
-      prover_ms.push_back(MsSince(t0, t1));
-      verifier_ms.push_back(MsSince(t2, t3));
-    }
-  }
-
-  BenchResult out;
-  out.prover = ComputeStats(prover_ms);
-  out.verifier = ComputeStats(verifier_ms);
-  out.sink = sink;
-  return out;
-}
-
-void PrintResult(const std::string &label, long mod, long c, long d,
-                 long num_queries, int warmup, int reps,
-                 const BenchResult &r) {
-  const long k_d = Pow2Checked(d);  // k0==1
-  if (c > std::numeric_limits<long>::max() / k_d) {
-    LogicError("PrintResult: overflow in n_d");
-  }
-  const long n_d = c * k_d;
-
-  std::cout << "\n[" << label << "] c=" << c << " k0=1 d=" << d
-            << "  mod=" << mod << "  k_d=" << k_d << "  n_d=" << n_d
-            << "  queries=" << num_queries << "  warmup=" << warmup
-            << " reps=" << reps << "\n";
-  std::cout << std::fixed << std::setprecision(3);
-  std::cout << "  prover   mean " << r.prover.mean_ms << " ms  (min "
-            << r.prover.min_ms << ", max " << r.prover.max_ms << ")\n";
-  std::cout << "  verifier mean " << r.verifier.mean_ms << " ms  (min "
-            << r.verifier.min_ms << ", max " << r.verifier.max_ms << ")\n";
-
-  std::cout << "  sink    " << r.sink << "\n";
-}
-
 bool ParseLong(const char *s, long &out) {
   if (!s) return false;
   try {
@@ -334,15 +327,6 @@ bool ParseLong(const char *s, long &out) {
   } catch (...) {
     return false;
   }
-}
-
-bool ParseInt(const char *s, int &out) {
-  long v = 0;
-  if (!ParseLong(s, v)) return false;
-  if (v < std::numeric_limits<int>::min() || v > std::numeric_limits<int>::max())
-    return false;
-  out = static_cast<int>(v);
-  return true;
 }
 
 std::uint64_t ParseU64OrDie(const char *s, const char *flag) {
@@ -362,25 +346,47 @@ std::uint64_t ParseU64OrDie(const char *s, const char *flag) {
 
 void PrintHelp() {
   std::cout
-      << "bench_pcs_eval (PCS prove+verify, includes Merkle+FS)\n\n"
+      << "bench_pcs_proof_size (estimate eval proof size)\n\n"
       << "Usage:\n"
-      << "  bench_pcs_eval [--mode field|ring|both] [--c <int>] [--d <int>]\n"
-      << "               [--queries <int>] [--checked] [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
-      << "               [--field-mod <int>] [--field-F <a0,a1,...>] [--field-zeta <b0,b1,...>]\n"
-      << "               [--ring-mod <int>]  [--ring-p <int>] [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
+      << "  bench_pcs_proof_size [--mode field|ring|both] [--c <int>] [--d <int>]\n"
+      << "                     [--queries <int>] [--seed <u64>] [--formula]\n"
+      << "                     [--field-mod <int>] [--field-F <a0,a1,...>] [--field-zeta <b0,b1,...>]\n"
+      << "                     [--ring-mod <int>]  [--ring-p <int>] [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
       << "Notes:\n"
-      << "  By default, prover uses BaseFoldPCSProveEvalUnchecked (skips validation and claimed_y check).\n\n"
+      << "  KB is KiB (1024 bytes).\n"
+      << "  By default, prover uses BaseFoldPCSProveEval (includes parameter/length checks and claimed_y == f(z)).\n\n"
+      << "  With --formula, it does NOT run the prover. It estimates proof size from (c,d,queries)\n"
+      << "  assuming fixed-size field elements and sha256-based Merkle hashing.\n\n"
       << "Examples:\n"
       << "  # GF(2^2) with F(x)=x^2+x+1 and zeta=x\n"
-      << "  bench_pcs_eval --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --d 16 --queries 4\n"
+      << "  bench_pcs_proof_size --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --d 16 --queries 4\n"
       << "  # GR(4,2) with the same extension polynomial and zeta=x\n"
-      << "  bench_pcs_eval --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4\n";
+      << "  bench_pcs_proof_size --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4\n";
 }
 
 void RunOneContext(const ContextSpec &spec, long c, long d, long num_queries,
-                   bool checked_prover, int warmup, int reps,
+                   bool formula_only,
                    std::uint64_t seed) {
   if (spec.mod <= 1) LogicError("RunOneContext: modulus must be > 1");
+  if (c <= 0) LogicError("RunOneContext: c must be > 0");
+  if (d < 0) LogicError("RunOneContext: d must be >= 0");
+  if (num_queries < 0) LogicError("RunOneContext: queries must be >= 0");
+
+  if (formula_only) {
+    ValidateMonic(spec.F_coeffs, spec.mod, "F");
+    const long r = PolyDegree(spec.F_coeffs, spec.mod);
+
+    const std::uint64_t bytes =
+        EstimateEvalProofSizeFormulaBytes(spec.mod, c, d, num_queries, r);
+    const double kb = static_cast<double>(bytes) / 1024.0;
+
+    std::cout << "\n[" << spec.label << "] c=" << c << " k0=1 d=" << d
+              << "  mod=" << spec.mod << "  queries=" << num_queries
+              << "  (formula)\n";
+    std::cout << std::fixed << std::setprecision(3);
+    std::cout << "  proof size  " << kb << " KB  (" << bytes << " B)\n";
+    return;
+  }
 
   const ZZ modulus = to_ZZ(spec.mod);
   ZZ_pPush mod_push(modulus);
@@ -396,14 +402,22 @@ void RunOneContext(const ContextSpec &spec, long c, long d, long num_queries,
   const basefold::FoldableCodeParams params =
       BuildParams_k0_1(c, d, to_ZZ(spec.prime_p), zeta);
 
-  const long k_d = Pow2Checked(d);
+  const long k_d = Pow2Checked(d);  // k0==1
   const vec_ZZ_pE f_coeffs = MakeDeterministicCoefficients(k_d, seed);
   const std::vector<ZZ_pE> z = MakeDeterministicPoint(d, seed ^ 0xdeadbeefULL);
+
   const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
 
-  const BenchResult r = RunEvalBenchmark(f_coeffs, z, y, num_queries, params,
-                                        checked_prover, warmup, reps);
-  PrintResult(spec.label, spec.mod, c, d, num_queries, warmup, reps, r);
+  const basefold::BaseFoldPCSEvalProof proof =
+      basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries, params);
+
+  const std::uint64_t bytes = basefold::BaseFoldPCSEvalProofSizeBytes(proof);
+  const double kb = static_cast<double>(bytes) / 1024.0;
+
+  std::cout << "\n[" << spec.label << "] c=" << c << " k0=1 d=" << d
+            << "  mod=" << spec.mod << "  queries=" << num_queries << "\n";
+  std::cout << std::fixed << std::setprecision(3);
+  std::cout << "  proof size  " << kb << " KB  (" << bytes << " B)\n";
 }
 
 }  // namespace
@@ -412,9 +426,7 @@ int main(int argc, char **argv) {
   long d = 16;
   long c = 2;
   long num_queries = 4;
-  bool checked_prover = false;
-  int warmup = 1;
-  int reps = 3;
+  bool formula_only = false;
   std::uint64_t seed = 0;
 
   bool do_field = true;
@@ -474,18 +486,8 @@ int main(int argc, char **argv) {
         std::cerr << "Invalid --queries\n";
         return 2;
       }
-    } else if (arg == "--checked") {
-      checked_prover = true;
-    } else if (arg == "--warmup") {
-      if (!ParseInt(NeedValue("--warmup"), warmup) || warmup < 0) {
-        std::cerr << "Invalid --warmup\n";
-        return 2;
-      }
-    } else if (arg == "--reps") {
-      if (!ParseInt(NeedValue("--reps"), reps) || reps <= 0) {
-        std::cerr << "Invalid --reps\n";
-        return 2;
-      }
+    } else if (arg == "--formula") {
+      formula_only = true;
     } else if (arg == "--seed") {
       seed = ParseU64OrDie(NeedValue("--seed"), "--seed");
     } else if (arg == "--field-mod") {
@@ -526,11 +528,9 @@ int main(int argc, char **argv) {
       return 2;
     }
     if (do_field)
-      RunOneContext(field, c, d, num_queries, checked_prover, warmup, reps,
-                    seed);
+      RunOneContext(field, c, d, num_queries, formula_only, seed);
     if (do_ring)
-      RunOneContext(ring, c, d, num_queries, checked_prover, warmup, reps,
-                    seed);
+      RunOneContext(ring, c, d, num_queries, formula_only, seed);
   } catch (const std::exception &e) {
     std::cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;
