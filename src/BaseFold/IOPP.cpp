@@ -587,6 +587,77 @@ bool MerkleVerifyOpening(const MerkleRoot &root, long leaf_count,
   return expected_root == root;
 }
 
+MerkleTree MerkleTree::Build(const Oracle &oracle) {
+  const long leaf_count = oracle.length();
+  if (leaf_count < 0)
+    LogicError("MerkleTree::Build: invalid leaf count");
+
+  MerkleTree t;
+  t.leaf_count_ = leaf_count;
+  t.levels_.clear();
+  t.raw_root_.clear();
+
+  if (leaf_count == 0) {
+    t.raw_root_ = HashWithPrefix(static_cast<Byte>(0x04), {});
+    return t;
+  }
+
+  std::vector<Bytes> level;
+  level.reserve(static_cast<std::size_t>(leaf_count));
+  for (long i = 0; i < leaf_count; ++i) {
+    level.push_back(HashLeaf(i, oracle[i]));
+  }
+
+  while (level.size() > 1) {
+    if (level.size() % 2 == 1)
+      level.push_back(level.back());
+    t.levels_.push_back(level);
+
+    std::vector<Bytes> next;
+    next.reserve(level.size() / 2);
+    for (std::size_t i = 0; i < level.size(); i += 2) {
+      next.push_back(HashNode(level[i], level[i + 1]));
+    }
+    level = std::move(next);
+  }
+
+  t.raw_root_ = level[0];
+  return t;
+}
+
+MerkleRoot MerkleTree::Root() const {
+  return HashRootWithCount(leaf_count_, raw_root_);
+}
+
+MerkleOpening MerkleTree::Open(const Oracle &oracle, long index) const {
+  if (oracle.length() != leaf_count_) {
+    LogicError("MerkleTree::Open: oracle length mismatch");
+  }
+  if (index < 0 || index >= leaf_count_) {
+    LogicError("MerkleTree::Open: index out of range");
+  }
+
+  MerkleAuthPath path;
+  const std::size_t height = ExpectedMerkleHeight(leaf_count_);
+  path.sibling_hashes.reserve(height);
+  path.sibling_is_left.reserve(height);
+
+  long idx = index;
+  for (std::size_t h = 0; h < height; ++h) {
+    const std::vector<Bytes> &level = levels_[h];
+    const long sibling = (idx % 2 == 0) ? (idx + 1) : (idx - 1);
+    path.sibling_hashes.push_back(level[static_cast<std::size_t>(sibling)]);
+    path.sibling_is_left.push_back(idx % 2 == 1);
+    idx /= 2;
+  }
+
+  MerkleOpening opening;
+  opening.index = index;
+  opening.value = oracle[index];
+  opening.auth_path = std::move(path);
+  return opening;
+}
+
 IOPPChallenges
 FiatShamirDeriveChallenges(FiatShamirTranscript &transcript,
                            const IOPPMerkleCommitments &commitments,

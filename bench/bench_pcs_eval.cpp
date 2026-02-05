@@ -340,6 +340,7 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
                              const ZZ_pE &y,
                              long num_queries,
                              const basefold::FoldableCodeParams &params,
+                             bool checked_prover,
                              int warmup, int reps) {
   if (warmup < 0) LogicError("RunEvalBenchmark: warmup must be >= 0");
   if (reps <= 0) LogicError("RunEvalBenchmark: reps must be > 0");
@@ -356,8 +357,10 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
 
   for (int iter = -warmup; iter < reps; ++iter) {
     const auto t0 = std::chrono::steady_clock::now();
-    const basefold::BaseFoldPCSEvalProof proof =
-        basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries, params);
+    const basefold::BaseFoldPCSEvalProof proof = checked_prover
+        ? basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries, params)
+        : basefold::BaseFoldPCSProveEvalUnchecked(f_coeffs, z, y, num_queries,
+                                                  params);
     const auto t1 = std::chrono::steady_clock::now();
 
     const basefold::MerkleRoot &C =
@@ -463,9 +466,11 @@ void PrintHelp() {
       << "bench_pcs_eval (PCS prove+verify, includes Merkle+FS)\n\n"
       << "Usage:\n"
       << "  bench_pcs_eval [--mode field|ring|both] [--c <int>] [--d <int>]\n"
-      << "               [--queries <int>] [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
+      << "               [--queries <int>] [--checked] [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
       << "               [--field-mod <int>] [--field-F <a0,a1,...>] [--field-zeta <b0,b1,...>]\n"
       << "               [--ring-mod <int>]  [--ring-p <int>] [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
+      << "Notes:\n"
+      << "  By default, prover uses BaseFoldPCSProveEvalUnchecked (skips validation and claimed_y check).\n\n"
       << "Examples:\n"
       << "  # GF(2^2) with F(x)=x^2+x+1 and zeta=x\n"
       << "  bench_pcs_eval --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --d 16 --queries 4\n"
@@ -474,7 +479,8 @@ void PrintHelp() {
 }
 
 void RunOneContext(const ContextSpec &spec, long c, long d, long num_queries,
-                   int warmup, int reps, std::uint64_t seed) {
+                   bool checked_prover, int warmup, int reps,
+                   std::uint64_t seed) {
   if (spec.mod <= 1) LogicError("RunOneContext: modulus must be > 1");
 
   const ZZ modulus = to_ZZ(spec.mod);
@@ -496,8 +502,8 @@ void RunOneContext(const ContextSpec &spec, long c, long d, long num_queries,
   const std::vector<ZZ_pE> z = MakeDeterministicPoint(d, seed ^ 0xdeadbeefULL);
   const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
 
-  const BenchResult r =
-      RunEvalBenchmark(f_coeffs, z, y, num_queries, params, warmup, reps);
+  const BenchResult r = RunEvalBenchmark(f_coeffs, z, y, num_queries, params,
+                                        checked_prover, warmup, reps);
   PrintResult(spec.label, spec.mod, c, d, num_queries, warmup, reps, r);
 }
 
@@ -507,6 +513,7 @@ int main(int argc, char **argv) {
   long d = 16;
   long c = 2;
   long num_queries = 4;
+  bool checked_prover = false;
   int warmup = 1;
   int reps = 3;
   std::uint64_t seed = 0;
@@ -568,6 +575,8 @@ int main(int argc, char **argv) {
         std::cerr << "Invalid --queries\n";
         return 2;
       }
+    } else if (arg == "--checked") {
+      checked_prover = true;
     } else if (arg == "--warmup") {
       if (!ParseInt(NeedValue("--warmup"), warmup) || warmup < 0) {
         std::cerr << "Invalid --warmup\n";
@@ -617,8 +626,12 @@ int main(int argc, char **argv) {
       std::cerr << "Nothing to do: --mode disabled both field and ring\n";
       return 2;
     }
-    if (do_field) RunOneContext(field, c, d, num_queries, warmup, reps, seed);
-    if (do_ring) RunOneContext(ring, c, d, num_queries, warmup, reps, seed);
+    if (do_field)
+      RunOneContext(field, c, d, num_queries, checked_prover, warmup, reps,
+                    seed);
+    if (do_ring)
+      RunOneContext(ring, c, d, num_queries, checked_prover, warmup, reps,
+                    seed);
   } catch (const std::exception &e) {
     std::cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;
@@ -629,4 +642,3 @@ int main(int argc, char **argv) {
 
   return 0;
 }
-

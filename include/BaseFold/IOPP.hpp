@@ -213,6 +213,32 @@ MerkleOpening MerkleOpenOracle(const Oracle &oracle, long index);
 bool MerkleVerifyOpening(const MerkleRoot &root, long leaf_count,
                          const MerkleOpening &opening);
 
+// A reusable Merkle tree for an oracle, allowing one build and many openings.
+//
+// - Build(oracle) runs in O(n).
+// - Open(index) runs in O(log n).
+//
+// Hashing is identical to MerkleCommitOracle/MerkleOpenOracle/MerkleVerifyOpening.
+class MerkleTree {
+ public:
+  MerkleTree() = default;
+
+  static MerkleTree Build(const Oracle &oracle);
+
+  long LeafCount() const { return leaf_count_; }
+
+  MerkleRoot Root() const;
+
+  // Produces a Merkle opening for oracle[index] using this tree's cached nodes.
+  // Precondition: oracle.length() == LeafCount().
+  MerkleOpening Open(const Oracle &oracle, long index) const;
+
+ private:
+  long leaf_count_ = 0;
+  Bytes raw_root_;
+  std::vector<std::vector<Bytes>> levels_;  // padded levels used for openings
+};
+
 // Minimal Fiat-Shamir transcript interface.
 // Implementations should provide:
 // - domain separation via labels (e.g., "alpha", "mu", plus a round index)

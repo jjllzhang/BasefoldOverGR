@@ -35,6 +35,77 @@ using NTL::ZZ_pX;
 namespace basefold {
 namespace {
 
+long Pow2Checked(long e) {
+  if (e < 0)
+    LogicError("Pow2Checked: negative exponent");
+  if (e >= static_cast<long>(8 * sizeof(long) - 1)) {
+    LogicError("Pow2Checked: exponent too large for long");
+  }
+  return 1L << e;
+}
+
+long CodewordLengthAtLevelNoValidate(const FoldableCodeParams &params,
+                                     long level) {
+  if (level < 0 || level > params.d) {
+    LogicError("CodewordLengthAtLevelNoValidate: level out of range");
+  }
+  const long pow2 = Pow2Checked(level);
+  if (params.k0 <= 0 || params.c <= 0) {
+    LogicError("CodewordLengthAtLevelNoValidate: invalid c/k0");
+  }
+  if (params.k0 > std::numeric_limits<long>::max() / pow2) {
+    LogicError("CodewordLengthAtLevelNoValidate: overflow");
+  }
+  const long k = params.k0 * pow2;
+  if (params.c > std::numeric_limits<long>::max() / k) {
+    LogicError("CodewordLengthAtLevelNoValidate: overflow");
+  }
+  return params.c * k;
+}
+
+void ProverCommitRoundNoValidate(Oracle &pi_i, const Oracle &pi_ip1,
+                                 const FieldElement &alpha_i, long level_i,
+                                 const FoldableCodeParams &params) {
+  const long n_i = CodewordLengthAtLevelNoValidate(params, level_i);
+  pi_i.SetLength(n_i);
+
+  for (long j = 0; j < n_i; ++j) {
+    const FieldElement &t = params.diag_T[static_cast<std::size_t>(level_i)][j];
+    const FieldElement x1 = t;
+    const FieldElement x2 = params.zeta * t;
+
+    const FieldElement &y1 = pi_ip1[j];
+    const FieldElement &y2 = pi_ip1[j + n_i];
+    pi_i[j] = EvalLineAt(alpha_i, x1, y1, x2, y2);
+  }
+}
+
+IOPPQueryPlan MakeQueryPlanNoValidate(long initial_mu,
+                                     const FoldableCodeParams &params) {
+  IOPPQueryPlan plan;
+  plan.initial_mu = initial_mu;
+  plan.mu_by_level.resize(static_cast<std::size_t>(params.d));
+
+  if (params.d == 0)
+    return plan;
+
+  const long n_last = CodewordLengthAtLevelNoValidate(params, params.d - 1);
+  if (initial_mu < 0 || initial_mu >= n_last) {
+    LogicError("MakeQueryPlanNoValidate: initial_mu out of range");
+  }
+
+  long mu = initial_mu;
+  for (long i = params.d; i-- > 0;) {
+    plan.mu_by_level[static_cast<std::size_t>(i)] = mu;
+    if (i > 0) {
+      const long n_prev = CodewordLengthAtLevelNoValidate(params, i - 1);
+      if (mu >= n_prev)
+        mu -= n_prev;
+    }
+  }
+  return plan;
+}
+
 void AppendU64(Bytes &out, std::uint64_t v) {
   for (int i = 7; i >= 0; --i) {
     out.push_back(static_cast<Byte>((v >> (8 * i)) & 0xff));
@@ -294,6 +365,14 @@ BaseFoldPCSEvalProof BaseFoldPCSProveEval(const vec_ZZ_pE &f_coeffs,
     LogicError("BaseFoldPCSProveEval: claimed_y != f(z)");
   }
 
+  return BaseFoldPCSProveEvalUnchecked(f_coeffs, z, claimed_y, num_queries,
+                                      params);
+}
+
+BaseFoldPCSEvalProof BaseFoldPCSProveEvalUnchecked(
+    const vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const FoldableCodeParams &params) {
   BaseFoldPCSEvalProof proof;
   proof.commitments.roots_by_level.resize(static_cast<std::size_t>(params.d + 1));
   proof.h_by_level.resize(static_cast<std::size_t>(params.d));
@@ -301,17 +380,21 @@ BaseFoldPCSEvalProof BaseFoldPCSProveEval(const vec_ZZ_pE &f_coeffs,
   IOPPOracles oracles;
   oracles.pi.resize(static_cast<std::size_t>(params.d + 1));
 
-  EncodeFoldable(oracles.pi[static_cast<std::size_t>(params.d)], f_coeffs, params);
+  std::vector<MerkleTree> merkle;
+  merkle.resize(static_cast<std::size_t>(params.d + 1));
+
+  EncodeFoldableUnchecked(oracles.pi[static_cast<std::size_t>(params.d)], f_coeffs,
+                          params);
+  merkle[static_cast<std::size_t>(params.d)] =
+      MerkleTree::Build(oracles.pi[static_cast<std::size_t>(params.d)]);
   const MerkleRoot root_d =
-      MerkleCommitOracle(oracles.pi[static_cast<std::size_t>(params.d)]);
+      merkle[static_cast<std::size_t>(params.d)].Root();
   proof.commitments.roots_by_level[static_cast<std::size_t>(params.d)] = root_d;
 
   Sha256Transcript transcript;
   AbsorbPublicInput(transcript, root_d, z, claimed_y);
 
   SumcheckProver sumcheck(f_coeffs, z);
-  if (sumcheck.Dimension() != params.d)
-    LogicError("BaseFoldPCSProveEval: internal dimension mismatch");
 
   // h_d
   const QuadraticPoly h_d = sumcheck.CurrentPolynomial();
@@ -326,12 +409,13 @@ BaseFoldPCSEvalProof BaseFoldPCSProveEval(const vec_ZZ_pE &f_coeffs,
         transcript.ChallengeFieldElement("r/" + std::to_string(i));
     r_by_level[static_cast<std::size_t>(i)] = r_i;
 
-    ProverCommitRound(oracles.pi[static_cast<std::size_t>(i)],
-                      oracles.pi[static_cast<std::size_t>(i + 1)], r_i, i,
-                      params);
+    ProverCommitRoundNoValidate(oracles.pi[static_cast<std::size_t>(i)],
+                                oracles.pi[static_cast<std::size_t>(i + 1)],
+                                r_i, i, params);
 
-    const MerkleRoot root_i =
-        MerkleCommitOracle(oracles.pi[static_cast<std::size_t>(i)]);
+    merkle[static_cast<std::size_t>(i)] =
+        MerkleTree::Build(oracles.pi[static_cast<std::size_t>(i)]);
+    const MerkleRoot root_i = merkle[static_cast<std::size_t>(i)].Root();
     proof.commitments.roots_by_level[static_cast<std::size_t>(i)] = root_i;
     transcript.AbsorbBytes(root_i);
 
@@ -350,11 +434,11 @@ BaseFoldPCSEvalProof BaseFoldPCSProveEval(const vec_ZZ_pE &f_coeffs,
     return proof;
   }
 
-  const long n_last = CodewordLengthAtLevel(params, params.d - 1);
+  const long n_last = CodewordLengthAtLevelNoValidate(params, params.d - 1);
   for (long q = 0; q < num_queries; ++q) {
     const long mu =
         transcript.ChallengeIndex("mu/" + std::to_string(q), n_last);
-    const IOPPQueryPlan plan = MakeQueryPlan(mu, params);
+    const IOPPQueryPlan plan = MakeQueryPlanNoValidate(mu, params);
 
     BaseFoldPCSQueryProof qp;
     qp.left.resize(static_cast<std::size_t>(params.d));
@@ -363,13 +447,16 @@ BaseFoldPCSEvalProof BaseFoldPCSProveEval(const vec_ZZ_pE &f_coeffs,
 
     for (long i = 0; i < params.d; ++i) {
       const long mu_i = plan.mu_by_level[static_cast<std::size_t>(i)];
-      const long n_i = CodewordLengthAtLevel(params, i);
+      const long n_i = CodewordLengthAtLevelNoValidate(params, i);
       qp.left[static_cast<std::size_t>(i)] =
-          MerkleOpenOracle(oracles.pi[static_cast<std::size_t>(i + 1)], mu_i);
-      qp.right[static_cast<std::size_t>(i)] = MerkleOpenOracle(
-          oracles.pi[static_cast<std::size_t>(i + 1)], mu_i + n_i);
+          merkle[static_cast<std::size_t>(i + 1)].Open(
+              oracles.pi[static_cast<std::size_t>(i + 1)], mu_i);
+      qp.right[static_cast<std::size_t>(i)] =
+          merkle[static_cast<std::size_t>(i + 1)].Open(
+              oracles.pi[static_cast<std::size_t>(i + 1)], mu_i + n_i);
       qp.folded[static_cast<std::size_t>(i)] =
-          MerkleOpenOracle(oracles.pi[static_cast<std::size_t>(i)], mu_i);
+          merkle[static_cast<std::size_t>(i)].Open(
+              oracles.pi[static_cast<std::size_t>(i)], mu_i);
     }
 
     proof.query_proofs[static_cast<std::size_t>(q)] = std::move(qp);

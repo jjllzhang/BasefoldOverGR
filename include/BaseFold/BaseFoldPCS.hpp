@@ -56,6 +56,20 @@ BaseFoldPCSEvalProof BaseFoldPCSProveEval(const NTL::vec_ZZ_pE &f_coeffs,
                                           long num_queries,
                                           const FoldableCodeParams &params);
 
+// Unchecked variant of BaseFoldPCSProveEval intended for benchmarking/hot paths.
+//
+// Differences vs BaseFoldPCSProveEval:
+// - Does NOT validate params (so it skips unit checks and dimension checks).
+// - Does NOT check z/f_coeffs lengths.
+// - Does NOT check claimed_y == f(z).
+//
+// Caller is responsible for satisfying the same preconditions as
+// BaseFoldPCSProveEval.
+BaseFoldPCSEvalProof BaseFoldPCSProveEvalUnchecked(
+    const NTL::vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const FoldableCodeParams &params);
+
 // Verifies an evaluation proof for commitment `C` at point `z` with value `y`.
 //
 // Preconditions:
@@ -71,4 +85,3 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
 }  // namespace basefold
 
 #endif  // BASEFOLD_BASEFOLDPCS_HPP_
-
