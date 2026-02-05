@@ -1,9 +1,3 @@
-#include "GaloisRing/HenselLift.hpp"
-#include "GaloisRing/PrimitiveElement.hpp"
-#include "GaloisRing/utils.hpp"
-
-#include "test_common.hpp"
-
 #include <algorithm>
 #include <cstdlib>
 #include <exception>
@@ -11,34 +5,67 @@
 #include <string>
 #include <vector>
 
-using namespace NTL;
-using namespace std;
+#include "GaloisRing/HenselLift.hpp"
+#include "GaloisRing/PrimitiveElement.hpp"
+#include "GaloisRing/utils.hpp"
+
+#include "test_common.hpp"
+
+using NTL::clear;
+using NTL::coeff;
+using NTL::conv;
+using NTL::deg;
+using NTL::DetIrredTest;
+using NTL::DivRem;
+using NTL::eval;
+using NTL::interpolate;
+using NTL::inv;
+using NTL::IsZero;
+using NTL::LeadCoeff;
+using NTL::power;
+using NTL::rep;
+using NTL::set;
+using NTL::SetCoeff;
+using NTL::to_ZZ;
+using NTL::vec_ZZ_pE;
+using NTL::ZZ;
+using NTL::ZZ_p;
+using NTL::ZZ_pE;
+using NTL::ZZ_pEPush;
+using NTL::ZZ_pEX;
+using NTL::ZZ_pPush;
+using NTL::ZZ_pX;
+using std::cerr;
+using std::cout;
+using std::exception;
+using std::string;
+using std::vector;
 
 int g_failures = 0;
 
 namespace {
 
-vector<long> ToLongVec(const ZZ_pX& poly) {
+vector<long> ToLongVec(const ZZ_pX &poly) {
   vector<long> out;
   ZZpX2long(poly, out);
   return out;
 }
 
-vector<long> ToLongVec(const ZZ_pE& element, long s) {
+vector<long> ToLongVec(const ZZ_pE &element, long s) {
   vector<long> out;
   ZzpE2Veclong(element, out, s);
   return out;
 }
 
-vector<long> ToLongVec(const ZZ_pEX& poly, long s) {
+vector<long> ToLongVec(const ZZ_pEX &poly, long s) {
   vector<long> out;
   ZZpEX2long(poly, out, s);
   return out;
 }
 
 void TestUtilsBasics() {
-  testutil::PrintInfo(
-      "Utilities without NTL contexts (factors, padding, power-of-two helpers)");
+  testutil::PrintInfo("Utilities without NTL contexts (factors, padding, "
+                      "power-of-two helpers)");
 
   CHECK_EQ(FindFactor(8), (vector<long>{1, 2, 4, 8}));
 
@@ -95,7 +122,7 @@ void TestConversionsAndPolyOps_Field() {
   }
 
   {
-    const vector<long> coeffs = {3, 5};  // 3 + 5*x
+    const vector<long> coeffs = {3, 5}; // 3 + 5*x
     const ZZ_pE a = long2ZZpE(coeffs);
     CHECK_EQ(ToLongVec(a, s), coeffs);
   }
@@ -211,7 +238,8 @@ void TestFindPrimitivePoly() {
 }
 
 void TestInterpolateForGR() {
-  testutil::PrintInfo("interpolate_for_GR: field case equals NTL; ring case evaluates correctly");
+  testutil::PrintInfo("interpolate_for_GR: field case equals NTL; ring case "
+                      "evaluates correctly");
 
   {
     const ZZ p = to_ZZ(7);
@@ -315,10 +343,11 @@ void TestHenselLift_Smoke() {
     CHECK(IsZero(r));
   }
 
-  auto ReduceCoeffModP = [&](const ZZ_pX& poly, long i) -> ZZ {
+  auto ReduceCoeffModP = [&](const ZZ_pX &poly, long i) -> ZZ {
     ZZ c = rep(coeff(poly, i));
     c %= p;
-    if (c < 0) c += p;
+    if (c < 0)
+      c += p;
     return c;
   };
 
@@ -331,7 +360,8 @@ void TestPrimitiveElement_Smoke() {
   const long k = 1;
   const long s = 30;
   const ZZ mod = power(p, k);
-  testutil::PrintInfo("Primitive element smoke: p=2, k=1, s=30 (hard-coded F in implementation)");
+  testutil::PrintInfo("Primitive element smoke: p=2, k=1, s=30 (hard-coded F "
+                      "in implementation)");
 
   ZZ_pPush p_push(mod);
 
@@ -360,10 +390,10 @@ void TestPrimitiveElement_Smoke() {
   conv(expected, H);
 
   CHECK_EQ(pe, expected);
-  CHECK(deg(rep(pe)) <= 1);
+  CHECK_LE(deg(rep(pe)), 1);
 }
 
-}  // namespace
+} // namespace
 
 int main() {
   try {
@@ -374,7 +404,7 @@ int main() {
     RUN_TEST(TestInterpolateForGR);
     RUN_TEST(TestHenselLift_Smoke);
     RUN_TEST(TestPrimitiveElement_Smoke);
-  } catch (const exception& e) {
+  } catch (const exception &e) {
     cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;
   } catch (...) {

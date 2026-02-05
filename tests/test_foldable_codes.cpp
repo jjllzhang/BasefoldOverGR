@@ -1,29 +1,68 @@
-#include "BaseFold/FoldableCode.hpp"
-
-#include "test_common.hpp"
-
-#include <NTL/ZZ_pE.h>
-#include <NTL/mat_ZZ_pE.h>
-#include <NTL/vec_ZZ_pE.h>
-
 #include <exception>
 #include <iostream>
+#include <sstream>
+#include <string>
 #include <vector>
 
-using namespace NTL;
-using namespace std;
+#include "BaseFold/FoldableCode.hpp"
+#include "test_common.hpp"
+
+using NTL::conv;
+using NTL::coeff;
+using NTL::mat_ZZ_pE;
+using NTL::mul;
+using NTL::SetCoeff;
+using NTL::to_ZZ;
+using NTL::rep;
+using NTL::vec_ZZ_pE;
+using NTL::ZZ;
+using NTL::ZZ_pE;
+using NTL::ZZ_pEPush;
+using NTL::ZZ_pPush;
+using NTL::ZZ_pX;
+using std::cerr;
+using std::cout;
+using std::exception;
+using std::ostringstream;
+using std::string;
+using std::size_t;
+using std::vector;
 
 int g_failures = 0;
 
 namespace {
 
-mat_ZZ_pE BuildFoldableGeneratorMatrix(const mat_ZZ_pE& G0,
-                                      const vector<vec_ZZ_pE>& diag_T,
-                                      const ZZ_pE& zeta) {
+string ElemToCoeffString(const ZZ_pE &element) {
+  const long s = ZZ_pE::degree();
+  const ZZ_pX poly = rep(element);
+
+  ostringstream out;
+  out << "[";
+  for (long i = 0; i < s; ++i) {
+    long c = 0;
+    conv(c, coeff(poly, i));
+    out << c;
+    if (i + 1 < s)
+      out << ",";
+  }
+  out << "]";
+  return out.str();
+}
+
+void PrintVec(const char *label, const vec_ZZ_pE &vec) {
+  cout << "  " << label << " (len=" << vec.length() << "):\n";
+  for (long i = 0; i < vec.length(); ++i) {
+    cout << "    " << i << ": " << ElemToCoeffString(vec[i]) << "\n";
+  }
+}
+
+mat_ZZ_pE BuildFoldableGeneratorMatrix(const mat_ZZ_pE &G0,
+                                       const vector<vec_ZZ_pE> &diag_T,
+                                       const ZZ_pE &zeta) {
   mat_ZZ_pE G = G0;
 
   for (size_t level = 0; level < diag_T.size(); ++level) {
-    const vec_ZZ_pE& t = diag_T[level];
+    const vec_ZZ_pE &t = diag_T[level];
     const long k = G.NumRows();
     const long n = G.NumCols();
     CHECK_EQ(t.length(), n);
@@ -33,7 +72,7 @@ mat_ZZ_pE BuildFoldableGeneratorMatrix(const mat_ZZ_pE& G0,
 
     for (long r = 0; r < k; ++r) {
       for (long c = 0; c < n; ++c) {
-        const ZZ_pE& v = G[r][c];
+        const ZZ_pE &v = G[r][c];
         next[r][c] = v;
         next[r][c + n] = v;
         next[r + k][c] = v * t[c];
@@ -98,9 +137,12 @@ void TestFoldableEncode_OverBinaryField() {
 
   diag_T[1].SetLength(/*n1=*/8);
   for (long i = 0; i < diag_T[1].length(); ++i) {
-    if (i % 3 == 0) diag_T[1][i] = testutil::ConstZZpE(1);
-    if (i % 3 == 1) diag_T[1][i] = alpha;
-    if (i % 3 == 2) diag_T[1][i] = alpha + testutil::ConstZZpE(1);
+    if (i % 3 == 0)
+      diag_T[1][i] = testutil::ConstZZpE(1);
+    if (i % 3 == 1)
+      diag_T[1][i] = alpha;
+    if (i % 3 == 2)
+      diag_T[1][i] = alpha + testutil::ConstZZpE(1);
   }
 
   basefold::FoldableCodeParams params;
@@ -122,8 +164,13 @@ void TestFoldableEncode_OverBinaryField() {
   msg[6] = testutil::ConstZZpE(0);
   msg[7] = alpha + testutil::ConstZZpE(1);
 
+  testutil::PrintInfo("Element format: [c0,c1] means c0 + c1*x in GF(2^2).");
+  PrintVec("msg", msg);
+
   vec_ZZ_pE got;
   basefold::EncodeFoldable(got, msg, params);
+
+  PrintVec("codeword", got);
 
   const mat_ZZ_pE Gd = BuildFoldableGeneratorMatrix(G0, diag_T, zeta);
   vec_ZZ_pE expected;
@@ -135,12 +182,12 @@ void TestFoldableEncode_OverBinaryField() {
   }
 }
 
-}  // namespace
+} // namespace
 
 int main() {
   try {
     RUN_TEST(TestFoldableEncode_OverBinaryField);
-  } catch (const exception& e) {
+  } catch (const exception &e) {
     cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;
   } catch (...) {
