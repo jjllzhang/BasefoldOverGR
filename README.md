@@ -159,6 +159,7 @@ ctest --test-dir build
 
 ```bash
 ./build/bench_pcs_commit --help
+./build/bench_pcs_eval --help
 ```
 
 示例：
@@ -169,4 +170,10 @@ ctest --test-dir build
 
 # GR(4,2) with the same extension polynomial and zeta=x
 ./build/bench_pcs_commit --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --reps 5 --warmup 1
+
+# PCS eval proof prover/verifier time + proof size (GF(2^2))
+./build/bench_pcs_eval --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --d 16 --queries 4 --reps 3 --warmup 1
+
+# PCS eval proof prover/verifier time + proof size (GR(4,2))
+./build/bench_pcs_eval --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4 --reps 3 --warmup 1
 ```
