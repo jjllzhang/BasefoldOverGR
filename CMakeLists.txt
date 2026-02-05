@@ -26,10 +26,12 @@ endif()
 find_library(NTL_LIBRARY NAMES ntl REQUIRED)
 find_library(GMP_LIBRARY NAMES gmp REQUIRED)
 find_library(M_LIBRARY NAMES m)
+find_package(OpenSSL REQUIRED)
 
 target_link_libraries(galoisring PUBLIC
   ${NTL_LIBRARY}
   ${GMP_LIBRARY}
+  OpenSSL::Crypto
 )
 if(M_LIBRARY)
   target_link_libraries(galoisring PUBLIC ${M_LIBRARY})
