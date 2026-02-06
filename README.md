@@ -9,7 +9,7 @@
 同时，仓库中也实现了 BaseFold 论文里的：
 
 - BaseFold IOPP（folding + query，一并支持有限域与 Galois ring，见 `include/BaseFold/IOPP.hpp`）。
-- 一个最小化的、基于 **Merkle + Fiat–Shamir** 的非交互 BaseFold PCS 单点求值证明（目前实现的是 `k0==1` 版本，见 `include/BaseFold/BaseFoldPCS.hpp`）。
+- 一个最小化的、基于 **Merkle + Fiat–Shamir** 的非交互 BaseFold PCS 单点求值证明（支持 `k0=2^κ`，见 `include/BaseFold/BaseFoldPCS.hpp`；多项式点维度为 `d+κ`）。
 
 ## 目录结构
 
@@ -140,7 +140,7 @@
 
 - 一个最小化的非交互 BaseFold PCS 单点求值证明（Protocol 4 + Merkle + Fiat–Shamir）：
   - `BaseFoldPCSCommit/ProveEval/VerifyEval`
-  - 目前实现限制为 `k0==1`（对应 `Basefold_over_GR.pdf` 的 Protocol 4 版本）。
+  - 支持 `k0=2^κ` 的情况（BaseFold 论文 Remark 3）：IOPP depth 为 `d`，多项式点维度为 `d+κ`；`κ=0` 时退化为 `Basefold_over_GR.pdf` 的 Protocol 4（`k0==1`）。
 
 ### `include/BaseFold/ProofSize.hpp` / `src/BaseFold/ProofSize.cpp`
 
@@ -151,19 +151,21 @@
 ### `bench/bench_pcs_commit.cpp`
 
 - 编码性能基准：测量 **去掉校验后的纯编码时间**（`EncodeFoldableUnchecked`），支持由命令行分别指定有限域与 Galois ring 的上下文参数。
-- 可选 `--k0 <int>`（默认 `1`）用于测试一般 `k0` 的编码性能（注意 PCS 相关 bench/实现仍限制 `k0==1`）。
+- 可选 `--k0 <int>`（默认 `1`）用于测试一般 `k0` 的编码性能。
 
 ### `bench/bench_pcs_eval.cpp`
 
 - PCS eval proof 性能基准：测量 prover time 与 verifier time（Merkle + Fiat–Shamir）。
 - 默认 prover 走 `BaseFoldPCSProveEvalUnchecked`；如需把校验也算进 prover time，可加 `--checked`。
 - 可加 `--profile` 输出 prover/verifier 内部耗时拆分（profile 会在 `reps` 次迭代上累加，不包含 `warmup`；建议 `--warmup 0 --reps 1` 方便阅读）。
+- 可选 `--k0 <int>`（默认 `1`，要求 2 的幂）；此时多项式点维度为 `d+log2(k0)`，消息长度为 `k_d = k0*2^d`。
 
 ### `bench/bench_pcs_proof_size.cpp`
 
 - PCS eval proof size 估算：
   - 不带 `--formula`：生成一次 **真实 proof** 并输出估算的 proof size（KB）；默认使用 `BaseFoldPCSProveEval`（包含参数/长度检查与 `claimed_y==f(z)` 校验）。
   - 带 `--formula`：完全不运行 prover，仅根据输入参数用公式给出近似/上界估算。
+  - 可选 `--k0 <int>`（默认 `1`，要求 2 的幂）；此时多项式点维度为 `d+log2(k0)`，消息长度为 `k_d = k0*2^d`。
 
 ## 依赖
 

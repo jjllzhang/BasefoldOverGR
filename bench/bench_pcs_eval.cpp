@@ -76,6 +76,18 @@ long Pow2Checked(long e) {
   return 1L << e;
 }
 
+bool IsPowerOfTwoLong(long n) { return n > 0 && (n & (n - 1)) == 0; }
+
+long Log2ExactPowerOfTwoLong(long n) {
+  if (!IsPowerOfTwoLong(n)) LogicError("Log2ExactPowerOfTwoLong: not a power of two");
+  long d = 0;
+  while (n > 1) {
+    n >>= 1;
+    ++d;
+  }
+  return d;
+}
+
 std::vector<long> ParseCoeffList(const std::string &s) {
   std::vector<long> out;
   std::size_t pos = 0;
@@ -178,6 +190,64 @@ basefold::FoldableCodeParams BuildParams_k0_1(long c, long d, const ZZ &prime_p,
       LogicError("BuildParams_k0_1: overflow in n_i");
     }
     const long ni = c * pow2;
+    params.diag_T[static_cast<std::size_t>(level)].SetLength(ni);
+    for (long i = 0; i < ni; ++i) {
+      params.diag_T[static_cast<std::size_t>(level)][i] = ZZ_pE(1);
+    }
+  }
+
+  return params;
+}
+
+NTL::mat_ZZ_pE BuildSystematicG0(long c, long k0) {
+  if (c <= 0) LogicError("BuildSystematicG0: c must be positive");
+  if (k0 <= 0) LogicError("BuildSystematicG0: k0 must be positive");
+  if (c > std::numeric_limits<long>::max() / k0)
+    LogicError("BuildSystematicG0: overflow in n0");
+  const long n0 = c * k0;
+
+  NTL::mat_ZZ_pE G0;
+  G0.SetDims(k0, n0);
+
+  const ZZ_pE one = ZZ_pE(1);
+  for (long block = 0; block < c; ++block) {
+    const long base = block * k0;
+    for (long r = 0; r < k0; ++r) {
+      G0[r][base + r] = one;
+    }
+  }
+  return G0;
+}
+
+basefold::FoldableCodeParams BuildParams_k0_pow2(long c, long k0, long d,
+                                                 const ZZ &prime_p,
+                                                 const ZZ_pE &zeta) {
+  if (c <= 0) LogicError("BuildParams_k0_pow2: c must be positive");
+  if (k0 <= 0) LogicError("BuildParams_k0_pow2: k0 must be positive");
+  if (!IsPowerOfTwoLong(k0))
+    LogicError("BuildParams_k0_pow2: k0 must be a power of two");
+  if (d < 0) LogicError("BuildParams_k0_pow2: d must be non-negative");
+
+  if (c > std::numeric_limits<long>::max() / k0)
+    LogicError("BuildParams_k0_pow2: overflow in n0");
+  const long n0 = c * k0;
+
+  basefold::FoldableCodeParams params;
+  params.c = c;
+  params.k0 = k0;
+  params.d = d;
+  params.p = prime_p;
+  params.zeta = zeta;
+
+  params.G0 = BuildSystematicG0(c, k0);
+
+  params.diag_T.resize(static_cast<std::size_t>(d));
+  for (long level = 0; level < d; ++level) {
+    const long pow2 = Pow2Checked(level);
+    if (n0 > std::numeric_limits<long>::max() / pow2) {
+      LogicError("BuildParams_k0_pow2: overflow in n_i");
+    }
+    const long ni = n0 * pow2;
     params.diag_T[static_cast<std::size_t>(level)].SetLength(ni);
     for (long i = 0; i < ni; ++i) {
       params.diag_T[static_cast<std::size_t>(level)][i] = ZZ_pE(1);
@@ -335,15 +405,20 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
 }
 
 void PrintResult(const std::string &label, long mod, long c, long d,
+                 long k0,
                  long num_queries, int warmup, int reps,
                  const BenchResult &r) {
-  const long k_d = Pow2Checked(d);  // k0==1
+  const long pow2_d = Pow2Checked(d);
+  if (k0 > std::numeric_limits<long>::max() / pow2_d) {
+    LogicError("PrintResult: overflow in k_d");
+  }
+  const long k_d = k0 * pow2_d;
   if (c > std::numeric_limits<long>::max() / k_d) {
     LogicError("PrintResult: overflow in n_d");
   }
   const long n_d = c * k_d;
 
-  std::cout << "\n[" << label << "] c=" << c << " k0=1 d=" << d
+  std::cout << "\n[" << label << "] c=" << c << " k0=" << k0 << " d=" << d
             << "  mod=" << mod << "  k_d=" << k_d << "  n_d=" << n_d
             << "  queries=" << num_queries << "  warmup=" << warmup
             << " reps=" << reps << "\n";
@@ -401,12 +476,13 @@ void PrintHelp() {
   std::cout
       << "bench_pcs_eval (PCS prove+verify, includes Merkle+FS)\n\n"
       << "Usage:\n"
-      << "  bench_pcs_eval [--mode field|ring|both] [--c <int>] [--d <int>]\n"
+      << "  bench_pcs_eval [--mode field|ring|both] [--c <int>] [--k0 <int>] [--d <int>]\n"
       << "               [--queries <int>] [--checked] [--profile] [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
       << "               [--field-mod <int>] [--field-F <a0,a1,...>] [--field-zeta <b0,b1,...>]\n"
       << "               [--ring-mod <int>]  [--ring-p <int>] [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
       << "Notes:\n"
       << "  By default, prover uses BaseFoldPCSProveEvalUnchecked (skips validation and claimed_y check).\n\n"
+      << "  PCS Eval supports k0 = 2^κ. The multilinear point dimension is (d + κ).\n\n"
       << "Examples:\n"
       << "  # GF(2^2) with F(x)=x^2+x+1 and zeta=x\n"
       << "  bench_pcs_eval --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --d 16 --queries 4\n"
@@ -414,11 +490,14 @@ void PrintHelp() {
       << "  bench_pcs_eval --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4\n";
 }
 
-void RunOneContext(const ContextSpec &spec, long c, long d, long num_queries,
+void RunOneContext(const ContextSpec &spec, long c, long k0, long d,
+                   long num_queries,
                    bool checked_prover, bool enable_profile, int warmup,
                    int reps,
                    std::uint64_t seed) {
   if (spec.mod <= 1) LogicError("RunOneContext: modulus must be > 1");
+  if (k0 <= 0) LogicError("RunOneContext: k0 must be positive");
+  if (!IsPowerOfTwoLong(k0)) LogicError("RunOneContext: k0 must be a power of two");
 
   const ZZ modulus = to_ZZ(spec.mod);
   ZZ_pPush mod_push(modulus);
@@ -431,18 +510,28 @@ void RunOneContext(const ContextSpec &spec, long c, long d, long num_queries,
   ZZ_pE zeta;
   conv(zeta, zpoly);
 
-  const basefold::FoldableCodeParams params =
-      BuildParams_k0_1(c, d, to_ZZ(spec.prime_p), zeta);
+  const basefold::FoldableCodeParams params = (k0 == 1)
+                                                  ? BuildParams_k0_1(
+                                                        c, d, to_ZZ(spec.prime_p), zeta)
+                                                  : BuildParams_k0_pow2(
+                                                        c, k0, d, to_ZZ(spec.prime_p),
+                                                        zeta);
 
-  const long k_d = Pow2Checked(d);
+  const long pow2_d = Pow2Checked(d);
+  if (k0 > std::numeric_limits<long>::max() / pow2_d) {
+    LogicError("RunOneContext: overflow in k_d");
+  }
+  const long k_d = k0 * pow2_d;
   const vec_ZZ_pE f_coeffs = MakeDeterministicCoefficients(k_d, seed);
-  const std::vector<ZZ_pE> z = MakeDeterministicPoint(d, seed ^ 0xdeadbeefULL);
+  const long point_dim = d + Log2ExactPowerOfTwoLong(k0);
+  const std::vector<ZZ_pE> z =
+      MakeDeterministicPoint(point_dim, seed ^ 0xdeadbeefULL);
   const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
 
   const BenchResult r =
       RunEvalBenchmark(f_coeffs, z, y, num_queries, params, checked_prover,
                        enable_profile, warmup, reps);
-  PrintResult(spec.label, spec.mod, c, d, num_queries, warmup, reps, r);
+  PrintResult(spec.label, spec.mod, c, d, k0, num_queries, warmup, reps, r);
 }
 
 }  // namespace
@@ -450,6 +539,7 @@ void RunOneContext(const ContextSpec &spec, long c, long d, long num_queries,
 int main(int argc, char **argv) {
   long d = 16;
   long c = 2;
+  long k0 = 1;
   long num_queries = 4;
   bool checked_prover = false;
   bool enable_profile = false;
@@ -507,6 +597,11 @@ int main(int argc, char **argv) {
     } else if (arg == "--c") {
       if (!ParseLong(NeedValue("--c"), c) || c <= 0) {
         std::cerr << "Invalid --c\n";
+        return 2;
+      }
+    } else if (arg == "--k0") {
+      if (!ParseLong(NeedValue("--k0"), k0) || k0 <= 0) {
+        std::cerr << "Invalid --k0\n";
         return 2;
       }
     } else if (arg == "--queries") {
@@ -568,10 +663,10 @@ int main(int argc, char **argv) {
       return 2;
     }
     if (do_field)
-      RunOneContext(field, c, d, num_queries, checked_prover, enable_profile,
+      RunOneContext(field, c, k0, d, num_queries, checked_prover, enable_profile,
                     warmup, reps, seed);
     if (do_ring)
-      RunOneContext(ring, c, d, num_queries, checked_prover, enable_profile,
+      RunOneContext(ring, c, k0, d, num_queries, checked_prover, enable_profile,
                     warmup, reps, seed);
   } catch (const std::exception &e) {
     std::cerr << "Unhandled std::exception: " << e.what() << "\n";

@@ -45,6 +45,18 @@ long Pow2Checked(long e) {
   return 1L << e;
 }
 
+bool IsPowerOfTwoLong(long n) { return n > 0 && (n & (n - 1)) == 0; }
+
+long Log2ExactPowerOfTwoLong(long n) {
+  if (!IsPowerOfTwoLong(n)) LogicError("Log2ExactPowerOfTwoLong: not a power of two");
+  long d = 0;
+  while (n > 1) {
+    n >>= 1;
+    ++d;
+  }
+  return d;
+}
+
 std::vector<long> ParseCoeffList(const std::string &s) {
   std::vector<long> out;
   std::size_t pos = 0;
@@ -179,13 +191,17 @@ std::uint64_t MerkleOpeningBytes(std::uint64_t leaf_count,
 }
 
 std::uint64_t EstimateEvalProofSizeFormulaBytes(long mod, long c, long d,
-                                                long num_queries,
+                                                long k0, long num_queries,
                                                 long ext_degree) {
   static constexpr std::uint64_t kHashBytes = 32;
   if (c <= 0)
     LogicError("EstimateEvalProofSizeFormulaBytes: c must be > 0");
   if (d < 0)
     LogicError("EstimateEvalProofSizeFormulaBytes: d must be >= 0");
+  if (k0 <= 0)
+    LogicError("EstimateEvalProofSizeFormulaBytes: k0 must be > 0");
+  if (!IsPowerOfTwoLong(k0))
+    LogicError("EstimateEvalProofSizeFormulaBytes: k0 must be a power of two");
   if (num_queries < 0)
     LogicError("EstimateEvalProofSizeFormulaBytes: queries must be >= 0");
 
@@ -194,12 +210,14 @@ std::uint64_t EstimateEvalProofSizeFormulaBytes(long mod, long c, long d,
   unsigned __int128 total = 0;
   total += static_cast<unsigned __int128>(d + 1) * kHashBytes;          // roots
   total += static_cast<unsigned __int128>(d) * 3ULL * fe_bytes;         // sumcheck polys
-  total += static_cast<unsigned __int128>(c) * fe_bytes;                // pi0_full
+  total += static_cast<unsigned __int128>(c) *
+           static_cast<unsigned __int128>(k0) * fe_bytes;               // pi0_full
 
   std::vector<std::uint64_t> open_bytes;
   open_bytes.resize(static_cast<std::size_t>(d + 1));
 
-  std::uint64_t leaf_count = static_cast<std::uint64_t>(c);
+  std::uint64_t leaf_count =
+      static_cast<std::uint64_t>(c) * static_cast<std::uint64_t>(k0);
   for (long level = 0; level <= d; ++level) {
     open_bytes[static_cast<std::size_t>(level)] =
         MerkleOpeningBytes(leaf_count, fe_bytes);
@@ -253,6 +271,64 @@ basefold::FoldableCodeParams BuildParams_k0_1(long c, long d, const ZZ &prime_p,
       LogicError("BuildParams_k0_1: overflow in n_i");
     }
     const long ni = c * pow2;
+    params.diag_T[static_cast<std::size_t>(level)].SetLength(ni);
+    for (long i = 0; i < ni; ++i) {
+      params.diag_T[static_cast<std::size_t>(level)][i] = ZZ_pE(1);
+    }
+  }
+
+  return params;
+}
+
+NTL::mat_ZZ_pE BuildSystematicG0(long c, long k0) {
+  if (c <= 0) LogicError("BuildSystematicG0: c must be positive");
+  if (k0 <= 0) LogicError("BuildSystematicG0: k0 must be positive");
+  if (c > std::numeric_limits<long>::max() / k0)
+    LogicError("BuildSystematicG0: overflow in n0");
+  const long n0 = c * k0;
+
+  NTL::mat_ZZ_pE G0;
+  G0.SetDims(k0, n0);
+
+  const ZZ_pE one = ZZ_pE(1);
+  for (long block = 0; block < c; ++block) {
+    const long base = block * k0;
+    for (long r = 0; r < k0; ++r) {
+      G0[r][base + r] = one;
+    }
+  }
+  return G0;
+}
+
+basefold::FoldableCodeParams BuildParams_k0_pow2(long c, long k0, long d,
+                                                 const ZZ &prime_p,
+                                                 const ZZ_pE &zeta) {
+  if (c <= 0) LogicError("BuildParams_k0_pow2: c must be positive");
+  if (k0 <= 0) LogicError("BuildParams_k0_pow2: k0 must be positive");
+  if (!IsPowerOfTwoLong(k0))
+    LogicError("BuildParams_k0_pow2: k0 must be a power of two");
+  if (d < 0) LogicError("BuildParams_k0_pow2: d must be non-negative");
+
+  if (c > std::numeric_limits<long>::max() / k0)
+    LogicError("BuildParams_k0_pow2: overflow in n0");
+  const long n0 = c * k0;
+
+  basefold::FoldableCodeParams params;
+  params.c = c;
+  params.k0 = k0;
+  params.d = d;
+  params.p = prime_p;
+  params.zeta = zeta;
+
+  params.G0 = BuildSystematicG0(c, k0);
+
+  params.diag_T.resize(static_cast<std::size_t>(d));
+  for (long level = 0; level < d; ++level) {
+    const long pow2 = Pow2Checked(level);
+    if (n0 > std::numeric_limits<long>::max() / pow2) {
+      LogicError("BuildParams_k0_pow2: overflow in n_i");
+    }
+    const long ni = n0 * pow2;
     params.diag_T[static_cast<std::size_t>(level)].SetLength(ni);
     for (long i = 0; i < ni; ++i) {
       params.diag_T[static_cast<std::size_t>(level)][i] = ZZ_pE(1);
@@ -349,7 +425,7 @@ void PrintHelp() {
   std::cout
       << "bench_pcs_proof_size (estimate eval proof size)\n\n"
       << "Usage:\n"
-      << "  bench_pcs_proof_size [--mode field|ring|both] [--c <int>] [--d <int>]\n"
+      << "  bench_pcs_proof_size [--mode field|ring|both] [--c <int>] [--k0 <int>] [--d <int>]\n"
       << "                     [--queries <int>] [--seed <u64>] [--formula]\n"
       << "                     [--field-mod <int>] [--field-F <a0,a1,...>] [--field-zeta <b0,b1,...>]\n"
       << "                     [--ring-mod <int>]  [--ring-p <int>] [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
@@ -358,6 +434,7 @@ void PrintHelp() {
       << "  By default, prover uses BaseFoldPCSProveEval (includes parameter/length checks and claimed_y == f(z)).\n\n"
       << "  With --formula, it does NOT run the prover. It estimates proof size from (c,d,queries)\n"
       << "  assuming fixed-size field elements and sha256-based Merkle hashing.\n\n"
+      << "  PCS Eval supports k0 = 2^κ. The multilinear point dimension is (d + κ).\n\n"
       << "Examples:\n"
       << "  # GF(2^2) with F(x)=x^2+x+1 and zeta=x\n"
       << "  bench_pcs_proof_size --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --d 16 --queries 4\n"
@@ -365,11 +442,13 @@ void PrintHelp() {
       << "  bench_pcs_proof_size --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4\n";
 }
 
-void RunOneContext(const ContextSpec &spec, long c, long d, long num_queries,
-                   bool formula_only,
+void RunOneContext(const ContextSpec &spec, long c, long k0, long d,
+                   long num_queries, bool formula_only,
                    std::uint64_t seed) {
   if (spec.mod <= 1) LogicError("RunOneContext: modulus must be > 1");
   if (c <= 0) LogicError("RunOneContext: c must be > 0");
+  if (k0 <= 0) LogicError("RunOneContext: k0 must be > 0");
+  if (!IsPowerOfTwoLong(k0)) LogicError("RunOneContext: k0 must be a power of two");
   if (d < 0) LogicError("RunOneContext: d must be >= 0");
   if (num_queries < 0) LogicError("RunOneContext: queries must be >= 0");
 
@@ -378,10 +457,10 @@ void RunOneContext(const ContextSpec &spec, long c, long d, long num_queries,
     const long r = PolyDegree(spec.F_coeffs, spec.mod);
 
     const std::uint64_t bytes =
-        EstimateEvalProofSizeFormulaBytes(spec.mod, c, d, num_queries, r);
+        EstimateEvalProofSizeFormulaBytes(spec.mod, c, d, k0, num_queries, r);
     const double kb = static_cast<double>(bytes) / 1024.0;
 
-    std::cout << "\n[" << spec.label << "] c=" << c << " k0=1 d=" << d
+    std::cout << "\n[" << spec.label << "] c=" << c << " k0=" << k0 << " d=" << d
               << "  mod=" << spec.mod << "  queries=" << num_queries
               << "  (formula)\n";
     std::cout << std::fixed << std::setprecision(3);
@@ -400,12 +479,22 @@ void RunOneContext(const ContextSpec &spec, long c, long d, long num_queries,
   ZZ_pE zeta;
   conv(zeta, zpoly);
 
-  const basefold::FoldableCodeParams params =
-      BuildParams_k0_1(c, d, to_ZZ(spec.prime_p), zeta);
+  const basefold::FoldableCodeParams params = (k0 == 1)
+                                                  ? BuildParams_k0_1(
+                                                        c, d, to_ZZ(spec.prime_p), zeta)
+                                                  : BuildParams_k0_pow2(
+                                                        c, k0, d, to_ZZ(spec.prime_p),
+                                                        zeta);
 
-  const long k_d = Pow2Checked(d);  // k0==1
+  const long pow2_d = Pow2Checked(d);
+  if (k0 > std::numeric_limits<long>::max() / pow2_d) {
+    LogicError("RunOneContext: overflow in k_d");
+  }
+  const long k_d = k0 * pow2_d;
   const vec_ZZ_pE f_coeffs = MakeDeterministicCoefficients(k_d, seed);
-  const std::vector<ZZ_pE> z = MakeDeterministicPoint(d, seed ^ 0xdeadbeefULL);
+  const long point_dim = d + Log2ExactPowerOfTwoLong(k0);
+  const std::vector<ZZ_pE> z =
+      MakeDeterministicPoint(point_dim, seed ^ 0xdeadbeefULL);
 
   const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
 
@@ -415,7 +504,7 @@ void RunOneContext(const ContextSpec &spec, long c, long d, long num_queries,
   const std::uint64_t bytes = basefold::BaseFoldPCSEvalProofSizeBytes(proof);
   const double kb = static_cast<double>(bytes) / 1024.0;
 
-  std::cout << "\n[" << spec.label << "] c=" << c << " k0=1 d=" << d
+  std::cout << "\n[" << spec.label << "] c=" << c << " k0=" << k0 << " d=" << d
             << "  mod=" << spec.mod << "  queries=" << num_queries << "\n";
   std::cout << std::fixed << std::setprecision(3);
   std::cout << "  proof size  " << kb << " KB  (" << bytes << " B)\n";
@@ -426,6 +515,7 @@ void RunOneContext(const ContextSpec &spec, long c, long d, long num_queries,
 int main(int argc, char **argv) {
   long d = 16;
   long c = 2;
+  long k0 = 1;
   long num_queries = 4;
   bool formula_only = false;
   std::uint64_t seed = 0;
@@ -482,6 +572,11 @@ int main(int argc, char **argv) {
         std::cerr << "Invalid --c\n";
         return 2;
       }
+    } else if (arg == "--k0") {
+      if (!ParseLong(NeedValue("--k0"), k0) || k0 <= 0) {
+        std::cerr << "Invalid --k0\n";
+        return 2;
+      }
     } else if (arg == "--queries") {
       if (!ParseLong(NeedValue("--queries"), num_queries) || num_queries < 0) {
         std::cerr << "Invalid --queries\n";
@@ -529,9 +624,9 @@ int main(int argc, char **argv) {
       return 2;
     }
     if (do_field)
-      RunOneContext(field, c, d, num_queries, formula_only, seed);
+      RunOneContext(field, c, k0, d, num_queries, formula_only, seed);
     if (do_ring)
-      RunOneContext(ring, c, d, num_queries, formula_only, seed);
+      RunOneContext(ring, c, k0, d, num_queries, formula_only, seed);
   } catch (const std::exception &e) {
     std::cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;

@@ -20,8 +20,9 @@ struct BaseFoldPCSQueryProof {
 };
 
 // Non-interactive BaseFold PCS evaluation proof (Protocol 4 + Merkle+FS).
-//
-// This is the k0==1 specialization from Basefold_over_GR.pdf (Protocol 4).
+// Supports k0 = 2^κ (κ>=0) via the BaseFold paper's Remark 3 adaptation:
+// the IOPP recursion has depth params.d, while the committed multilinear
+// polynomial has dimension (params.d + κ).
 struct BaseFoldPCSEvalProof {
   // Merkle roots for π_0..π_d.
   IOPPMerkleCommitments commitments;
@@ -30,7 +31,7 @@ struct BaseFoldPCSEvalProof {
   // In particular, h_by_level.back() is h_d.
   std::vector<QuadraticPoly> h_by_level;
 
-  // Full π_0 (n0 = c when k0==1).
+  // Full π_0 (length n0 = c*k0).
   Oracle pi0_full;
 
   // Openings for ℓ independent IOPP.query repetitions.
@@ -46,9 +47,9 @@ MerkleRoot BaseFoldPCSCommit(const NTL::vec_ZZ_pE &f_coeffs,
 // Proves an evaluation claim for a committed multilinear polynomial.
 //
 // Preconditions:
-// - params.k0 == 1
-// - z.size() == params.d
-// - f_coeffs.length() == MessageLength(params) == 2^params.d
+// - params.k0 is a power of two
+// - z.size() == params.d + log2(params.k0)
+// - f_coeffs.length() == MessageLength(params) == params.k0 * 2^params.d
 // - claimed_y == f(z)
 BaseFoldPCSEvalProof BaseFoldPCSProveEval(const NTL::vec_ZZ_pE &f_coeffs,
                                           const std::vector<FieldElement> &z,
@@ -73,8 +74,8 @@ BaseFoldPCSEvalProof BaseFoldPCSProveEvalUnchecked(
 // Verifies an evaluation proof for commitment `C` at point `z` with value `y`.
 //
 // Preconditions:
-// - params.k0 == 1
-// - z.size() == params.d
+// - params.k0 is a power of two
+// - z.size() == params.d + log2(params.k0)
 bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
                            const std::vector<FieldElement> &z,
                            const FieldElement &claimed_y,

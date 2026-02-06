@@ -47,6 +47,19 @@ long Pow2Checked(long e) {
   return 1L << e;
 }
 
+bool IsPowerOfTwoLong(long n) { return n > 0 && (n & (n - 1)) == 0; }
+
+long Log2ExactPowerOfTwoLong(long n) {
+  if (!IsPowerOfTwoLong(n))
+    LogicError("Log2ExactPowerOfTwoLong: not a power of two");
+  long d = 0;
+  while (n > 1) {
+    n >>= 1;
+    ++d;
+  }
+  return d;
+}
+
 long CodewordLengthAtLevelNoValidate(const FoldableCodeParams &params,
                                      long level) {
   if (level < 0 || level > params.d) {
@@ -382,9 +395,9 @@ BaseFoldPCSEvalProof BaseFoldPCSProveEval(const vec_ZZ_pE &f_coeffs,
                                           long num_queries,
                                           const FoldableCodeParams &params) {
   ValidateParamsOrThrow(params);
-  if (params.k0 != 1)
-    LogicError("BaseFoldPCSProveEval: only supports k0 == 1");
-  if (static_cast<long>(z.size()) != params.d)
+  const long kappa = Log2ExactPowerOfTwoLong(params.k0);
+  const long point_dim = params.d + kappa;
+  if (static_cast<long>(z.size()) != point_dim)
     LogicError("BaseFoldPCSProveEval: z has wrong dimension");
   if (f_coeffs.length() != MessageLength(params))
     LogicError("BaseFoldPCSProveEval: f_coeffs has wrong length");
@@ -424,6 +437,12 @@ BaseFoldPCSEvalProof BaseFoldPCSProveEvalUnchecked(
   Sha256Transcript transcript;
   AbsorbPublicInput(transcript, root_d, z, claimed_y);
 
+  if (params.d == 0) {
+    proof.pi0_full = oracles.pi[0];
+    proof.query_proofs.resize(static_cast<std::size_t>(num_queries));
+    return proof;
+  }
+
   SumcheckProver sumcheck(f_coeffs, z);
 
   // h_d
@@ -460,9 +479,6 @@ BaseFoldPCSEvalProof BaseFoldPCSProveEvalUnchecked(
   proof.pi0_full = oracles.pi[0];
 
   proof.query_proofs.resize(static_cast<std::size_t>(num_queries));
-  if (params.d == 0) {
-    return proof;
-  }
 
   const long n_last = CodewordLengthAtLevelNoValidate(params, params.d - 1);
   for (long q = 0; q < num_queries; ++q) {
@@ -506,9 +522,11 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
                     prof ? &prof->pcs_verify_calls : nullptr);
 
   ValidateParamsOrThrow(params);
-  if (params.k0 != 1)
+  if (!IsPowerOfTwoLong(params.k0))
     return false;
-  if (static_cast<long>(z.size()) != params.d)
+  const long kappa = Log2ExactPowerOfTwoLong(params.k0);
+  const long point_dim = params.d + kappa;
+  if (static_cast<long>(z.size()) != point_dim)
     return false;
   if (num_queries < 0)
     return false;
@@ -527,6 +545,21 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
   const long n0 = CodewordLengthAtLevel(params, 0);
   if (proof.pi0_full.length() != n0)
     return false;
+
+  if (params.d == 0) {
+    if (!proof.h_by_level.empty())
+      return false;
+    if (MerkleCommitOracle(proof.pi0_full) != commitment_C)
+      return false;
+
+    vec_ZZ_pE msg0;
+    if (!DecodeC0(msg0, proof.pi0_full, params))
+      return false;
+    if (msg0.length() != params.k0)
+      return false;
+
+    return EvalMultilinearMonomialCoeffs(msg0, z) == claimed_y;
+  }
 
   Sha256Transcript transcript;
   AbsorbPublicInput(transcript, commitment_C, z, claimed_y);
@@ -557,25 +590,59 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
   const FieldElement r0 = r_by_level[0];
   const FieldElement h1_r0 = proof.h_by_level[0].Eval(r0);
 
-  std::vector<FieldElement> r_point;
-  r_point.resize(static_cast<std::size_t>(params.d));
-  for (long i = 0; i < params.d; ++i) {
-    r_point[static_cast<std::size_t>(i)] = r_by_level[static_cast<std::size_t>(i)];
-  }
-
-  const FieldElement eta = EqPolynomial(z, r_point);
-
   vec_ZZ_pE msg0;
-  msg0.SetLength(1);
-  msg0[0] = h1_r0;
-  vec_ZZ_pE enc0;
-  mul(enc0, msg0, params.G0);
+  if (!DecodeC0(msg0, proof.pi0_full, params))
+    return false;
+  if (msg0.length() != params.k0)
+    return false;
 
-  vec_ZZ_pE rhs = proof.pi0_full;
-  for (long i = 0; i < rhs.length(); ++i) {
-    rhs[i] *= eta;
+  // Check the reduced sumcheck claim (BaseFold paper Remark 3):
+  //   h1(r0) == Σ_{b∈{0,1}^κ} f(b, r_suffix) * eq_z(b, r_suffix)
+  // where msg0 is the monomial-basis coefficient vector of f(·, r_suffix)
+  // on the first κ variables, and r_suffix are the d folding challenges.
+  FieldElement suffix_eq;
+  NTL::set(suffix_eq);
+  for (long i = 0; i < params.d; ++i) {
+    suffix_eq *= EqFactor(z[static_cast<std::size_t>(kappa + i)],
+                          r_by_level[static_cast<std::size_t>(i)]);
   }
-  if (enc0 != rhs)
+
+  vec_ZZ_pE f_eval = msg0;  // in-place subset-sum transform over κ vars
+  for (long bit = 0; bit < kappa; ++bit) {
+    const long step = 1L << bit;
+    for (long mask = 0; mask < f_eval.length(); ++mask) {
+      if (mask & step) {
+        f_eval[mask] += f_eval[mask ^ step];
+      }
+    }
+  }
+
+  vec_ZZ_pE prefix_eq;
+  prefix_eq.SetLength(f_eval.length());
+  if (kappa == 0) {
+    prefix_eq[0] = FieldElement(1);
+  } else {
+    prefix_eq.SetLength(1L << kappa);
+    prefix_eq[0] = FieldElement(1);
+    for (long var = 0; var < kappa; ++var) {
+      const long old = 1L << var;
+      const FieldElement zi = z[static_cast<std::size_t>(var)];
+      const FieldElement f0 = FieldElement(1) - zi;  // EqFactor(zi, 0)
+      const FieldElement f1 = zi;                    // EqFactor(zi, 1)
+      for (long mask = 0; mask < old; ++mask) {
+        const FieldElement base = prefix_eq[mask];
+        prefix_eq[mask] = base * f0;
+        prefix_eq[mask + old] = base * f1;
+      }
+    }
+  }
+
+  FieldElement sum = FieldElement(0);
+  for (long mask = 0; mask < f_eval.length(); ++mask) {
+    sum += f_eval[mask] * prefix_eq[mask];
+  }
+
+  if (suffix_eq * sum != h1_r0)
     return false;
 
   IOPPChallenges challenges;
