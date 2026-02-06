@@ -8,6 +8,7 @@
 
 using NTL::ZZ;
 using NTL::LogicError;
+using NTL::clear;
 using NTL::coeff;
 using NTL::mul;
 using NTL::rep;
@@ -127,6 +128,15 @@ vec_ZZ_pE Encode0(const vec_ZZ_pE &msg, const FoldableCodeParams &params) {
   return out;
 }
 
+bool IsAllOnes(const vec_ZZ_pE &v) {
+  ZZ_pE one;
+  set(one);
+  for (long i = 0; i < v.length(); ++i) {
+    if (v[i] != one) return false;
+  }
+  return true;
+}
+
 void EncodeFoldable_k0_1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
                                   const FoldableCodeParams &params) {
   const long c = params.c;
@@ -143,8 +153,6 @@ void EncodeFoldable_k0_1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
   const long nd = kd * c;
 
   out.SetLength(nd);
-  vec_ZZ_pE tmp;
-  tmp.SetLength(nd);
 
   const ZZ_pE &zeta = params.zeta;
 
@@ -161,6 +169,7 @@ void EncodeFoldable_k0_1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
   long blocks = kd;    // number of blocks at current level
   for (long level = 0; level < d; ++level) {
     const vec_ZZ_pE &t = params.diag_T[static_cast<std::size_t>(level)];
+    const bool t_all_ones = IsAllOnes(t);
     const long new_block_len = 2 * block_len;
 
     for (long b = 0; b < blocks / 2; ++b) {
@@ -168,15 +177,102 @@ void EncodeFoldable_k0_1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
       const long left = base;
       const long right = base + block_len;
 
-      for (long i = 0; i < block_len; ++i) {
-        const ZZ_pE &l = out[left + i];
-        const ZZ_pE tr = t[i] * out[right + i];
-        tmp[left + i] = l + tr;
-        tmp[right + i] = l + zeta * tr;
+      if (t_all_ones) {
+        for (long i = 0; i < block_len; ++i) {
+          const ZZ_pE l = out[left + i];
+          const ZZ_pE r = out[right + i];
+          out[left + i] = l + r;
+          out[right + i] = l + zeta * r;
+        }
+      } else {
+        for (long i = 0; i < block_len; ++i) {
+          const ZZ_pE l = out[left + i];
+          const ZZ_pE tr = t[i] * out[right + i];
+          out[left + i] = l + tr;
+          out[right + i] = l + zeta * tr;
+        }
+      }
+    }
+    block_len = new_block_len;
+    blocks /= 2;
+  }
+}
+
+void EncodeFoldable_k0_gt1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
+                                    const FoldableCodeParams &params) {
+  const long c = params.c;
+  const long k0 = params.k0;
+  const long d = params.d;
+  const long kd = msg.length();
+
+  if (c <= 0) LogicError("EncodeFoldable_k0_gt1_Iterative: c must be positive");
+  if (k0 <= 1) LogicError("EncodeFoldable_k0_gt1_Iterative: k0 must be > 1");
+  if (d < 0)
+    LogicError("EncodeFoldable_k0_gt1_Iterative: d must be non-negative");
+  if (kd < 0)
+    LogicError("EncodeFoldable_k0_gt1_Iterative: msg length invalid");
+
+  if (kd > std::numeric_limits<long>::max() / c) {
+    LogicError("EncodeFoldable_k0_gt1_Iterative: overflow in n_d");
+  }
+  const long nd = kd * c;
+
+  const long n0 = params.G0.NumCols();
+  if (n0 <= 0) LogicError("EncodeFoldable_k0_gt1_Iterative: invalid n0");
+  if (kd % k0 != 0)
+    LogicError("EncodeFoldable_k0_gt1_Iterative: msg length not multiple of k0");
+  const long blocks0 = kd / k0;
+
+  out.SetLength(nd);
+
+  // Level 0: encode each length-k0 message block using the k0 x n0 generator.
+  // out is laid out as consecutive codewords of length n0.
+  for (long block = 0; block < blocks0; ++block) {
+    const long msg_base = block * k0;
+    const long out_base = block * n0;
+
+    for (long j = 0; j < n0; ++j) {
+      clear(out[out_base + j]);
+    }
+    for (long r = 0; r < k0; ++r) {
+      const ZZ_pE &m = msg[msg_base + r];
+      for (long j = 0; j < n0; ++j) {
+        out[out_base + j] += m * params.G0[r][j];
+      }
+    }
+  }
+
+  const ZZ_pE &zeta = params.zeta;
+
+  long block_len = n0;     // n_0
+  long blocks = blocks0;   // number of blocks at current level
+  for (long level = 0; level < d; ++level) {
+    const vec_ZZ_pE &t = params.diag_T[static_cast<std::size_t>(level)];
+    const bool t_all_ones = IsAllOnes(t);
+    const long new_block_len = 2 * block_len;
+
+    for (long b = 0; b < blocks / 2; ++b) {
+      const long base = b * new_block_len;
+      const long left = base;
+      const long right = base + block_len;
+
+      if (t_all_ones) {
+        for (long i = 0; i < block_len; ++i) {
+          const ZZ_pE l = out[left + i];
+          const ZZ_pE r = out[right + i];
+          out[left + i] = l + r;
+          out[right + i] = l + zeta * r;
+        }
+      } else {
+        for (long i = 0; i < block_len; ++i) {
+          const ZZ_pE l = out[left + i];
+          const ZZ_pE tr = t[i] * out[right + i];
+          out[left + i] = l + tr;
+          out[right + i] = l + zeta * tr;
+        }
       }
     }
 
-    out.swap(tmp);
     block_len = new_block_len;
     blocks /= 2;
   }
@@ -279,7 +375,7 @@ void EncodeFoldable(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
     EncodeFoldable_k0_1_Iterative(out, msg, params);
     return;
   }
-  EncodeRec(out, msg, params.d, params);
+  EncodeFoldable_k0_gt1_Iterative(out, msg, params);
 }
 
 void EncodeFoldableUnchecked(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
@@ -292,7 +388,7 @@ void EncodeFoldableUnchecked(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
     EncodeFoldable_k0_1_Iterative(out, msg, params);
     return;
   }
-  EncodeRecUnchecked(out, msg, params.d, params);
+  EncodeFoldable_k0_gt1_Iterative(out, msg, params);
 }
 
 }  // namespace basefold

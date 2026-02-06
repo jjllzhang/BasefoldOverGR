@@ -360,7 +360,7 @@ void PrintHelp() {
       << "  bench_pcs_commit --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --d 16\n"
       << "  # GR(4,2) with the same extension polynomial and zeta=x\n"
       << "  bench_pcs_commit --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16\n"
-      << "  # k0>1 (forces the recursive encoder path)\n"
+      << "  # k0>1 (exercise the general-k0 encoder path)\n"
       << "  bench_pcs_commit --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --k0 2 --d 16\n";
 }
 

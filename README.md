@@ -151,6 +151,7 @@
 ### `bench/bench_pcs_commit.cpp`
 
 - 编码性能基准：测量 **去掉校验后的纯编码时间**（`EncodeFoldableUnchecked`），支持由命令行分别指定有限域与 Galois ring 的上下文参数。
+- 可选 `--k0 <int>`（默认 `1`）用于测试一般 `k0` 的编码性能（注意 PCS 相关 bench/实现仍限制 `k0==1`）。
 
 ### `bench/bench_pcs_eval.cpp`
 
