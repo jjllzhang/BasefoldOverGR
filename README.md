@@ -97,14 +97,18 @@
 ### `include/GaloisRing/PrimitiveElement.hpp`
 
 - “本原元素/生成元”相关接口声明：
-  - `FindPrimitiveElement(ZZ p, long k, long s)`：尝试在 `GR(p^k,s)` 上构造一个候选的本原元素。
+  - `FindPrimitiveElement(ZZ p, long k, long s, const ZZ_pX& F)`：在 `GR(p^k,s)` 上（由扩张多项式 `F` 指定）构造一个候选的本原元素。
+  - `FindTeichmullerGenerator(ZZ p, long k, long s, const ZZ_pX& F, long max_trials=1024)`：在 `GR(p^k,s)` 上寻找 Teichmüller 子群（阶 `p^s-1`）的生成元。
 
 ### `src/GaloisRing/PrimitiveElement.cpp`
 
 - `FindPrimitiveElement` 的实现：
-  - 先在 `Z_p[x]` 中给定一个（需人工指定系数的）多项式 `F`，再用 `ZZ_pE::init(F)` 初始化扩张。
+  - 由调用者传入扩张多项式 `F`（应为次数 `s` 且首项系数为 1 的多项式），再用 `ZZ_pE::init(F)` 初始化扩张。
   - 以 `b = x (mod F)` 为基础返回 `b^(p^{k-1})`（常见于 Teichmüller 代表/单位根相关构造）。
-  - 注意：当前 `F` 的系数是硬编码示例，实际使用时应替换为与你的 `p,s` 匹配的不可约/primitive 多项式。
+  - 注意：`F` 的选择会直接影响 `GR(p^k,s)` 的结构；实际使用时应传入与你的 `p,s` 匹配的（模 `p` 约化后不可约的）多项式。
+- `FindTeichmullerGenerator` 的实现：
+  - 先尝试确定性候选 `x^(p^{k-1})`，若阶已是 `p^s-1` 则直接返回。
+  - 若不满足，则随机采样单位元 `u`，投影 `u^(p^{k-1})` 到 Teichmüller 子群后做阶检验，直到找到生成元或达到 `max_trials`。
 
 ### `include/BaseFold/FoldableCode.hpp` / `src/BaseFold/FoldableCode.cpp`
 

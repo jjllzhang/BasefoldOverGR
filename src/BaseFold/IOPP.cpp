@@ -6,7 +6,7 @@
 #include <NTL/ZZ_pX.h>
 #include <NTL/mat_ZZ_pE.h>
 
-#include <openssl/evp.h>
+#include <openssl/sha.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -59,6 +59,12 @@ void WriteU64BE(Byte *out, std::uint64_t v) {
   }
 }
 
+void WriteUIntBE(Byte *out, std::uint64_t v, std::size_t bytes) {
+  for (std::size_t i = 0; i < bytes; ++i) {
+    out[bytes - 1 - i] = static_cast<Byte>((v >> (8 * i)) & 0xff);
+  }
+}
+
 struct FieldEncodingInfo {
   long degree = 0;        // extension degree r
   long coeff_bytes = 0;   // fixed big-endian bytes per ZZ_p coefficient
@@ -73,7 +79,7 @@ FieldEncodingInfo CurrentFieldEncodingInfo() {
   static thread_local long cached_coeff_bytes = 0;
   static thread_local bool has_cache = false;
 
-  const ZZ modulus = NTL::ZZ_p::modulus();
+  const ZZ &modulus = NTL::ZZ_p::modulus();
   if (!has_cache || r != cached_r || modulus != cached_modulus) {
     cached_modulus = modulus;
     cached_r = r;
@@ -101,7 +107,7 @@ bool BaseModulusIsPrime() {
   static thread_local bool cached_is_prime = false;
   static thread_local bool has_cache = false;
 
-  const ZZ modulus = NTL::ZZ_p::modulus();
+  const ZZ &modulus = NTL::ZZ_p::modulus();
   if (!has_cache || modulus != cached_modulus) {
     cached_modulus = modulus;
     cached_is_prime = NTL::ProbPrime(modulus);
@@ -229,16 +235,11 @@ Digest Sha256Digest(const Byte *data, std::size_t len) {
   Digest out;
   static_assert(out.size() == kSha256DigestBytes,
                 "Digest must be SHA-256 sized");
-  unsigned int out_len = 0;
-  const int ok =
-      EVP_Digest(static_cast<const void *>(data), len,
-                 reinterpret_cast<unsigned char *>(out.data()), &out_len,
-                 EVP_sha256(), nullptr);
-  if (ok != 1) {
-    LogicError("Sha256Digest: EVP_Digest failed");
-  }
-  if (out_len != out.size()) {
-    LogicError("Sha256Digest: unexpected digest size");
+  const unsigned char *ret =
+      SHA256(reinterpret_cast<const unsigned char *>(data), len,
+             reinterpret_cast<unsigned char *>(out.data()));
+  if (ret == nullptr) {
+    LogicError("Sha256Digest: SHA256 failed");
   }
   return out;
 }
@@ -248,7 +249,7 @@ Digest HashWithPrefix(Byte prefix) {
 }
 
 Digest HashNode(const Digest &left, const Digest &right) {
-  std::array<Byte, 1 + 2 * kSha256DigestBytes> in{};
+  std::array<Byte, 1 + 2 * kSha256DigestBytes> in;
   in[0] = static_cast<Byte>(0x01);
   std::memcpy(in.data() + 1, left.data(), left.size());
   std::memcpy(in.data() + 1 + left.size(), right.data(), right.size());
@@ -262,16 +263,25 @@ Digest HashLeaf(long index, const FieldElement &value) {
       1 + 8 + static_cast<std::size_t>(enc.degree) * coeff_bytes;
 
   static thread_local std::vector<Byte> in;
-  in.resize(payload_bytes);
+  if (in.size() != payload_bytes) {
+    in.resize(payload_bytes);
+  }
   in[0] = static_cast<Byte>(0x00);
   WriteU64BE(in.data() + 1, static_cast<std::uint64_t>(index));
 
   const ZZ_pX &poly = rep(value);
   std::size_t off = 1 + 8;
   for (long i = 0; i < enc.degree; ++i) {
-    const ZZ c = rep(coeff(poly, i));
-    BytesFromZZ(reinterpret_cast<unsigned char *>(in.data() + off), c,
-                enc.coeff_bytes);
+    if (enc.coeff_bytes <= 8) {
+      unsigned long c_ul = 0;
+      NTL::conv(c_ul, rep(coeff(poly, i)));
+      WriteUIntBE(in.data() + off, static_cast<std::uint64_t>(c_ul),
+                  coeff_bytes);
+    } else {
+      const ZZ &c = rep(coeff(poly, i));
+      BytesFromZZ(reinterpret_cast<unsigned char *>(in.data() + off), c,
+                  enc.coeff_bytes);
+    }
     off += coeff_bytes;
   }
 
@@ -279,7 +289,7 @@ Digest HashLeaf(long index, const FieldElement &value) {
 }
 
 Digest HashRootWithCount(long leaf_count, const Digest &raw_root) {
-  std::array<Byte, 1 + 8 + kSha256DigestBytes> in{};
+  std::array<Byte, 1 + 8 + kSha256DigestBytes> in;
   in[0] = static_cast<Byte>(0x03);
   WriteU64BE(in.data() + 1, static_cast<std::uint64_t>(leaf_count));
   std::memcpy(in.data() + 1 + 8, raw_root.data(), raw_root.size());
@@ -718,6 +728,7 @@ MerkleTree MerkleTree::Build(const Oracle &oracle) {
   MerkleTree t;
   t.leaf_count_ = leaf_count;
   t.levels_.clear();
+  t.levels_.reserve(ExpectedMerkleHeight(leaf_count));
   t.raw_root_ = Digest{};
 
   if (leaf_count == 0) {

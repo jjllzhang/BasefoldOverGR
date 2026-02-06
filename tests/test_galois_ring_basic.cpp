@@ -360,8 +360,8 @@ void TestPrimitiveElement_Smoke() {
   const long k = 1;
   const long s = 30;
   const ZZ mod = power(p, k);
-  testutil::PrintInfo("Primitive element smoke: p=2, k=1, s=30 (hard-coded F "
-                      "in implementation)");
+  testutil::PrintInfo(
+      "Primitive element smoke: p=2, k=1, s=30 (F passed to implementation)");
 
   ZZ_pPush p_push(mod);
 
@@ -377,7 +377,7 @@ void TestPrimitiveElement_Smoke() {
   const ZZ_pX modulus_poly_before = ZZ_pE::modulus().val();
   const long degree_before = ZZ_pE::degree();
 
-  ZZ_pE pe = FindPrimitiveElement(p, k, s);
+  ZZ_pE pe = FindPrimitiveElement(p, k, s, F);
 
   CHECK_EQ(ZZ_p::modulus(), modulus_before);
   CHECK(ZZ_pE::initialized());
@@ -393,6 +393,40 @@ void TestPrimitiveElement_Smoke() {
   CHECK_LE(deg(rep(pe)), 1);
 }
 
+void TestFindTeichmullerGenerator_Smoke() {
+  const ZZ p = to_ZZ(2);
+  const long k = 2;
+  const long s = 3;
+  const ZZ mod = power(p, k);
+  testutil::PrintInfo(
+      "FindTeichmullerGenerator smoke: p=2, k=2, s=3, F=x^3+x+1");
+
+  ZZ_pPush p_push(mod);
+
+  ZZ_pX F;
+  SetCoeff(F, 3, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush e_push(F);
+
+  const ZZ modulus_before = ZZ_p::modulus();
+  const ZZ_pX modulus_poly_before = ZZ_pE::modulus().val();
+  const long degree_before = ZZ_pE::degree();
+
+  const ZZ_pE g = FindTeichmullerGenerator(p, k, s, F);
+
+  CHECK_EQ(ZZ_p::modulus(), modulus_before);
+  CHECK(ZZ_pE::initialized());
+  CHECK_EQ(ZZ_pE::degree(), degree_before);
+  CHECK_EQ(ZZ_pE::modulus().val(), modulus_poly_before);
+
+  ZZ_pE one;
+  set(one);
+  const long order = 7;  // p^s - 1 = 2^3 - 1
+  CHECK_EQ(power(g, order), one);
+  CHECK(g != one);
+}
+
 } // namespace
 
 int main() {
@@ -404,6 +438,7 @@ int main() {
     RUN_TEST(TestInterpolateForGR);
     RUN_TEST(TestHenselLift_Smoke);
     RUN_TEST(TestPrimitiveElement_Smoke);
+    RUN_TEST(TestFindTeichmullerGenerator_Smoke);
   } catch (const exception &e) {
     cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;
