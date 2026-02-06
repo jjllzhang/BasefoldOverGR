@@ -2,6 +2,7 @@
 
 #include <NTL/ZZ.h>
 #include <NTL/ZZ_p.h>
+#include <NTL/ZZ_pEX.h>
 #include <NTL/ZZ_pX.h>
 #include <NTL/mat_ZZ_pE.h>
 
@@ -33,6 +34,7 @@ using NTL::ZZ;
 using NTL::ZZFromBytes;
 using NTL::ZZ_p;
 using NTL::ZZ_pE;
+using NTL::ZZ_pEX;
 using NTL::ZZ_pX;
 
 namespace basefold {
@@ -387,35 +389,316 @@ void ValidateChallengeConfigOrThrow(
   }
 }
 
-BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesSkeleton(
-    const vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
-    const FieldElement &claimed_y, long num_queries,
-    const FoldableCodeParams &params) {
-  (void)f_coeffs;
-  (void)z;
-  (void)claimed_y;
-  (void)num_queries;
-  (void)params;
-  LogicError(
-      "BaseFoldPCSProveEvalWithChallengeConfig: extension-challenge "
-      "prover skeleton is not implemented yet");
-  return BaseFoldPCSEvalProof();
+void AbsorbPublicInput(Sha256Transcript &transcript, const MerkleRoot &commitment,
+                       const std::vector<FieldElement> &z,
+                       const FieldElement &y);
+
+Bytes SerializeExtensionPolynomial(const ZZ_pEX &poly) {
+  const long d = NTL::deg(poly);
+  Bytes out;
+  const std::uint64_t coeff_count = (d < 0) ? 0ULL : static_cast<std::uint64_t>(d + 1);
+  AppendU64(out, coeff_count);
+  for (long i = 0; i <= d; ++i) {
+    const Bytes coeff_bytes = SerializeFieldElement(coeff(poly, i));
+    AppendU64(out, static_cast<std::uint64_t>(coeff_bytes.size()));
+    out.insert(out.end(), coeff_bytes.begin(), coeff_bytes.end());
+  }
+  return out;
 }
 
-bool VerifyEvalWithExtensionChallengesSkeleton(
+void AbsorbChallengeConfig(Sha256Transcript &transcript,
+                           const BaseFoldPCSChallengeConfig &challenge_cfg) {
+  Bytes tag;
+  tag.push_back(static_cast<Byte>(challenge_cfg.use_extension_challenges ? 1 : 0));
+  transcript.AbsorbBytes(tag);
+  if (!challenge_cfg.use_extension_challenges) {
+    return;
+  }
+  transcript.AbsorbBytes(
+      SerializeExtensionPolynomial(challenge_cfg.challenge_extension_modulus));
+}
+
+FieldElement SampleProjectedBaseChallengeFromExtension(
+    const Sha256Transcript &transcript, const std::string &label,
+    const ZZ_pEX &extension_modulus) {
+  const long ext_degree = NTL::deg(extension_modulus);
+  if (ext_degree <= 0) {
+    LogicError(
+        "SampleProjectedBaseChallengeFromExtension: invalid extension degree");
+  }
+
+  ZZ_pEX sampled;
+  NTL::clear(sampled);
+  for (long i = 0; i < ext_degree; ++i) {
+    const FieldElement c = transcript.ChallengeFieldElement(
+        "ext/" + label + "/coeff/" + std::to_string(i));
+    NTL::SetCoeff(sampled, i, c);
+  }
+
+  // Compatibility bridge for the first stage: keep the existing proof layout
+  // and arithmetic by projecting the sampled extension challenge to the base.
+  return coeff(sampled, 0);
+}
+
+BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesUnchecked(
+    const vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const FoldableCodeParams &params,
+    const BaseFoldPCSChallengeConfig &challenge_cfg) {
+  BaseFoldPCSEvalProof proof;
+  proof.commitments.roots_by_level.resize(static_cast<std::size_t>(params.d + 1));
+  proof.h_by_level.resize(static_cast<std::size_t>(params.d));
+
+  IOPPOracles oracles;
+  oracles.pi.resize(static_cast<std::size_t>(params.d + 1));
+
+  std::vector<MerkleTree> merkle;
+  merkle.resize(static_cast<std::size_t>(params.d + 1));
+
+  EncodeFoldableUnchecked(oracles.pi[static_cast<std::size_t>(params.d)], f_coeffs,
+                          params);
+  merkle[static_cast<std::size_t>(params.d)] =
+      MerkleTree::Build(oracles.pi[static_cast<std::size_t>(params.d)]);
+  const MerkleRoot root_d =
+      merkle[static_cast<std::size_t>(params.d)].Root();
+  proof.commitments.roots_by_level[static_cast<std::size_t>(params.d)] = root_d;
+
+  Sha256Transcript transcript;
+  AbsorbPublicInput(transcript, root_d, z, claimed_y);
+  AbsorbChallengeConfig(transcript, challenge_cfg);
+
+  if (params.d == 0) {
+    proof.pi0_full = oracles.pi[0];
+    proof.query_proofs.resize(static_cast<std::size_t>(num_queries));
+    return proof;
+  }
+
+  SumcheckProver sumcheck(f_coeffs, z);
+
+  // h_d
+  const QuadraticPoly h_d = sumcheck.CurrentPolynomial();
+  proof.h_by_level[static_cast<std::size_t>(params.d - 1)] = h_d;
+  transcript.AbsorbQuadraticPoly(h_d);
+
+  std::vector<FieldElement> r_by_level;
+  r_by_level.resize(static_cast<std::size_t>(params.d));
+
+  for (long i = params.d; i-- > 0;) {
+    const FieldElement r_i = SampleProjectedBaseChallengeFromExtension(
+        transcript, "r/" + std::to_string(i),
+        challenge_cfg.challenge_extension_modulus);
+    r_by_level[static_cast<std::size_t>(i)] = r_i;
+
+    ProverCommitRoundNoValidate(oracles.pi[static_cast<std::size_t>(i)],
+                                oracles.pi[static_cast<std::size_t>(i + 1)],
+                                r_i, i, params);
+
+    merkle[static_cast<std::size_t>(i)] =
+        MerkleTree::Build(oracles.pi[static_cast<std::size_t>(i)]);
+    const MerkleRoot root_i = merkle[static_cast<std::size_t>(i)].Root();
+    proof.commitments.roots_by_level[static_cast<std::size_t>(i)] = root_i;
+    transcript.AbsorbDigest(root_i);
+
+    sumcheck.ReceiveChallenge(r_i);
+    if (i > 0) {
+      const QuadraticPoly h_i = sumcheck.CurrentPolynomial();
+      proof.h_by_level[static_cast<std::size_t>(i - 1)] = h_i;
+      transcript.AbsorbQuadraticPoly(h_i);
+    }
+  }
+
+  proof.pi0_full = oracles.pi[0];
+  proof.query_proofs.resize(static_cast<std::size_t>(num_queries));
+
+  const long n_last = CodewordLengthAtLevelNoValidate(params, params.d - 1);
+  for (long q = 0; q < num_queries; ++q) {
+    const long mu =
+        transcript.ChallengeIndex("mu/" + std::to_string(q), n_last);
+    const IOPPQueryPlan plan = MakeQueryPlanNoValidate(mu, params);
+
+    BaseFoldPCSQueryProof qp;
+    qp.left.resize(static_cast<std::size_t>(params.d));
+    qp.right.resize(static_cast<std::size_t>(params.d));
+    qp.folded.resize(static_cast<std::size_t>(params.d));
+
+    for (long i = 0; i < params.d; ++i) {
+      const long mu_i = plan.mu_by_level[static_cast<std::size_t>(i)];
+      const long n_i = CodewordLengthAtLevelNoValidate(params, i);
+      qp.left[static_cast<std::size_t>(i)] =
+          merkle[static_cast<std::size_t>(i + 1)].Open(
+              oracles.pi[static_cast<std::size_t>(i + 1)], mu_i);
+      qp.right[static_cast<std::size_t>(i)] =
+          merkle[static_cast<std::size_t>(i + 1)].Open(
+              oracles.pi[static_cast<std::size_t>(i + 1)], mu_i + n_i);
+      qp.folded[static_cast<std::size_t>(i)] =
+          merkle[static_cast<std::size_t>(i)].Open(
+              oracles.pi[static_cast<std::size_t>(i)], mu_i);
+    }
+
+    proof.query_proofs[static_cast<std::size_t>(q)] = std::move(qp);
+  }
+
+  return proof;
+}
+
+bool VerifyEvalWithExtensionChallenges(
     const MerkleRoot &commitment_C, const std::vector<FieldElement> &z,
     const FieldElement &claimed_y, long num_queries,
-    const BaseFoldPCSEvalProof &proof, const FoldableCodeParams &params) {
-  (void)commitment_C;
-  (void)z;
-  (void)claimed_y;
-  (void)num_queries;
-  (void)proof;
-  (void)params;
-  LogicError(
-      "BaseFoldPCSVerifyEvalWithChallengeConfig: extension-challenge verifier "
-      "skeleton is not implemented yet");
-  return false;
+    const BaseFoldPCSEvalProof &proof, const FoldableCodeParams &params,
+    const BaseFoldPCSChallengeConfig &challenge_cfg) {
+  ValidateParamsOrThrow(params);
+  if (!IsPowerOfTwoLong(params.k0))
+    return false;
+  const long kappa = Log2ExactPowerOfTwoLong(params.k0);
+  const long point_dim = params.d + kappa;
+  if (static_cast<long>(z.size()) != point_dim)
+    return false;
+  if (num_queries < 0)
+    return false;
+  if (static_cast<long>(proof.commitments.roots_by_level.size()) != params.d + 1)
+    return false;
+  if (static_cast<long>(proof.h_by_level.size()) != params.d)
+    return false;
+  if (static_cast<long>(proof.query_proofs.size()) != num_queries)
+    return false;
+
+  if (proof.commitments.roots_by_level[static_cast<std::size_t>(params.d)] !=
+      commitment_C) {
+    return false;
+  }
+
+  const long n0 = CodewordLengthAtLevel(params, 0);
+  if (proof.pi0_full.length() != n0)
+    return false;
+
+  if (params.d == 0) {
+    if (!proof.h_by_level.empty())
+      return false;
+    if (MerkleCommitOracle(proof.pi0_full) != commitment_C)
+      return false;
+
+    vec_ZZ_pE msg0;
+    if (!DecodeC0(msg0, proof.pi0_full, params))
+      return false;
+    if (msg0.length() != params.k0)
+      return false;
+
+    return EvalMultilinearMonomialCoeffs(msg0, z) == claimed_y;
+  }
+
+  Sha256Transcript transcript;
+  AbsorbPublicInput(transcript, commitment_C, z, claimed_y);
+  AbsorbChallengeConfig(transcript, challenge_cfg);
+
+  // h_d
+  transcript.AbsorbQuadraticPoly(
+      proof.h_by_level[static_cast<std::size_t>(params.d - 1)]);
+
+  std::vector<FieldElement> r_by_level;
+  r_by_level.resize(static_cast<std::size_t>(params.d));
+
+  for (long i = params.d; i-- > 0;) {
+    const FieldElement r_i = SampleProjectedBaseChallengeFromExtension(
+        transcript, "r/" + std::to_string(i),
+        challenge_cfg.challenge_extension_modulus);
+    r_by_level[static_cast<std::size_t>(i)] = r_i;
+
+    transcript.AbsorbDigest(
+        proof.commitments.roots_by_level[static_cast<std::size_t>(i)]);
+    if (i > 0) {
+      transcript.AbsorbQuadraticPoly(
+          proof.h_by_level[static_cast<std::size_t>(i - 1)]);
+    }
+  }
+
+  if (!CheckSumcheckRelations(proof.h_by_level, r_by_level, claimed_y))
+    return false;
+
+  const FieldElement r0 = r_by_level[0];
+  const FieldElement h1_r0 = proof.h_by_level[0].Eval(r0);
+
+  vec_ZZ_pE msg0;
+  if (!DecodeC0(msg0, proof.pi0_full, params))
+    return false;
+  if (msg0.length() != params.k0)
+    return false;
+
+  FieldElement suffix_eq;
+  NTL::set(suffix_eq);
+  for (long i = 0; i < params.d; ++i) {
+    suffix_eq *= EqFactor(z[static_cast<std::size_t>(kappa + i)],
+                          r_by_level[static_cast<std::size_t>(i)]);
+  }
+
+  vec_ZZ_pE f_eval = msg0;
+  for (long bit = 0; bit < kappa; ++bit) {
+    const long step = 1L << bit;
+    for (long mask = 0; mask < f_eval.length(); ++mask) {
+      if (mask & step) {
+        f_eval[mask] += f_eval[mask ^ step];
+      }
+    }
+  }
+
+  vec_ZZ_pE prefix_eq;
+  prefix_eq.SetLength(f_eval.length());
+  if (kappa == 0) {
+    prefix_eq[0] = FieldElement(1);
+  } else {
+    prefix_eq.SetLength(1L << kappa);
+    prefix_eq[0] = FieldElement(1);
+    for (long var = 0; var < kappa; ++var) {
+      const long old = 1L << var;
+      const FieldElement zi = z[static_cast<std::size_t>(var)];
+      const FieldElement f0 = FieldElement(1) - zi;
+      const FieldElement f1 = zi;
+      for (long mask = 0; mask < old; ++mask) {
+        const FieldElement base = prefix_eq[mask];
+        prefix_eq[mask] = base * f0;
+        prefix_eq[mask + old] = base * f1;
+      }
+    }
+  }
+
+  FieldElement sum = FieldElement(0);
+  for (long mask = 0; mask < f_eval.length(); ++mask) {
+    sum += f_eval[mask] * prefix_eq[mask];
+  }
+
+  if (suffix_eq * sum != h1_r0)
+    return false;
+
+  IOPPChallenges challenges;
+  challenges.alphas = r_by_level;
+
+  const long n_last = CodewordLengthAtLevel(params, params.d - 1);
+  for (long q = 0; q < num_queries; ++q) {
+    const long mu =
+        transcript.ChallengeIndex("mu/" + std::to_string(q), n_last);
+    const IOPPQueryPlan plan = MakeQueryPlan(mu, params);
+
+    const BaseFoldPCSQueryProof &qp =
+        proof.query_proofs[static_cast<std::size_t>(q)];
+    if (static_cast<long>(qp.left.size()) != params.d)
+      return false;
+    if (static_cast<long>(qp.right.size()) != params.d)
+      return false;
+    if (static_cast<long>(qp.folded.size()) != params.d)
+      return false;
+
+    IOPPQueryMerkleOpenings open;
+    open.left = qp.left;
+    open.right = qp.right;
+    open.folded = qp.folded;
+    open.pi0_full = proof.pi0_full;
+
+    if (!VerifyQueryFromMerkleOpenings(plan, challenges, open, proof.commitments,
+                                       params)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 void AbsorbPublicInput(Sha256Transcript &transcript, const MerkleRoot &commitment,
@@ -743,8 +1026,24 @@ BaseFoldPCSEvalProof BaseFoldPCSProveEvalWithChallengeConfig(
   if (!challenge_cfg.use_extension_challenges) {
     return BaseFoldPCSProveEval(f_coeffs, z, claimed_y, num_queries, params);
   }
-  return ProveEvalWithExtensionChallengesSkeleton(f_coeffs, z, claimed_y,
-                                                  num_queries, params);
+
+  ValidateParamsOrThrow(params);
+  const long kappa = Log2ExactPowerOfTwoLong(params.k0);
+  const long point_dim = params.d + kappa;
+  if (static_cast<long>(z.size()) != point_dim)
+    LogicError("BaseFoldPCSProveEvalWithChallengeConfig: z has wrong dimension");
+  if (f_coeffs.length() != MessageLength(params))
+    LogicError("BaseFoldPCSProveEvalWithChallengeConfig: f_coeffs has wrong length");
+  if (num_queries < 0)
+    LogicError(
+        "BaseFoldPCSProveEvalWithChallengeConfig: num_queries must be non-negative");
+  if (EvalMultilinearMonomialCoeffs(f_coeffs, z) != claimed_y) {
+    LogicError("BaseFoldPCSProveEvalWithChallengeConfig: claimed_y != f(z)");
+  }
+
+  return ProveEvalWithExtensionChallengesUnchecked(f_coeffs, z, claimed_y,
+                                                   num_queries, params,
+                                                   challenge_cfg);
 }
 
 BaseFoldPCSEvalProof BaseFoldPCSProveEvalWithChallengeConfigUnchecked(
@@ -757,8 +1056,9 @@ BaseFoldPCSEvalProof BaseFoldPCSProveEvalWithChallengeConfigUnchecked(
     return BaseFoldPCSProveEvalUnchecked(f_coeffs, z, claimed_y, num_queries,
                                          params);
   }
-  return ProveEvalWithExtensionChallengesSkeleton(f_coeffs, z, claimed_y,
-                                                  num_queries, params);
+  return ProveEvalWithExtensionChallengesUnchecked(f_coeffs, z, claimed_y,
+                                                   num_queries, params,
+                                                   challenge_cfg);
 }
 
 bool BaseFoldPCSVerifyEvalWithChallengeConfig(
@@ -771,8 +1071,9 @@ bool BaseFoldPCSVerifyEvalWithChallengeConfig(
     return BaseFoldPCSVerifyEval(commitment_C, z, claimed_y, num_queries, proof,
                                  params);
   }
-  return VerifyEvalWithExtensionChallengesSkeleton(commitment_C, z, claimed_y,
-                                                   num_queries, proof, params);
+  return VerifyEvalWithExtensionChallenges(commitment_C, z, claimed_y,
+                                           num_queries, proof, params,
+                                           challenge_cfg);
 }
 
 }  // namespace basefold

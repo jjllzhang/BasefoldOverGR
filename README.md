@@ -146,7 +146,7 @@
   - `BaseFoldPCSCommit/ProveEval/VerifyEval`
   - 新增配置化入口（保持旧接口不变）：`BaseFoldPCSProveEvalWithChallengeConfig` / `BaseFoldPCSProveEvalWithChallengeConfigUnchecked` / `BaseFoldPCSVerifyEvalWithChallengeConfig`
     - 当 `use_extension_challenges=false` 时，行为与旧接口一致；
-    - 当 `use_extension_challenges=true` 时，当前版本进入扩环挑战 skeleton 分支（后续补全 opening/eval 在扩环上的完整实现）。
+    - 当 `use_extension_challenges=true` 时，当前版本会将 Fiat–Shamir challenge 在 `ZZ_pE` 的外层扩环上采样，并把扩环参数绑定到 transcript；为复用现有 proof 结构，暂时把采样结果投影回 base ring 使用（后续补全 opening/eval 在扩环上的完整算术）。
   - 支持 `k0=2^κ` 的情况（BaseFold 论文 Remark 3）：IOPP depth 为 `d`，多项式点维度为 `d+κ`；`κ=0` 时退化为 `Basefold_over_GR.pdf` 的 Protocol 4（`k0==1`）。
 
 ### `include/BaseFold/ProofSize.hpp` / `src/BaseFold/ProofSize.cpp`
