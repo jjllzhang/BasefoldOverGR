@@ -2,6 +2,7 @@
 #define BASEFOLD_BASEFOLDPCS_HPP_
 
 #include <NTL/ZZ_pE.h>
+#include <NTL/ZZ_pEX.h>
 #include <NTL/vec_ZZ_pE.h>
 
 #include <vector>
@@ -36,6 +37,21 @@ struct BaseFoldPCSEvalProof {
 
   // Openings for ℓ independent IOPP.query repetitions.
   std::vector<BaseFoldPCSQueryProof> query_proofs;
+};
+
+// Challenge-domain configuration for opening/eval.
+//
+// Default behavior (`use_extension_challenges=false`) matches the current
+// implementation: all Fiat-Shamir field challenges are sampled in the ambient
+// ring/field represented by ZZ_pE.
+//
+// When `use_extension_challenges=true`, `challenge_extension_modulus` is
+// expected to define the outer extension E(U) over the current ZZ_pE context.
+// The first API version only exposes this configuration and a Prove/Verify
+// skeleton entrypoint.
+struct BaseFoldPCSChallengeConfig {
+  bool use_extension_challenges = false;
+  NTL::ZZ_pEX challenge_extension_modulus;
 };
 
 // Computes the PCS commitment C := MerkleRoot(π_{f,d}) where π_{f,d} = Encd(f⃗).
@@ -82,6 +98,30 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
                            long num_queries,
                            const BaseFoldPCSEvalProof &proof,
                            const FoldableCodeParams &params);
+
+// Configurable entrypoints for challenge-domain experiments.
+//
+// - If `challenge_cfg.use_extension_challenges == false`, these forward to the
+//   legacy BaseFoldPCSProveEval/BaseFoldPCSProveEvalUnchecked/VerifyEval.
+// - If `challenge_cfg.use_extension_challenges == true`, they run the first
+//   extension-challenge skeleton path (to be completed in follow-up patches).
+BaseFoldPCSEvalProof BaseFoldPCSProveEvalWithChallengeConfig(
+    const NTL::vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const FoldableCodeParams &params,
+    const BaseFoldPCSChallengeConfig &challenge_cfg);
+
+BaseFoldPCSEvalProof BaseFoldPCSProveEvalWithChallengeConfigUnchecked(
+    const NTL::vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const FoldableCodeParams &params,
+    const BaseFoldPCSChallengeConfig &challenge_cfg);
+
+bool BaseFoldPCSVerifyEvalWithChallengeConfig(
+    const MerkleRoot &commitment_C, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const BaseFoldPCSEvalProof &proof, const FoldableCodeParams &params,
+    const BaseFoldPCSChallengeConfig &challenge_cfg);
 
 }  // namespace basefold
 

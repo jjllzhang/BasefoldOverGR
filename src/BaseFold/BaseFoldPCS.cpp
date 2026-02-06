@@ -366,6 +366,58 @@ void ValidateParamsOrThrow(const FoldableCodeParams &params) {
   (void)MessageLength(params);
 }
 
+void ValidateChallengeConfigOrThrow(
+    const BaseFoldPCSChallengeConfig &challenge_cfg) {
+  if (!challenge_cfg.use_extension_challenges) {
+    return;
+  }
+
+  const long ext_degree = NTL::deg(challenge_cfg.challenge_extension_modulus);
+  if (ext_degree <= 0) {
+    LogicError(
+        "ValidateChallengeConfigOrThrow: extension modulus must have positive "
+        "degree");
+  }
+
+  FieldElement one;
+  NTL::set(one);
+  if (NTL::LeadCoeff(challenge_cfg.challenge_extension_modulus) != one) {
+    LogicError(
+        "ValidateChallengeConfigOrThrow: extension modulus must be monic");
+  }
+}
+
+BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesSkeleton(
+    const vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const FoldableCodeParams &params) {
+  (void)f_coeffs;
+  (void)z;
+  (void)claimed_y;
+  (void)num_queries;
+  (void)params;
+  LogicError(
+      "BaseFoldPCSProveEvalWithChallengeConfig: extension-challenge "
+      "prover skeleton is not implemented yet");
+  return BaseFoldPCSEvalProof();
+}
+
+bool VerifyEvalWithExtensionChallengesSkeleton(
+    const MerkleRoot &commitment_C, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const BaseFoldPCSEvalProof &proof, const FoldableCodeParams &params) {
+  (void)commitment_C;
+  (void)z;
+  (void)claimed_y;
+  (void)num_queries;
+  (void)proof;
+  (void)params;
+  LogicError(
+      "BaseFoldPCSVerifyEvalWithChallengeConfig: extension-challenge verifier "
+      "skeleton is not implemented yet");
+  return false;
+}
+
 void AbsorbPublicInput(Sha256Transcript &transcript, const MerkleRoot &commitment,
                        const std::vector<FieldElement> &z,
                        const FieldElement &y) {
@@ -680,6 +732,47 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
   }
 
   return true;
+}
+
+BaseFoldPCSEvalProof BaseFoldPCSProveEvalWithChallengeConfig(
+    const vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const FoldableCodeParams &params,
+    const BaseFoldPCSChallengeConfig &challenge_cfg) {
+  ValidateChallengeConfigOrThrow(challenge_cfg);
+  if (!challenge_cfg.use_extension_challenges) {
+    return BaseFoldPCSProveEval(f_coeffs, z, claimed_y, num_queries, params);
+  }
+  return ProveEvalWithExtensionChallengesSkeleton(f_coeffs, z, claimed_y,
+                                                  num_queries, params);
+}
+
+BaseFoldPCSEvalProof BaseFoldPCSProveEvalWithChallengeConfigUnchecked(
+    const vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const FoldableCodeParams &params,
+    const BaseFoldPCSChallengeConfig &challenge_cfg) {
+  ValidateChallengeConfigOrThrow(challenge_cfg);
+  if (!challenge_cfg.use_extension_challenges) {
+    return BaseFoldPCSProveEvalUnchecked(f_coeffs, z, claimed_y, num_queries,
+                                         params);
+  }
+  return ProveEvalWithExtensionChallengesSkeleton(f_coeffs, z, claimed_y,
+                                                  num_queries, params);
+}
+
+bool BaseFoldPCSVerifyEvalWithChallengeConfig(
+    const MerkleRoot &commitment_C, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const BaseFoldPCSEvalProof &proof, const FoldableCodeParams &params,
+    const BaseFoldPCSChallengeConfig &challenge_cfg) {
+  ValidateChallengeConfigOrThrow(challenge_cfg);
+  if (!challenge_cfg.use_extension_challenges) {
+    return BaseFoldPCSVerifyEval(commitment_C, z, claimed_y, num_queries, proof,
+                                 params);
+  }
+  return VerifyEvalWithExtensionChallengesSkeleton(commitment_C, z, claimed_y,
+                                                   num_queries, proof, params);
 }
 
 }  // namespace basefold
