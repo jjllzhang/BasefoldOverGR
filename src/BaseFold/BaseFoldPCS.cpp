@@ -69,6 +69,10 @@ long CodewordLengthAtLevelNoValidate(const FoldableCodeParams &params,
 void ProverCommitRoundNoValidate(Oracle &pi_i, const Oracle &pi_ip1,
                                  const FieldElement &alpha_i, long level_i,
                                  const FoldableCodeParams &params) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->prover_commit_round_ns : nullptr,
+                    prof ? &prof->prover_commit_round_calls : nullptr);
+
   const long n_i = CodewordLengthAtLevelNoValidate(params, level_i);
   pi_i.SetLength(n_i);
 
@@ -180,11 +184,18 @@ Bytes TaggedHash(Byte tag, const Bytes &state, const std::string &payload) {
 class Sha256Transcript {
  public:
   Sha256Transcript() {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->transcript_absorb_ns : nullptr,
+                      prof ? &prof->transcript_absorb_calls : nullptr);
+
     const std::string domain = "BaseFoldPCS/v1";
     state_ = TaggedHash(static_cast<Byte>(0x42), Bytes{}, domain);
   }
 
   void AbsorbBytes(const Bytes &data) {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->transcript_absorb_ns : nullptr,
+                      prof ? &prof->transcript_absorb_calls : nullptr);
     state_ = TaggedHash(static_cast<Byte>(0x01), state_, data);
   }
 
@@ -194,6 +205,9 @@ class Sha256Transcript {
   }
 
   void AbsorbFieldElement(const FieldElement &x) {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->transcript_absorb_ns : nullptr,
+                      prof ? &prof->transcript_absorb_calls : nullptr);
     state_ = TaggedHash(static_cast<Byte>(0x02), state_, SerializeFieldElement(x));
   }
 
@@ -204,6 +218,10 @@ class Sha256Transcript {
   }
 
   FieldElement ChallengeFieldElement(const std::string &label) const {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->transcript_challenge_ns : nullptr,
+                      prof ? &prof->transcript_challenge_calls : nullptr);
+
     const long r = ZZ_pE::degree();
     if (r <= 0)
       LogicError("ChallengeFieldElement: invalid extension degree");
@@ -227,6 +245,10 @@ class Sha256Transcript {
   }
 
   long ChallengeIndex(const std::string &label, long upper_bound) const {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->transcript_challenge_ns : nullptr,
+                      prof ? &prof->transcript_challenge_calls : nullptr);
+
     if (upper_bound <= 0)
       LogicError("ChallengeIndex: upper_bound must be positive");
     if (upper_bound == 1)

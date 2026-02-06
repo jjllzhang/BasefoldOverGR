@@ -707,6 +707,10 @@ bool MerkleVerifyOpening(const MerkleRoot &root, long leaf_count,
 }
 
 MerkleTree MerkleTree::Build(const Oracle &oracle) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->merkle_tree_build_ns : nullptr,
+                    prof ? &prof->merkle_tree_build_calls : nullptr);
+
   const long leaf_count = oracle.length();
   if (leaf_count < 0)
     LogicError("MerkleTree::Build: invalid leaf count");
@@ -749,6 +753,10 @@ MerkleRoot MerkleTree::Root() const {
 }
 
 MerkleOpening MerkleTree::Open(const Oracle &oracle, long index) const {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->merkle_tree_open_ns : nullptr,
+                    prof ? &prof->merkle_tree_open_calls : nullptr);
+
   if (oracle.length() != leaf_count_) {
     LogicError("MerkleTree::Open: oracle length mismatch");
   }

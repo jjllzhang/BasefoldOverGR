@@ -246,7 +246,8 @@ struct BenchResult {
   Stats prover;
   Stats verifier;
   std::uint64_t sink = 0;
-  basefold::Profile profile;
+  basefold::Profile prover_profile;
+  basefold::Profile verifier_profile;
   bool has_profile = false;
 };
 
@@ -267,17 +268,32 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
   prover_ms.reserve(static_cast<std::size_t>(reps));
   verifier_ms.reserve(static_cast<std::size_t>(reps));
 
-  basefold::Profile prof;
-  basefold::ResetProfile(prof);
+  basefold::Profile prover_prof;
+  basefold::Profile verifier_prof;
+  basefold::ResetProfile(prover_prof);
+  basefold::ResetProfile(verifier_prof);
 
   std::uint64_t sink = 0;
 
   for (int iter = -warmup; iter < reps; ++iter) {
     const auto t0 = std::chrono::steady_clock::now();
-    const basefold::BaseFoldPCSEvalProof proof = checked_prover
-        ? basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries, params)
-        : basefold::BaseFoldPCSProveEvalUnchecked(f_coeffs, z, y, num_queries,
-                                                  params);
+    const basefold::BaseFoldPCSEvalProof proof = [&] {
+      if (enable_profile && iter >= 0) {
+        basefold::ProfileGuard guard(&prover_prof);
+        basefold::ScopedTimer timer(&prover_prof.pcs_prove_ns,
+                                    &prover_prof.pcs_prove_calls);
+        return checked_prover
+                   ? basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries,
+                                                   params)
+                   : basefold::BaseFoldPCSProveEvalUnchecked(
+                         f_coeffs, z, y, num_queries, params);
+      }
+      return checked_prover
+                 ? basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries,
+                                                 params)
+                 : basefold::BaseFoldPCSProveEvalUnchecked(f_coeffs, z, y,
+                                                           num_queries, params);
+    }();
     const auto t1 = std::chrono::steady_clock::now();
 
     const basefold::MerkleRoot &C =
@@ -286,7 +302,7 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
     const auto t2 = std::chrono::steady_clock::now();
     bool ok = false;
     if (enable_profile && iter >= 0) {
-      basefold::ProfileGuard guard(&prof);
+      basefold::ProfileGuard guard(&verifier_prof);
       ok = basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params);
     } else {
       ok = basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params);
@@ -312,7 +328,8 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
   out.prover = ComputeStats(prover_ms);
   out.verifier = ComputeStats(verifier_ms);
   out.sink = sink;
-  out.profile = prof;
+  out.prover_profile = prover_prof;
+  out.verifier_profile = verifier_prof;
   out.has_profile = enable_profile;
   return out;
 }
@@ -338,7 +355,8 @@ void PrintResult(const std::string &label, long mod, long c, long d,
 
   std::cout << "  sink    " << r.sink << "\n";
   if (r.has_profile) {
-    basefold::PrintProfile(std::cout, r.profile);
+    basefold::PrintProfile(std::cout, r.prover_profile);
+    basefold::PrintProfile(std::cout, r.verifier_profile);
   }
 }
 

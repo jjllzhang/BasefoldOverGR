@@ -1,4 +1,5 @@
 #include "BaseFold/Sumcheck.hpp"
+#include "BaseFold/Profile.hpp"
 
 #include <NTL/ZZ.h>
 
@@ -95,6 +96,10 @@ FieldElement QuadraticPoly::Eval(const FieldElement &x) const {
 SumcheckProver::SumcheckProver(const FieldVec &f_coeffs,
                                const std::vector<FieldElement> &z)
     : z_(z) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->sumcheck_init_ns : nullptr,
+                    prof ? &prof->sumcheck_init_calls : nullptr);
+
   const long n = f_coeffs.length();
   if (!IsPowerOfTwoLong(n))
     LogicError("SumcheckProver: f_coeffs length must be 2^d");
@@ -109,6 +114,10 @@ SumcheckProver::SumcheckProver(const FieldVec &f_coeffs,
 }
 
 QuadraticPoly SumcheckProver::CurrentPolynomial() const {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->sumcheck_current_poly_ns : nullptr,
+                    prof ? &prof->sumcheck_current_poly_calls : nullptr);
+
   if (cur_k_ <= 0)
     LogicError("SumcheckProver::CurrentPolynomial: no remaining variables");
 
@@ -157,6 +166,10 @@ QuadraticPoly SumcheckProver::CurrentPolynomial() const {
 }
 
 void SumcheckProver::ReceiveChallenge(const FieldElement &r_kminus1) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->sumcheck_receive_challenge_ns : nullptr,
+                    prof ? &prof->sumcheck_receive_challenge_calls : nullptr);
+
   if (cur_k_ <= 0)
     LogicError("SumcheckProver::ReceiveChallenge: no remaining variables");
 

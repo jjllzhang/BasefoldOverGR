@@ -156,7 +156,7 @@
 
 - PCS eval proof 性能基准：测量 prover time 与 verifier time（Merkle + Fiat–Shamir）。
 - 默认 prover 走 `BaseFoldPCSProveEvalUnchecked`；如需把校验也算进 prover time，可加 `--checked`。
-- 可加 `--profile` 输出 verifier 内部耗时拆分（profile 会在 `reps` 次迭代上累加，不包含 `warmup`；建议 `--warmup 0 --reps 1` 方便阅读）。
+- 可加 `--profile` 输出 prover/verifier 内部耗时拆分（profile 会在 `reps` 次迭代上累加，不包含 `warmup`；建议 `--warmup 0 --reps 1` 方便阅读）。
 
 ### `bench/bench_pcs_proof_size.cpp`
 
@@ -234,25 +234,29 @@ cmake --build build-release
 ./build/bench_pcs_proof_size --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4 --formula
 ```
 
-### Verifier profiling（`--profile`）
+### Profiling（`--profile`）
 
-`bench_pcs_eval --profile` 会在 verifier 阶段打印一个 breakdown（数值用 `...` 省略）：
+`bench_pcs_eval --profile` 会打印 prover/verifier 的 breakdown（数值用 `...` 省略）：
 
 ```text
 [Ring] ...  queries=4  warmup=0 reps=1
+  prover   mean ... ms
   verifier mean ... ms
-  [profile]
+  [profile-prover]
+    BaseFoldPCSProveEval total:  ... ms  (calls 1)
+    EncodeFoldableUnchecked:     ... ms  (calls 1)
+    MerkleTree::Build:           ... ms  (calls ...)
+    ...
+  [profile-verifier]
     BaseFoldPCSVerifyEval total: ... ms  (calls 1)
-    VerifyQueryFromMerkleOpenings: ... ms  (calls 4)
     MerkleVerifyOpening:         ... ms  (calls ...)
     EvalLineAt:                  ... ms  (calls ...)
     ...
-    Outside queries:             ... ms
 ```
 
+- `BaseFoldPCSProveEval total`：总 prover 时间（bench 里的 prover 段）。
 - `BaseFoldPCSVerifyEval total`：总 verifier 时间。
-- `VerifyQueryFromMerkleOpenings`：所有 query 的检查时间（calls=queries），其中包含 Merkle opening 校验与 folding 一致性检查。
-- `Inside queries other` / `Outside queries`：帮助定位“query 内/外”的其它开销（如 transcript、sumcheck relation check、`EqPolynomial` 等）。
+- `MerkleTree::Build`（prover）与 `MerkleVerifyOpening`（verifier）等条目用于定位 Merkle 相关开销；`EvalLineAt`/`TryInvertUnit` 等条目用于定位折叠一致性与环算术开销。
 
 #### 验证完整性说明（不会减少 proof 校验步骤）
 

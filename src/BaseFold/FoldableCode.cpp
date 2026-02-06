@@ -1,4 +1,5 @@
 #include "BaseFold/FoldableCode.hpp"
+#include "BaseFold/Profile.hpp"
 
 #include <NTL/ZZ_p.h>
 #include <NTL/mat_ZZ_pE.h>
@@ -222,6 +223,10 @@ void EncodeFoldable(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
 
 void EncodeFoldableUnchecked(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
                              const FoldableCodeParams &params) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->encode_foldable_unchecked_ns : nullptr,
+                    prof ? &prof->encode_foldable_unchecked_calls : nullptr);
+
   EncodeRecUnchecked(out, msg, params.d, params);
 }
 
