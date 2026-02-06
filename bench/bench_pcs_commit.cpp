@@ -219,6 +219,66 @@ vec_ZZ_pE MakeDeterministicCoefficients(long coeff_count, std::uint64_t seed) {
   return coeffs;
 }
 
+NTL::mat_ZZ_pE BuildVandermondeG0(long k0, const vec_ZZ_pE &points) {
+  if (k0 <= 0) LogicError("BuildVandermondeG0: k0 must be positive");
+  const long n0 = points.length();
+  if (n0 <= 0) LogicError("BuildVandermondeG0: points must be non-empty");
+
+  NTL::mat_ZZ_pE G0;
+  G0.SetDims(k0, n0);
+
+  for (long j = 0; j < n0; ++j) {
+    ZZ_pE cur;
+    NTL::set(cur);  // 1
+    for (long r = 0; r < k0; ++r) {
+      G0[r][j] = cur;
+      cur *= points[j];
+    }
+  }
+
+  return G0;
+}
+
+basefold::FoldableCodeParams BuildParams_k0_gt1(long c, long k0, long d,
+                                               const ZZ &prime_p,
+                                               const ZZ_pE &zeta,
+                                               std::uint64_t seed) {
+  if (c <= 0) LogicError("BuildParams_k0_gt1: c must be positive");
+  if (k0 <= 1) LogicError("BuildParams_k0_gt1: k0 must be > 1");
+  if (d < 0) LogicError("BuildParams_k0_gt1: d must be non-negative");
+
+  if (c > std::numeric_limits<long>::max() / k0) {
+    LogicError("BuildParams_k0_gt1: overflow in n0");
+  }
+  const long n0 = c * k0;
+
+  basefold::FoldableCodeParams params;
+  params.c = c;
+  params.k0 = k0;
+  params.d = d;
+  params.p = prime_p;
+  params.zeta = zeta;
+
+  const vec_ZZ_pE points =
+      MakeDeterministicCoefficients(n0, seed ^ 0x7f4a7c15ULL);
+  params.G0 = BuildVandermondeG0(k0, points);
+
+  params.diag_T.resize(static_cast<std::size_t>(d));
+  for (long level = 0; level < d; ++level) {
+    const long pow2 = Pow2Checked(level);
+    if (n0 > std::numeric_limits<long>::max() / pow2) {
+      LogicError("BuildParams_k0_gt1: overflow in n_i");
+    }
+    const long ni = n0 * pow2;
+    params.diag_T[static_cast<std::size_t>(level)].SetLength(ni);
+    for (long i = 0; i < ni; ++i) {
+      params.diag_T[static_cast<std::size_t>(level)][i] = ZZ_pE(1);
+    }
+  }
+
+  return params;
+}
+
 BenchResult RunEncodeBenchmark(const vec_ZZ_pE &f_coeffs,
                                const basefold::FoldableCodeParams &params,
                                int warmup, int reps) {
@@ -253,11 +313,12 @@ BenchResult RunEncodeBenchmark(const vec_ZZ_pE &f_coeffs,
   return out;
 }
 
-void PrintResult(const std::string &label, long mod, long c, long d, long n_d,
-                 int warmup, int reps, const BenchResult &r) {
-  std::cout << "\n[" << label << "] c=" << c << " k0=1 d=" << d
-            << "  mod=" << mod << "  n_d=" << n_d << "  warmup=" << warmup
-            << " reps=" << reps << "\n";
+void PrintResult(const std::string &label, long mod, long c, long k0, long d,
+                 long k_d, long n_d, int warmup, int reps,
+                 const BenchResult &r) {
+  std::cout << "\n[" << label << "] c=" << c << " k0=" << k0 << " d=" << d
+            << "  mod=" << mod << "  k_d=" << k_d << "  n_d=" << n_d
+            << "  warmup=" << warmup << " reps=" << reps << "\n";
   std::cout << std::fixed << std::setprecision(3);
   std::cout << "  encode-only mean " << r.encode.mean_ms << " ms  (min "
             << r.encode.min_ms << ", max " << r.encode.max_ms << ")\n";
@@ -290,7 +351,7 @@ void PrintHelp() {
   std::cout
       << "bench_pcs_commit (encode-only, unchecked)\n\n"
       << "Usage:\n"
-      << "  bench_pcs_commit [--mode field|ring|both] [--c <int>] [--d <int>]\n"
+      << "  bench_pcs_commit [--mode field|ring|both] [--c <int>] [--k0 <int>] [--d <int>]\n"
       << "                 [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
       << "                 [--field-mod <int>] [--field-F <a0,a1,...>] [--field-zeta <b0,b1,...>]\n"
       << "                 [--ring-mod <int>]  [--ring-p <int>] [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
@@ -298,7 +359,9 @@ void PrintHelp() {
       << "  # GF(2^2) with F(x)=x^2+x+1 and zeta=x\n"
       << "  bench_pcs_commit --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --d 16\n"
       << "  # GR(4,2) with the same extension polynomial and zeta=x\n"
-      << "  bench_pcs_commit --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16\n";
+      << "  bench_pcs_commit --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16\n"
+      << "  # k0>1 (forces the recursive encoder path)\n"
+      << "  bench_pcs_commit --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --k0 2 --d 16\n";
 }
 
 std::uint64_t ParseU64OrDie(const char *s, const char *flag) {
@@ -316,8 +379,8 @@ std::uint64_t ParseU64OrDie(const char *s, const char *flag) {
   }
 }
 
-void RunOneContext(const ContextSpec &spec, long c, long d, int warmup, int reps,
-                   std::uint64_t seed) {
+void RunOneContext(const ContextSpec &spec, long c, long k0, long d, int warmup,
+                   int reps, std::uint64_t seed) {
   if (spec.mod <= 1) LogicError("RunOneContext: modulus must be > 1");
 
   const ZZ modulus = to_ZZ(spec.mod);
@@ -331,10 +394,18 @@ void RunOneContext(const ContextSpec &spec, long c, long d, int warmup, int reps
   ZZ_pE zeta;
   conv(zeta, zpoly);
 
-  const basefold::FoldableCodeParams params =
-      BuildParams_k0_1(c, d, to_ZZ(spec.prime_p), zeta);
+  const basefold::FoldableCodeParams params = [&] {
+    if (k0 == 1) {
+      return BuildParams_k0_1(c, d, to_ZZ(spec.prime_p), zeta);
+    }
+    return BuildParams_k0_gt1(c, k0, d, to_ZZ(spec.prime_p), zeta, seed);
+  }();
 
-  const long k_d = Pow2Checked(d);  // k0==1
+  const long pow2_d = Pow2Checked(d);
+  if (k0 > std::numeric_limits<long>::max() / pow2_d) {
+    LogicError("RunOneContext: overflow in k_d");
+  }
+  const long k_d = k0 * pow2_d;
   if (c > std::numeric_limits<long>::max() / k_d) {
     LogicError("RunOneContext: overflow in n_d");
   }
@@ -342,7 +413,7 @@ void RunOneContext(const ContextSpec &spec, long c, long d, int warmup, int reps
 
   const vec_ZZ_pE f_coeffs = MakeDeterministicCoefficients(k_d, seed);
   const BenchResult r = RunEncodeBenchmark(f_coeffs, params, warmup, reps);
-  PrintResult(spec.label, spec.mod, c, d, n_d, warmup, reps, r);
+  PrintResult(spec.label, spec.mod, c, k0, d, k_d, n_d, warmup, reps, r);
 }
 
 }  // namespace
@@ -350,6 +421,7 @@ void RunOneContext(const ContextSpec &spec, long c, long d, int warmup, int reps
 int main(int argc, char **argv) {
   long d = 16;
   long c = 2;
+  long k0 = 1;
   int warmup = 1;
   int reps = 5;
   std::uint64_t seed = 0;
@@ -406,6 +478,11 @@ int main(int argc, char **argv) {
         std::cerr << "Invalid --c\n";
         return 2;
       }
+    } else if (arg == "--k0") {
+      if (!ParseLong(NeedValue("--k0"), k0) || k0 <= 0) {
+        std::cerr << "Invalid --k0\n";
+        return 2;
+      }
     } else if (arg == "--warmup") {
       if (!ParseInt(NeedValue("--warmup"), warmup) || warmup < 0) {
         std::cerr << "Invalid --warmup\n";
@@ -455,8 +532,8 @@ int main(int argc, char **argv) {
       std::cerr << "Nothing to do: --mode disabled both field and ring\n";
       return 2;
     }
-    if (do_field) RunOneContext(field, c, d, warmup, reps, seed);
-    if (do_ring) RunOneContext(ring, c, d, warmup, reps, seed);
+    if (do_field) RunOneContext(field, c, k0, d, warmup, reps, seed);
+    if (do_ring) RunOneContext(ring, c, k0, d, warmup, reps, seed);
   } catch (const std::exception &e) {
     std::cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;
