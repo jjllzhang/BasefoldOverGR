@@ -212,45 +212,39 @@ cmake --build build-release
 ./build/bench_pcs_proof_size --help
 ```
 
-示例：
+示例（4 类用例在 commit/eval/proof_size 的对照）：
 
 ```bash
-# GF(2^2) with F(x)=x^2+x+1 and zeta=x
-./build/bench_pcs_commit --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --d 16 --reps 5 --warmup 1
+# ===== 1) 大素数域 F_p (p>1000), p=1223, zeta = -1 =====
+./build/bench_pcs_commit --mode field --field-mod 1223 --field-F 0,1 --field-zeta 1222 --d 16 --reps 5 --warmup 1
+./build/bench_pcs_eval --mode field --field-mod 1223 --field-F 0,1 --field-zeta 1222 --d 16 --queries 4 --reps 3 --warmup 1
+./build/bench_pcs_proof_size --mode field --field-mod 1223 --field-F 0,1 --field-zeta 1222 --d 16 --queries 4
 
-# GR(4,2) with the same extension polynomial and zeta=x
-./build/bench_pcs_commit --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --reps 5 --warmup 1
+# ===== 1b) 大素数域 F_p (p>1000), p=1223, zeta != -1（auto-zeta 版本） =====
+./build/bench_pcs_commit --mode field --field-mod 1223 --field-F 0,1 --auto-zeta teich --d 16 --reps 5 --warmup 1
+./build/bench_pcs_eval --mode field --field-mod 1223 --field-F 0,1 --auto-zeta teich --d 16 --queries 4 --reps 3 --warmup 1
+./build/bench_pcs_proof_size --mode field --field-mod 1223 --field-F 0,1 --auto-zeta teich --d 16 --queries 4
 
-# GR(4,2) with auto-zeta from Teichmuller generator
-./build/bench_pcs_commit --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --auto-zeta teich --d 16 --reps 5 --warmup 1
+# ===== 2) 2 的扩域 F_(2^r), r>10（r=11）, zeta auto =====
+# F(x)=x^11+x^2+1 -> coeffs: 1,0,1,0,0,0,0,0,0,0,0,1
+./build/bench_pcs_commit --mode field --field-mod 2 --field-F 1,0,1,0,0,0,0,0,0,0,0,1 --auto-zeta teich --d 16 --reps 5 --warmup 1
+./build/bench_pcs_eval --mode field --field-mod 2 --field-F 1,0,1,0,0,0,0,0,0,0,0,1 --auto-zeta teich --d 16 --queries 4 --reps 3 --warmup 1
+./build/bench_pcs_proof_size --mode field --field-mod 2 --field-F 1,0,1,0,0,0,0,0,0,0,0,1 --auto-zeta teich --d 16 --queries 4
 
-# PCS eval proof prover/verifier time (GF(2^2))
-./build/bench_pcs_eval --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --d 16 --queries 4 --reps 3 --warmup 1
+# ===== 3) GR(2^r,s), s>10（2^r=4, s=11）, zeta auto =====
+./build/bench_pcs_commit --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,0,1,0,0,0,0,0,0,0,0,1 --auto-zeta teich --d 16 --reps 5 --warmup 1
+./build/bench_pcs_eval --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,0,1,0,0,0,0,0,0,0,0,1 --auto-zeta teich --d 16 --queries 4 --reps 3 --warmup 1
+./build/bench_pcs_proof_size --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,0,1,0,0,0,0,0,0,0,0,1 --auto-zeta teich --d 16 --queries 4
 
-# PCS eval proof prover/verifier time (GR(4,2))
-./build/bench_pcs_eval --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4 --reps 3 --warmup 1
+# ===== 4) 一般 GR(p^r,s), p!=2 且 p^s>1000（p=43, r=2, s=2）, zeta = -1 =====
+./build/bench_pcs_commit --mode ring --ring-mod 1849 --ring-p 43 --ring-F 1,0,1 --ring-zeta 1848 --d 16 --reps 5 --warmup 1
+./build/bench_pcs_eval --mode ring --ring-mod 1849 --ring-p 43 --ring-F 1,0,1 --ring-zeta 1848 --d 16 --queries 4 --reps 3 --warmup 1
+./build/bench_pcs_proof_size --mode ring --ring-mod 1849 --ring-p 43 --ring-F 1,0,1 --ring-zeta 1848 --d 16 --queries 4
 
-# PCS eval proof prover/verifier time (GR(4,2), auto-zeta)
-./build/bench_pcs_eval --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --auto-zeta teich --d 16 --queries 4 --reps 3 --warmup 1
-
-# 注意：bench_pcs_eval 默认使用 BaseFoldPCSProveEvalUnchecked（跳过参数/长度校验与 claimed_y==f(z) 重算）。
-# 如需将这些检查也计入 prover time，可添加 --checked：
-./build/bench_pcs_eval --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4 --checked --reps 3 --warmup 1
-
-# Verifier profiling（建议用 Release 构建；为便于阅读建议 warmup=0 reps=1）
-./build-release/bench_pcs_eval --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4 --profile --warmup 0 --reps 1
-
-# PCS eval proof size estimate (GR(4,2))
-./build/bench_pcs_proof_size --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4
-
-# PCS eval proof size estimate (GR(4,2), auto-zeta)
-./build/bench_pcs_proof_size --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --auto-zeta teich --d 16 --queries 4
-
-# PCS eval proof size estimate (GF(2^2))
-./build/bench_pcs_proof_size --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --d 16 --queries 4
-
-# 只根据参数做近似/上界估算（不运行 prover），可加 --formula：
-./build/bench_pcs_proof_size --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4 --formula
+# ===== 4b) 一般 GR(p^r,s), p!=2 且 p^s>1000（p=43, r=2, s=2）, zeta != -1（auto-zeta 版本） =====
+./build/bench_pcs_commit --mode ring --ring-mod 1849 --ring-p 43 --ring-F 1,0,1 --auto-zeta teich --d 16 --reps 5 --warmup 1
+./build/bench_pcs_eval --mode ring --ring-mod 1849 --ring-p 43 --ring-F 1,0,1 --auto-zeta teich --d 16 --queries 4 --reps 3 --warmup 1
+./build/bench_pcs_proof_size --mode ring --ring-mod 1849 --ring-p 43 --ring-F 1,0,1 --auto-zeta teich --d 16 --queries 4
 ```
 
 ### Profiling（`--profile`）
