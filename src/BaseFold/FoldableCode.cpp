@@ -4,6 +4,8 @@
 #include <NTL/ZZ_p.h>
 #include <NTL/mat_ZZ_pE.h>
 
+#include <limits>
+
 using NTL::ZZ;
 using NTL::LogicError;
 using NTL::coeff;
@@ -125,6 +127,61 @@ vec_ZZ_pE Encode0(const vec_ZZ_pE &msg, const FoldableCodeParams &params) {
   return out;
 }
 
+void EncodeFoldable_k0_1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
+                                  const FoldableCodeParams &params) {
+  const long c = params.c;
+  const long d = params.d;
+  const long kd = msg.length();
+
+  if (c <= 0) LogicError("EncodeFoldable_k0_1_Iterative: c must be positive");
+  if (d < 0) LogicError("EncodeFoldable_k0_1_Iterative: d must be non-negative");
+  if (kd < 0) LogicError("EncodeFoldable_k0_1_Iterative: msg length invalid");
+
+  if (kd > std::numeric_limits<long>::max() / c) {
+    LogicError("EncodeFoldable_k0_1_Iterative: overflow in n_d");
+  }
+  const long nd = kd * c;
+
+  out.SetLength(nd);
+  vec_ZZ_pE tmp;
+  tmp.SetLength(nd);
+
+  const ZZ_pE &zeta = params.zeta;
+
+  // Level 0: encode each scalar message symbol using the single-row G0.
+  for (long block = 0; block < kd; ++block) {
+    const ZZ_pE &m = msg[block];
+    const long base = block * c;
+    for (long j = 0; j < c; ++j) {
+      out[base + j] = m * params.G0[0][j];
+    }
+  }
+
+  long block_len = c;  // n_0
+  long blocks = kd;    // number of blocks at current level
+  for (long level = 0; level < d; ++level) {
+    const vec_ZZ_pE &t = params.diag_T[static_cast<std::size_t>(level)];
+    const long new_block_len = 2 * block_len;
+
+    for (long b = 0; b < blocks / 2; ++b) {
+      const long base = b * new_block_len;
+      const long left = base;
+      const long right = base + block_len;
+
+      for (long i = 0; i < block_len; ++i) {
+        const ZZ_pE &l = out[left + i];
+        const ZZ_pE tr = t[i] * out[right + i];
+        tmp[left + i] = l + tr;
+        tmp[right + i] = l + zeta * tr;
+      }
+    }
+
+    out.swap(tmp);
+    block_len = new_block_len;
+    blocks /= 2;
+  }
+}
+
 void EncodeRec(vec_ZZ_pE &out, const vec_ZZ_pE &msg, long level,
                const FoldableCodeParams &params) {
   if (level == 0) {
@@ -218,6 +275,10 @@ void EncodeFoldable(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
     LogicError("EncodeFoldable: msg has wrong length");
   }
 
+  if (params.k0 == 1) {
+    EncodeFoldable_k0_1_Iterative(out, msg, params);
+    return;
+  }
   EncodeRec(out, msg, params.d, params);
 }
 
@@ -227,6 +288,10 @@ void EncodeFoldableUnchecked(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
   ScopedTimer timer(prof ? &prof->encode_foldable_unchecked_ns : nullptr,
                     prof ? &prof->encode_foldable_unchecked_calls : nullptr);
 
+  if (params.k0 == 1) {
+    EncodeFoldable_k0_1_Iterative(out, msg, params);
+    return;
+  }
   EncodeRecUnchecked(out, msg, params.d, params);
 }
 
