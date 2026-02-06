@@ -156,6 +156,7 @@
 
 - 编码性能基准：测量 **去掉校验后的纯编码时间**（`EncodeFoldableUnchecked`），支持由命令行分别指定有限域与 Galois ring 的上下文参数。
 - 可选 `--k0 <int>`（默认 `1`）用于测试一般 `k0` 的编码性能。
+- 可选 `--auto-zeta teich` 自动从 `(p,k,F)` 推导 Teichmüller 子群生成元作为 `zeta`（启用后忽略 `--field-zeta/--ring-zeta`）。
 
 ### `bench/bench_pcs_eval.cpp`
 
@@ -163,6 +164,7 @@
 - 默认 prover 走 `BaseFoldPCSProveEvalUnchecked`；如需把校验也算进 prover time，可加 `--checked`。
 - 可加 `--profile` 输出 prover/verifier 内部耗时拆分（profile 会在 `reps` 次迭代上累加，不包含 `warmup`；建议 `--warmup 0 --reps 1` 方便阅读）。
 - 可选 `--k0 <int>`（默认 `1`，要求 2 的幂）；此时多项式点维度为 `d+log2(k0)`，消息长度为 `k_d = k0*2^d`。
+- 可选 `--auto-zeta teich` 自动从 `(p,k,F)` 推导 Teichmüller 子群生成元作为 `zeta`（启用后忽略 `--field-zeta/--ring-zeta`）。
 
 ### `bench/bench_pcs_proof_size.cpp`
 
@@ -170,6 +172,7 @@
   - 不带 `--formula`：生成一次 **真实 proof** 并输出估算的 proof size（KB）；默认使用 `BaseFoldPCSProveEval`（包含参数/长度检查与 `claimed_y==f(z)` 校验）。
   - 带 `--formula`：完全不运行 prover，仅根据输入参数用公式给出近似/上界估算。
   - 可选 `--k0 <int>`（默认 `1`，要求 2 的幂）；此时多项式点维度为 `d+log2(k0)`，消息长度为 `k_d = k0*2^d`。
+  - 可选 `--auto-zeta teich` 自动从 `(p,k,F)` 推导 Teichmüller 子群生成元作为 `zeta`（启用后忽略 `--field-zeta/--ring-zeta`）。
 
 ## 依赖
 
@@ -179,7 +182,7 @@
 
 项目提供如下测试：
 
-- `tests/test_galois_ring_basic.cpp`：覆盖主要工具函数、求逆、插值，以及 Hensel 提升/本原元素的基本 smoke test。
+- `tests/test_galois_ring_basic.cpp`：覆盖主要工具函数、求逆、插值，以及 Hensel 提升、`FindPrimitiveElement`、`FindTeichmullerGenerator` 的 smoke test。
 - `tests/test_foldable_codes.cpp`：覆盖 foldable code 编码的正确性测试（递归编码结果与显式构造的 `G_d` 乘法结果一致）。
 - `tests/test_iopp.cpp`：覆盖 BaseFold IOPP（有限域与 GR）commit/query 与 Merkle openings。
 - `tests/test_pcs.cpp`：覆盖 BaseFold PCS（有限域与 GR）生成 proof 并验证通过（以及篡改后应失败）。
@@ -218,11 +221,17 @@ cmake --build build-release
 # GR(4,2) with the same extension polynomial and zeta=x
 ./build/bench_pcs_commit --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --reps 5 --warmup 1
 
+# GR(4,2) with auto-zeta from Teichmuller generator
+./build/bench_pcs_commit --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --auto-zeta teich --d 16 --reps 5 --warmup 1
+
 # PCS eval proof prover/verifier time (GF(2^2))
 ./build/bench_pcs_eval --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --d 16 --queries 4 --reps 3 --warmup 1
 
 # PCS eval proof prover/verifier time (GR(4,2))
 ./build/bench_pcs_eval --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4 --reps 3 --warmup 1
+
+# PCS eval proof prover/verifier time (GR(4,2), auto-zeta)
+./build/bench_pcs_eval --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --auto-zeta teich --d 16 --queries 4 --reps 3 --warmup 1
 
 # 注意：bench_pcs_eval 默认使用 BaseFoldPCSProveEvalUnchecked（跳过参数/长度校验与 claimed_y==f(z) 重算）。
 # 如需将这些检查也计入 prover time，可添加 --checked：
@@ -233,6 +242,9 @@ cmake --build build-release
 
 # PCS eval proof size estimate (GR(4,2))
 ./build/bench_pcs_proof_size --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4
+
+# PCS eval proof size estimate (GR(4,2), auto-zeta)
+./build/bench_pcs_proof_size --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --auto-zeta teich --d 16 --queries 4
 
 # PCS eval proof size estimate (GF(2^2))
 ./build/bench_pcs_proof_size --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --d 16 --queries 4

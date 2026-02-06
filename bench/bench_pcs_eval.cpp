@@ -17,6 +17,7 @@
 #include "BaseFold/BaseFoldPCS.hpp"
 #include "BaseFold/Multilinear.hpp"
 #include "BaseFold/Profile.hpp"
+#include "GaloisRing/PrimitiveElement.hpp"
 
 using NTL::conv;
 using NTL::LogicError;
@@ -136,6 +137,28 @@ long NormalizeMod(long x, long mod) {
   long r = x % mod;
   if (r < 0) r += mod;
   return r;
+}
+
+void DeduceBasePrimeAndExponent(const ContextSpec &spec, ZZ &p_out, long &k_out) {
+  if (spec.mod <= 1) LogicError("DeduceBasePrimeAndExponent: mod must be > 1");
+
+  if (spec.prime_p > 1) {
+    long m = spec.mod;
+    long k = 0;
+    while (m % spec.prime_p == 0) {
+      m /= spec.prime_p;
+      ++k;
+    }
+    if (k <= 0 || m != 1) {
+      LogicError("DeduceBasePrimeAndExponent: mod must equal prime_p^k");
+    }
+    p_out = to_ZZ(spec.prime_p);
+    k_out = k;
+    return;
+  }
+
+  p_out = to_ZZ(spec.mod);
+  k_out = 1;
 }
 
 void ValidateMonic(const std::vector<long> &coeffs, long mod,
@@ -478,22 +501,27 @@ void PrintHelp() {
       << "Usage:\n"
       << "  bench_pcs_eval [--mode field|ring|both] [--c <int>] [--k0 <int>] [--d <int>]\n"
       << "               [--queries <int>] [--checked] [--profile] [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
+      << "               [--auto-zeta teich]\n"
       << "               [--field-mod <int>] [--field-F <a0,a1,...>] [--field-zeta <b0,b1,...>]\n"
       << "               [--ring-mod <int>]  [--ring-p <int>] [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
       << "Notes:\n"
       << "  By default, prover uses BaseFoldPCSProveEvalUnchecked (skips validation and claimed_y check).\n\n"
+      << "  With --auto-zeta teich, zeta is derived as a Teichmuller generator from (p,k,F);\n"
+      << "  then --field-zeta/--ring-zeta are ignored.\n\n"
       << "  PCS Eval supports k0 = 2^κ. The multilinear point dimension is (d + κ).\n\n"
       << "Examples:\n"
       << "  # GF(2^2) with F(x)=x^2+x+1 and zeta=x\n"
       << "  bench_pcs_eval --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --d 16 --queries 4\n"
       << "  # GR(4,2) with the same extension polynomial and zeta=x\n"
-      << "  bench_pcs_eval --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4\n";
+      << "  bench_pcs_eval --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4\n"
+      << "  # Auto zeta from Teichmuller subgroup generator\n"
+      << "  bench_pcs_eval --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --auto-zeta teich --d 16 --queries 4\n";
 }
 
 void RunOneContext(const ContextSpec &spec, long c, long k0, long d,
                    long num_queries,
                    bool checked_prover, bool enable_profile, int warmup,
-                   int reps,
+                   int reps, bool auto_zeta_teich,
                    std::uint64_t seed) {
   if (spec.mod <= 1) LogicError("RunOneContext: modulus must be > 1");
   if (k0 <= 0) LogicError("RunOneContext: k0 must be positive");
@@ -506,9 +534,17 @@ void RunOneContext(const ContextSpec &spec, long c, long k0, long d,
   const ZZ_pX F = BuildZZpX(spec.F_coeffs);
   ZZ_pEPush e_push(F);
 
-  const ZZ_pX zpoly = BuildZZpX(spec.zeta_coeffs);
   ZZ_pE zeta;
-  conv(zeta, zpoly);
+  if (auto_zeta_teich) {
+    ZZ p_base;
+    long k_base = 0;
+    DeduceBasePrimeAndExponent(spec, p_base, k_base);
+    const long s = NTL::deg(F);
+    zeta = FindTeichmullerGenerator(p_base, k_base, s, F);
+  } else {
+    const ZZ_pX zpoly = BuildZZpX(spec.zeta_coeffs);
+    conv(zeta, zpoly);
+  }
 
   const basefold::FoldableCodeParams params = (k0 == 1)
                                                   ? BuildParams_k0_1(
@@ -546,6 +582,7 @@ int main(int argc, char **argv) {
   int warmup = 1;
   int reps = 3;
   std::uint64_t seed = 0;
+  bool auto_zeta_teich = false;
 
   bool do_field = true;
   bool do_ring = true;
@@ -625,6 +662,14 @@ int main(int argc, char **argv) {
       }
     } else if (arg == "--seed") {
       seed = ParseU64OrDie(NeedValue("--seed"), "--seed");
+    } else if (arg == "--auto-zeta") {
+      const std::string mode = NeedValue("--auto-zeta");
+      if (mode == "teich") {
+        auto_zeta_teich = true;
+      } else {
+        std::cerr << "Invalid --auto-zeta (expected teich)\n";
+        return 2;
+      }
     } else if (arg == "--field-mod") {
       if (!ParseLong(NeedValue("--field-mod"), field.mod) || field.mod <= 1) {
         std::cerr << "Invalid --field-mod\n";
@@ -664,10 +709,10 @@ int main(int argc, char **argv) {
     }
     if (do_field)
       RunOneContext(field, c, k0, d, num_queries, checked_prover, enable_profile,
-                    warmup, reps, seed);
+                    warmup, reps, auto_zeta_teich, seed);
     if (do_ring)
       RunOneContext(ring, c, k0, d, num_queries, checked_prover, enable_profile,
-                    warmup, reps, seed);
+                    warmup, reps, auto_zeta_teich, seed);
   } catch (const std::exception &e) {
     std::cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;
