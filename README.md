@@ -45,7 +45,8 @@
 ├── bench
 │   ├── bench_pcs_commit.cpp
 │   ├── bench_pcs_eval.cpp
-│   └── bench_pcs_proof_size.cpp
+│   ├── bench_pcs_proof_size.cpp
+│   └── bench_pcs_communication.cpp
 └── tests
     ├── test_common.hpp
     ├── test_galois_ring_basic.cpp
@@ -180,6 +181,14 @@
   - 可选 `--k0 <int>`（默认 `1`，要求 2 的幂）；此时多项式点维度为 `d+log2(k0)`，消息长度为 `k_d = k0*2^d`。
   - 可选 `--auto-zeta teich` 自动从 `(p,k,F)` 推导 Teichmüller 子群生成元作为 `zeta`（启用后忽略 `--field-zeta/--ring-zeta`）。
 
+### `bench/bench_pcs_communication.cpp`
+
+- PCS prover/verifier 通信量估算（仅公式，不运行 prover）：
+  - `P -> V`：按当前 `BaseFoldPCSEvalProof` 的 payload 拆分（roots、sumcheck、`pi0_full`、query openings）。
+  - `V -> P`：给出交互式等价口径（`d` 个 challenge `r_i` + `queries` 个索引 `mu`）。
+  - 同时输出当前 Fiat–Shamir 非交互路径总通信量（`V -> P = 0`）。
+  - 可选 `--k0 <int>`（默认 `1`，要求 2 的幂）。
+
 ## 依赖
 
 - NTL（以及其底层依赖 GMP）。编译/链接方式因系统环境而异。
@@ -216,6 +225,7 @@ cmake --build build-release
 ./build/bench_pcs_commit --help
 ./build/bench_pcs_eval --help
 ./build/bench_pcs_proof_size --help
+./build/bench_pcs_communication --help
 ```
 
 示例（4 类用例在 commit/eval/proof_size 的对照）：
@@ -300,3 +310,18 @@ cmake --build build-release
   也可以直接使用 `bench/bench_pcs_proof_size.cpp`：
   - 不带 `--formula`：生成真实 proof 并输出估算大小；
   - 带 `--formula`：仅参数估计（不运行 prover）。
+
+## Communication（估算）
+
+可使用 `bench/bench_pcs_communication.cpp` 仅根据输入参数估算 PCS 双向通信量：
+
+- `P -> V`：proof payload（roots、sumcheck、`pi0_full`、Merkle openings）。
+- `V -> P`：交互式等价挑战（`r_i` 与 `mu`）。
+- 同时给出当前 Fiat–Shamir 路径通信量（`V -> P = 0`）。
+
+示例：
+
+```bash
+./build/bench_pcs_communication --mode field --field-mod 2 --field-F 1,1,1 --d 16 --queries 4
+./build/bench_pcs_communication --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --d 16 --queries 4
+```
