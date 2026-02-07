@@ -221,6 +221,44 @@ void TestInverse_Field() {
   CHECK_EQ(a_inv2, inv(a));
 }
 
+void TestInverse_Ring() {
+  const ZZ p = to_ZZ(2);
+  const long k = 2;
+  const long s = 2;
+  const ZZ mod = power(p, k);
+  testutil::PrintInfo("Inverse in GR(2^2,2): checks Inv() on units/non-units");
+
+  ZZ_pPush p_push(mod);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush e_push(F);
+
+  ZZ_pE one;
+  set(one);
+
+  const ZZ_pE sample_unit = long2ZZpE({1, 1});
+  const ZZ_pE sample_inv = Inv(sample_unit, s);
+  CHECK(sample_inv != 0);
+  CHECK_EQ(sample_unit * sample_inv, one);
+
+  for (long c0 = 0; c0 < 4; ++c0) {
+    for (long c1 = 0; c1 < 4; ++c1) {
+      const ZZ_pE a = long2ZZpE({c0, c1});
+      const ZZ_pE a_inv = Inv(a, s);
+      const bool is_unit = ((c0 & 1) == 1) || ((c1 & 1) == 1);
+      if (is_unit) {
+        CHECK(a_inv != 0);
+        CHECK_EQ(a * a_inv, one);
+      } else {
+        CHECK_EQ(a_inv, ZZ_pE(0));
+      }
+    }
+  }
+}
+
 void TestFindPrimitivePoly() {
   const ZZ p = to_ZZ(2);
   const long n = 3;
@@ -434,6 +472,7 @@ int main() {
     RUN_TEST(TestUtilsBasics);
     RUN_TEST(TestConversionsAndPolyOps_Field);
     RUN_TEST(TestInverse_Field);
+    RUN_TEST(TestInverse_Ring);
     RUN_TEST(TestFindPrimitivePoly);
     RUN_TEST(TestInterpolateForGR);
     RUN_TEST(TestHenselLift_Smoke);

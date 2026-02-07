@@ -98,10 +98,11 @@ bool isPowerOfTwo(long n) { return n > 0 && (n & (n - 1)) == 0; }
 */
 void VeczzpE2Veclong(const vec_ZZ_pE &v1, vector<long> &m, long s) {
   m.clear();
+  const long len = v1.length();
+  m.reserve(static_cast<size_t>(len) * static_cast<size_t>(s));
 
-  for (long i = 0; i < v1.length(); i++) {
-    const ZZ_pE element = v1[i];
-    const ZZ_pX polyRep = rep(element);
+  for (long i = 0; i < len; i++) {
+    const ZZ_pX &polyRep = rep(v1[i]);
 
     for (long j = 0; j < s; j++) {
       long c;
@@ -130,8 +131,9 @@ string Veclong2String(const std::vector<long> &vec) {
 */
 void ZzpE2Veclong(const ZZ_pE &F, vector<long> &m, long s) {
   m.clear();
+  m.reserve(static_cast<size_t>(s));
 
-  ZZ_pX polyRep = rep(F);
+  const ZZ_pX &polyRep = rep(F);
   for (long i = 0; i < s; i++) {
     long c;
     conv(c, (coeff(polyRep, i)));
@@ -146,9 +148,11 @@ void ZzpE2Veclong(const ZZ_pE &F, vector<long> &m, long s) {
 */
 void VeczzpE2Vecstring(const vec_ZZ_pE &v1, vector<string> &m, long s) {
   m.clear();
+  m.reserve(static_cast<size_t>(v1.length()));
+  vector<long> b;
+  b.reserve(static_cast<size_t>(s));
 
   for (long i = 0; i < v1.length(); i++) {
-    vector<long> b;
     ZzpE2Veclong(v1[i], b, s);
     string a = Veclong2String(b);
     m.push_back(a);
@@ -161,8 +165,10 @@ void VeczzpE2Vecstring(const vec_ZZ_pE &v1, vector<string> &m, long s) {
 */
 void ZZpX2long(const ZZ_pX &F, vector<long> &Irred) {
   Irred.clear();
+  const long degree = deg(F);
+  Irred.reserve(static_cast<size_t>(degree + 1));
 
-  for (long i = 0; i <= deg(F); i++) {
+  for (long i = 0; i <= degree; i++) {
     long c;
     conv(c, (coeff(F, i)));
     Irred.push_back(c);
@@ -176,10 +182,15 @@ void ZZpX2long(const ZZ_pX &F, vector<long> &Irred) {
 */
 void ZZpEX2long(const ZZ_pEX &v1, vector<long> &m, long s) {
   m.clear();
+  const long degree = deg(v1);
+  if (degree < 0) {
+    return;
+  }
+  m.reserve(static_cast<size_t>(degree + 1) * static_cast<size_t>(s));
 
-  for (long i = 0; i <= deg(v1); i++) {
+  for (long i = 0; i <= degree; i++) {
     const ZZ_pE element = coeff(v1, i);
-    const ZZ_pX polyRep = rep(element);
+    const ZZ_pX &polyRep = rep(element);
 
     for (long j = 0; j < s; j++) {
       long c;
@@ -276,11 +287,11 @@ vector<long> SplitAndPadVector(const vector<long> &input, long segmentLength,
 
   for (long i = 0; i < numSegments; ++i) {
     auto segmentStart = input.begin() + i * n;
-    auto segmentEnd = segmentStart + n;
-
-    vector<long> segment(segmentStart, segmentEnd);
-    vector<long> paddedSegment = PadVectorToLength(segment, segmentLength);
-    result.insert(result.end(), paddedSegment.begin(), paddedSegment.end());
+    const long copyLength = min(segmentLength, n);
+    result.insert(result.end(), segmentStart, segmentStart + copyLength);
+    if (copyLength < segmentLength) {
+      result.insert(result.end(), segmentLength - copyLength, 0);
+    }
   }
 
   return result;
@@ -348,8 +359,10 @@ int nearestPerfectSquare(int num) {
 */
 void fillIrred(const ZZ_pX &F, vector<long> &Irred) {
   Irred.clear();
+  const long degree = deg(F);
+  Irred.reserve(static_cast<size_t>(degree + 1));
 
-  for (long i = 0; i <= deg(F); i++) {
+  for (long i = 0; i <= degree; i++) {
     long c;
     conv(c, (coeff(F, i)));
     Irred.push_back(c);
@@ -363,10 +376,11 @@ void fillIrred(const ZZ_pX &F, vector<long> &Irred) {
 void fillInterpolation(const vec_ZZ_pE &v1, vector<long> &Interpolation,
                        long s) {
   Interpolation.clear();
+  const long len = v1.length();
+  Interpolation.reserve(static_cast<size_t>(len) * static_cast<size_t>(s));
 
-  for (long i = 0; i < v1.length(); i++) {
-    const ZZ_pE element = v1[i];
-    const ZZ_pX polyRep = rep(element);
+  for (long i = 0; i < len; i++) {
+    const ZZ_pX &polyRep = rep(v1[i]);
 
     for (long j = 0; j < s; j++) {
       long c;
@@ -499,18 +513,15 @@ vector<vector<long>> splitVector(const vector<long> &input, int groupSize) {
   vector<vector<long>> result;
   int totalSize = input.size();
   int numGroups = (totalSize + groupSize - 1) / groupSize;
+  result.resize(numGroups, vector<long>(groupSize, 0));
 
   for (int i = 0; i < numGroups; ++i) {
-    vector<long> group;
-    for (int j = 0; j < groupSize; ++j) {
-      int index = i * groupSize + j;
-      if (index < totalSize) {
-        group.push_back(input[index]);
-      } else {
-        group.push_back(0);
-      }
+    vector<long> &group = result[static_cast<size_t>(i)];
+    const int groupStart = i * groupSize;
+    const int copyLen = min(groupSize, totalSize - groupStart);
+    for (int j = 0; j < copyLen; ++j) {
+      group[static_cast<size_t>(j)] = input[static_cast<size_t>(groupStart + j)];
     }
-    result.push_back(group);
   }
 
   return result;

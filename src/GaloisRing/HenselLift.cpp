@@ -7,7 +7,6 @@ using NTL::ZZ;
 using NTL::ZZ_p;
 using NTL::ZZ_pBak;
 using NTL::ZZ_pX;
-using NTL::power;
 
 /*
     Internal helper: performs one Hensel lifting step.
@@ -68,15 +67,17 @@ void HenselLift(ZZ_pX &g_, const ZZ_pX &f, const ZZ_pX &g, const ZZ p, long n) {
   ZZ_pX g_tmp = g;
   ZZ_pX h_tmp = h;
   ZZ_pX f_tmp = f;
+  ZZ mod = p * p;
   for (int i = 0; i < n; i++) {
     ZZ_pX h_, s_, t_;
-    ZZ_p::init(power(p, i + 2));
+    ZZ_p::init(mod);
     SetCoeff(f_tmp, 0, -1);
     HenselLift(g_, h_, s_, t_, f_tmp, g_tmp, h_tmp, s, t);
     g_tmp = g_;
     h_tmp = h_;
     s = s_;
     t = t_;
+    mod *= p;
   }
   return;
 }
