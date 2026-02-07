@@ -297,6 +297,43 @@ done
 cat "$csv"
 ```
 
+### Verifier Query 并行线程调优
+
+`BaseFoldPCSVerifyEval` 的 query-level 并行支持环境变量或 `bench_pcs_eval` CLI：
+
+```bash
+# 环境变量（对 bench_pcs_eval 生效）
+export BASEFOLD_VERIFY_QUERY_QUERIES_PER_THREAD=1
+export BASEFOLD_VERIFY_QUERY_PARALLEL_THRESHOLD=2
+export BASEFOLD_VERIFY_QUERY_MAX_THREADS=8
+
+# CLI（优先级高于环境变量）
+./build/bench_pcs_eval ... \
+  --verifier-query-per-thread 1 \
+  --verifier-query-threshold 2 \
+  --verifier-query-max-threads 8
+```
+
+自动 sweep 最优线程数（示例）：
+
+```bash
+csv=/tmp/verifier_query_threads_sweep.csv
+echo "max_threads,verifier_mean_ms,prover_mean_ms" > "$csv"
+for t in 1 2 4 8 12 16 24 32; do
+  out=$(./build/bench_pcs_eval --mode field \
+    --field-mod 326594724262804054738278293730872375507 \
+    --field-F 1,0,0,0,1 --field-zeta 3 \
+    --d 14 --queries 64 --warmup 1 --reps 3 \
+    --verifier-query-per-thread 1 \
+    --verifier-query-threshold 2 \
+    --verifier-query-max-threads "$t")
+  verifier=$(printf '%s\n' "$out" | awk '/verifier mean/{print $3; exit}')
+  prover=$(printf '%s\n' "$out" | awk '/prover   mean/{print $3; exit}')
+  echo "$t,$verifier,$prover" | tee -a "$csv"
+done
+cat "$csv"
+```
+
 ### Profiling（`--profile`）
 
 `bench_pcs_eval --profile` 会打印 prover/verifier 的 breakdown（数值用 `...` 省略）：

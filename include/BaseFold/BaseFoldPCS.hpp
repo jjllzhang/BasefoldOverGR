@@ -104,6 +104,26 @@ struct BaseFoldPCSChallengeConfig {
   NTL::ZZ_pEX challenge_extension_modulus;
 };
 
+// Runtime tuning knobs for verifier query-level parallelization.
+// Defaults can also be provided via environment variables:
+// - BASEFOLD_VERIFY_QUERY_QUERIES_PER_THREAD
+// - BASEFOLD_VERIFY_QUERY_PARALLEL_THRESHOLD
+// - BASEFOLD_VERIFY_QUERY_MAX_THREADS
+struct VerifierQueryParallelConfig {
+  long queries_per_thread = 1;
+  long parallel_query_threshold = 2;
+  int max_threads = 8;
+};
+
+// Loads verifier query parallel config from environment variables and applies it.
+void ResetVerifierQueryParallelConfigFromEnv();
+
+// Applies verifier query parallel config for the current process.
+void SetVerifierQueryParallelConfig(const VerifierQueryParallelConfig &cfg);
+
+// Returns the currently active verifier query parallel config.
+VerifierQueryParallelConfig GetVerifierQueryParallelConfig();
+
 // Computes the PCS commitment C := MerkleRoot(π_{f,d}) where π_{f,d} = Encd(f⃗).
 // Preconditions:
 // - f_coeffs.length() == MessageLength(params)

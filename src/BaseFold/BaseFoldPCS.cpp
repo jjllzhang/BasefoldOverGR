@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <limits>
@@ -46,6 +47,53 @@ using NTL::ZZ_pX;
 namespace basefold {
 namespace {
 
+long ParsePositiveEnvLong(const char *name, long fallback) {
+  const char *raw = std::getenv(name);
+  if (raw == nullptr || *raw == '\0') return fallback;
+  char *end = nullptr;
+  const long v = std::strtol(raw, &end, 10);
+  if (end == raw || *end != '\0' || v <= 0) return fallback;
+  return v;
+}
+
+int ParsePositiveEnvInt(const char *name, int fallback) {
+  const char *raw = std::getenv(name);
+  if (raw == nullptr || *raw == '\0') return fallback;
+  char *end = nullptr;
+  const long v = std::strtol(raw, &end, 10);
+  if (end == raw || *end != '\0' || v <= 0 ||
+      v > static_cast<long>(std::numeric_limits<int>::max())) {
+    return fallback;
+  }
+  return static_cast<int>(v);
+}
+
+VerifierQueryParallelConfig ParseVerifierQueryParallelConfigFromEnv() {
+  VerifierQueryParallelConfig cfg;
+  cfg.queries_per_thread = ParsePositiveEnvLong(
+      "BASEFOLD_VERIFY_QUERY_QUERIES_PER_THREAD", cfg.queries_per_thread);
+  cfg.parallel_query_threshold = ParsePositiveEnvLong(
+      "BASEFOLD_VERIFY_QUERY_PARALLEL_THRESHOLD",
+      cfg.parallel_query_threshold);
+  cfg.max_threads = ParsePositiveEnvInt("BASEFOLD_VERIFY_QUERY_MAX_THREADS",
+                                        cfg.max_threads);
+  return cfg;
+}
+
+VerifierQueryParallelConfig &MutableVerifierQueryParallelConfig() {
+  static VerifierQueryParallelConfig cfg =
+      ParseVerifierQueryParallelConfigFromEnv();
+  return cfg;
+}
+
+VerifierQueryParallelConfig LoadVerifierQueryParallelConfig() {
+  VerifierQueryParallelConfig cfg = MutableVerifierQueryParallelConfig();
+  if (cfg.queries_per_thread <= 0) cfg.queries_per_thread = 1;
+  if (cfg.parallel_query_threshold <= 0) cfg.parallel_query_threshold = 2;
+  if (cfg.max_threads <= 0) cfg.max_threads = 8;
+  return cfg;
+}
+
 template <typename Fn>
 void ForEachIndexMaybeParallel(long begin, long end, long parallel_threshold,
                                const Fn &fn) {
@@ -75,6 +123,68 @@ void ForEachIndexMaybeParallel(long begin, long end, long parallel_threshold,
   for (long i = begin; i < end; ++i) {
     fn(i);
   }
+}
+
+int ChooseQueryVerifyThreads(long num_queries) {
+#if defined(BASEFOLD_USE_OPENMP)
+  const VerifierQueryParallelConfig cfg = LoadVerifierQueryParallelConfig();
+  if (num_queries < cfg.parallel_query_threshold) return 1;
+  const long blocks =
+      (num_queries + cfg.queries_per_thread - 1) / cfg.queries_per_thread;
+  int threads_to_use = static_cast<int>(blocks);
+  if (threads_to_use > cfg.max_threads) threads_to_use = cfg.max_threads;
+  const int max_threads = omp_get_max_threads();
+  if (threads_to_use > max_threads) threads_to_use = max_threads;
+  if (threads_to_use < 1) threads_to_use = 1;
+  return threads_to_use;
+#else
+  (void)num_queries;
+  return 1;
+#endif
+}
+
+template <typename Fn>
+bool VerifyQueriesMaybeParallel(long num_queries, Profile *prof,
+                                const Fn &verify_one_query) {
+  if (num_queries <= 0) return true;
+
+#if defined(BASEFOLD_USE_OPENMP)
+  // Keep profile accounting precise: per-thread timer accumulation in parallel
+  // would over-count wall-clock time in the breakdown.
+  if (prof == nullptr) {
+    const int threads_to_use = ChooseQueryVerifyThreads(num_queries);
+    if (threads_to_use >= 2) {
+      std::vector<unsigned char> query_ok(static_cast<std::size_t>(num_queries),
+                                          static_cast<unsigned char>(1));
+
+      const ZZ base_modulus = NTL::ZZ_p::modulus();
+      const ZZ_pX extension_modulus = NTL::ZZ_pE::modulus().val();
+
+#pragma omp parallel num_threads(threads_to_use) shared(query_ok)
+      {
+        NTL::ZZ_p::init(base_modulus);
+        NTL::ZZ_pE::init(extension_modulus);
+
+#pragma omp for schedule(static)
+        for (long q = 0; q < num_queries; ++q) {
+          if (!verify_one_query(q)) {
+            query_ok[static_cast<std::size_t>(q)] = static_cast<unsigned char>(0);
+          }
+        }
+      }
+
+      for (long q = 0; q < num_queries; ++q) {
+        if (query_ok[static_cast<std::size_t>(q)] == 0) return false;
+      }
+      return true;
+    }
+  }
+#endif
+
+  for (long q = 0; q < num_queries; ++q) {
+    if (!verify_one_query(q)) return false;
+  }
+  return true;
 }
 
 long Pow2Checked(long e) {
@@ -1862,29 +1972,30 @@ bool VerifyEvalWithExtensionChallenges(
 
   const long n_last = CodewordLengthAtLevel(params, params.d - 1);
   const long n_d = CodewordLengthAtLevel(params, params.d);
+  std::vector<IOPPQueryPlan> query_plans;
+  query_plans.resize(static_cast<std::size_t>(num_queries));
   for (long q = 0; q < num_queries; ++q) {
-    ScopedTimer query_timer(prof ? &prof->ext_verify_query_merkle_ns : nullptr,
-                            prof ? &prof->ext_verify_query_merkle_calls
-                                     : nullptr);
-
     const long mu =
         transcript.ChallengeIndex("mu/" + std::to_string(q), n_last);
-    const IOPPQueryPlan plan = MakeQueryPlan(mu, params);
+    query_plans[static_cast<std::size_t>(q)] = MakeQueryPlan(mu, params);
+  }
 
+  auto verify_one_query = [&](long q) -> bool {
+    Profile *query_prof = ActiveProfile();
+    ScopedTimer query_timer(
+        query_prof ? &query_prof->ext_verify_query_merkle_ns : nullptr,
+        query_prof ? &query_prof->ext_verify_query_merkle_calls : nullptr);
+
+    const IOPPQueryPlan &plan = query_plans[static_cast<std::size_t>(q)];
     const BaseFoldPCSQueryProof &qp =
         proof.query_proofs[static_cast<std::size_t>(q)];
     const BaseFoldPCSQueryProofExtension &qp_ext =
         proof.extension.query_proofs[static_cast<std::size_t>(q)];
-    if (static_cast<long>(qp.left.size()) != params.d)
-      return false;
-    if (static_cast<long>(qp.right.size()) != params.d)
-      return false;
-    if (static_cast<long>(qp_ext.left.size()) != params.d)
-      return false;
-    if (static_cast<long>(qp_ext.right.size()) != params.d)
-      return false;
-    if (static_cast<long>(qp_ext.folded.size()) != params.d)
-      return false;
+    if (static_cast<long>(qp.left.size()) != params.d) return false;
+    if (static_cast<long>(qp.right.size()) != params.d) return false;
+    if (static_cast<long>(qp_ext.left.size()) != params.d) return false;
+    if (static_cast<long>(qp_ext.right.size()) != params.d) return false;
+    if (static_cast<long>(qp_ext.folded.size()) != params.d) return false;
 
     const long top_i = params.d - 1;
     const long mu_top = plan.mu_by_level[static_cast<std::size_t>(top_i)];
@@ -1920,9 +2031,8 @@ bool VerifyEvalWithExtensionChallenges(
     for (long i = params.d; i-- > 0;) {
       const long mu_i = plan.mu_by_level[static_cast<std::size_t>(i)];
       const long n_i = CodewordLengthAtLevel(params, i);
-      if (mu_i < 0 || mu_i >= n_i) {
-        return false;
-      }
+      if (mu_i < 0 || mu_i >= n_i) return false;
+
       const ExtensionMerkleOpening &left_ext =
           qp_ext.left[static_cast<std::size_t>(i)];
       const ExtensionMerkleOpening &right_ext =
@@ -1930,18 +2040,14 @@ bool VerifyEvalWithExtensionChallenges(
       const ExtensionMerkleOpening &folded_ext =
           qp_ext.folded[static_cast<std::size_t>(i)];
 
-      if (folded_ext.index != mu_i) {
-        return false;
-      }
+      if (folded_ext.index != mu_i) return false;
       if (!VerifyExtensionMerkleOpening(
               proof.extension.roots_by_level[static_cast<std::size_t>(i)], n_i,
               folded_ext, extension_modulus)) {
         return false;
       }
 
-      if (left_ext.index != mu_i || right_ext.index != mu_i + n_i) {
-        return false;
-      }
+      if (left_ext.index != mu_i || right_ext.index != mu_i + n_i) return false;
       if (i < params.d - 1) {
         const long n_ip1 = CodewordLengthAtLevel(params, i + 1);
         if (!VerifyExtensionMerkleOpening(
@@ -1961,9 +2067,7 @@ bool VerifyEvalWithExtensionChallenges(
           r_by_level[static_cast<std::size_t>(i)], x1, left_ext.value, x2,
           right_ext.value, extension_modulus);
 
-      if (expected_folded != folded_ext.value) {
-        return false;
-      }
+      if (expected_folded != folded_ext.value) return false;
 
       if (i > 0) {
         const long n_prev = CodewordLengthAtLevel(params, i - 1);
@@ -1985,6 +2089,12 @@ bool VerifyEvalWithExtensionChallenges(
         }
       }
     }
+
+    return true;
+  };
+
+  if (!VerifyQueriesMaybeParallel(num_queries, prof, verify_one_query)) {
+    return false;
   }
 
   return true;
@@ -2001,6 +2111,19 @@ void AbsorbPublicInput(Sha256Transcript &transcript, const MerkleRoot &commitmen
 }
 
 }  // namespace
+
+void ResetVerifierQueryParallelConfigFromEnv() {
+  MutableVerifierQueryParallelConfig() =
+      ParseVerifierQueryParallelConfigFromEnv();
+}
+
+void SetVerifierQueryParallelConfig(const VerifierQueryParallelConfig &cfg) {
+  MutableVerifierQueryParallelConfig() = cfg;
+}
+
+VerifierQueryParallelConfig GetVerifierQueryParallelConfig() {
+  return LoadVerifierQueryParallelConfig();
+}
 
 MerkleRoot BaseFoldPCSCommit(const vec_ZZ_pE &f_coeffs,
                              const FoldableCodeParams &params) {
@@ -2277,19 +2400,21 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
   }
 
   const long n_last = CodewordLengthAtLevel(params, params.d - 1);
+  std::vector<IOPPQueryPlan> query_plans;
+  query_plans.resize(static_cast<std::size_t>(num_queries));
   for (long q = 0; q < num_queries; ++q) {
     const long mu =
         transcript.ChallengeIndex("mu/" + std::to_string(q), n_last);
-    const IOPPQueryPlan plan = MakeQueryPlan(mu, params);
+    query_plans[static_cast<std::size_t>(q)] = MakeQueryPlan(mu, params);
+  }
 
+  auto verify_one_query = [&](long q) -> bool {
+    const IOPPQueryPlan &plan = query_plans[static_cast<std::size_t>(q)];
     const BaseFoldPCSQueryProof &qp =
         proof.query_proofs[static_cast<std::size_t>(q)];
-    if (static_cast<long>(qp.left.size()) != params.d)
-      return false;
-    if (static_cast<long>(qp.right.size()) != params.d)
-      return false;
-    if (static_cast<long>(qp.folded.size()) != params.d)
-      return false;
+    if (static_cast<long>(qp.left.size()) != params.d) return false;
+    if (static_cast<long>(qp.right.size()) != params.d) return false;
+    if (static_cast<long>(qp.folded.size()) != params.d) return false;
 
     IOPPQueryMerkleOpenings open;
     open.left = qp.left;
@@ -2297,10 +2422,12 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
     open.folded = qp.folded;
     open.pi0_full = proof.pi0_full;
 
-    if (!VerifyQueryFromMerkleOpenings(plan, challenges, open, proof.commitments,
-                                       params)) {
-      return false;
-    }
+    return VerifyQueryFromMerkleOpenings(plan, challenges, open, proof.commitments,
+                                         params);
+  };
+
+  if (!VerifyQueriesMaybeParallel(num_queries, prof, verify_one_query)) {
+    return false;
   }
 
   return true;

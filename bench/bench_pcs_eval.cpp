@@ -628,6 +628,7 @@ void PrintHelp() {
       << "  bench_pcs_eval [--mode field|ring|both] [--c <int>] [--k0 <int>] [--d <int>]\n"
       << "               [--queries <int>] [--checked] [--profile] [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
       << "               [--merkle-leafs-per-thread <int>] [--merkle-level-threshold <int>] [--merkle-max-threads <int>]\n"
+      << "               [--verifier-query-per-thread <int>] [--verifier-query-threshold <int>] [--verifier-query-max-threads <int>]\n"
       << "               [--use-extension-challenges]\n"
       << "               [--field-challenge-ext <a0;a1;...>] [--ring-challenge-ext <a0;a1;...>]\n"
       << "               [--auto-zeta teich]\n"
@@ -647,6 +648,10 @@ void PrintHelp() {
       << "    BASEFOLD_MERKLE_LEAFS_PER_THREAD\n"
       << "    BASEFOLD_MERKLE_PARALLEL_LEVEL_THRESHOLD\n"
       << "    BASEFOLD_MERKLE_MAX_THREADS\n"
+      << "  Verifier query parallel tuning can be configured by env vars:\n"
+      << "    BASEFOLD_VERIFY_QUERY_QUERIES_PER_THREAD\n"
+      << "    BASEFOLD_VERIFY_QUERY_PARALLEL_THRESHOLD\n"
+      << "    BASEFOLD_VERIFY_QUERY_MAX_THREADS\n"
       << "  and overridden by the CLI flags above.\n\n"
       << "  PCS Eval supports k0 = 2^κ. The multilinear point dimension is (d + κ).\n\n"
       << "Examples:\n"
@@ -758,6 +763,9 @@ int main(int argc, char **argv) {
   basefold::ResetMerkleBuildParallelConfigFromEnv();
   basefold::MerkleBuildParallelConfig merkle_cfg =
       basefold::GetMerkleBuildParallelConfig();
+  basefold::ResetVerifierQueryParallelConfigFromEnv();
+  basefold::VerifierQueryParallelConfig verifier_query_cfg =
+      basefold::GetVerifierQueryParallelConfig();
 
   bool do_field = true;
   bool do_ring = true;
@@ -852,6 +860,27 @@ int main(int argc, char **argv) {
         std::cerr << "Invalid --merkle-max-threads\n";
         return 2;
       }
+    } else if (arg == "--verifier-query-per-thread") {
+      if (!ParseLong(NeedValue("--verifier-query-per-thread"),
+                     verifier_query_cfg.queries_per_thread) ||
+          verifier_query_cfg.queries_per_thread <= 0) {
+        std::cerr << "Invalid --verifier-query-per-thread\n";
+        return 2;
+      }
+    } else if (arg == "--verifier-query-threshold") {
+      if (!ParseLong(NeedValue("--verifier-query-threshold"),
+                     verifier_query_cfg.parallel_query_threshold) ||
+          verifier_query_cfg.parallel_query_threshold <= 0) {
+        std::cerr << "Invalid --verifier-query-threshold\n";
+        return 2;
+      }
+    } else if (arg == "--verifier-query-max-threads") {
+      if (!ParseInt(NeedValue("--verifier-query-max-threads"),
+                    verifier_query_cfg.max_threads) ||
+          verifier_query_cfg.max_threads <= 0) {
+        std::cerr << "Invalid --verifier-query-max-threads\n";
+        return 2;
+      }
     } else if (arg == "--reps") {
       if (!ParseInt(NeedValue("--reps"), reps) || reps <= 0) {
         std::cerr << "Invalid --reps\n";
@@ -907,6 +936,7 @@ int main(int argc, char **argv) {
 
   try {
     basefold::SetMerkleBuildParallelConfig(merkle_cfg);
+    basefold::SetVerifierQueryParallelConfig(verifier_query_cfg);
     if (!do_field && !do_ring) {
       std::cerr << "Nothing to do: --mode disabled both field and ring\n";
       return 2;
