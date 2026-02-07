@@ -226,6 +226,30 @@ cmake --build build-release
 ./build/bench_pcs_eval --help
 ./build/bench_pcs_proof_size --help
 ./build/bench_pcs_communication --help
+./build/calc_iopp_params --help
+```
+
+### 参数选取工具（码距 + 推荐 query 次数）
+
+`bench/calc_iopp_params.cpp` 基于 `Basefold_over_GR.pdf` 的 “Instantiation and parameter selection” 段落实现，输入 `d/c/lambda` 与 `q`（或 `p,r,m`）后，自动计算：
+
+- 距离下界 `Delta_Cd >= 1 - t_d / n_d`（按 Theorem 1 / Corollary 1 的 `t_i` 递推）；
+- `delta = J_gamma(J_gamma(Delta_Cd))`；
+- 计算并区分：
+  - `l_min_iopp_only`：满足 `2d/(gamma^3 q) + (1-delta+gamma*d)^l <= 2^-lambda`；
+  - `l_min_for_PCS`（推荐）：满足 `2d/q + 2d/(gamma^3 q) + (1-delta+gamma*d)^l <= 2^-lambda`。
+
+示例：
+
+```bash
+# 直接给 q（示例：q = 2^192）
+./build/calc_iopp_params --d 20 --c 16 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --gamma 0.005
+
+# 按 q = p^(r*m) 给（示例：p=2, r=64, m=3 => q=2^192）
+./build/calc_iopp_params --d 20 --c 16 --lambda 128 --p 2 --r 64 --m 3 --gamma 0.005
+
+# 查看每一层递推细节（ell_i, t_i）
+./build/calc_iopp_params --d 16 --c 16 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --gamma 0.00625 --show-levels
 ```
 
 示例（128-bit 可复现参数，一套常量覆盖四个 bench）：

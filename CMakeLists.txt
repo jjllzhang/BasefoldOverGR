@@ -74,6 +74,9 @@ target_link_libraries(bench_pcs_proof_size PRIVATE galoisring)
 add_executable(bench_pcs_communication bench/bench_pcs_communication.cpp)
 target_link_libraries(bench_pcs_communication PRIVATE galoisring)
 
+add_executable(calc_iopp_params bench/calc_iopp_params.cpp)
+target_compile_features(calc_iopp_params PRIVATE cxx_std_17)
+
 enable_testing()
 add_test(NAME test_galois_ring COMMAND $<TARGET_FILE:test_galois_ring>)
 add_test(NAME test_foldable_codes COMMAND $<TARGET_FILE:test_foldable_codes>)
