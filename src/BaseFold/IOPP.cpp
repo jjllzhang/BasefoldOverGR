@@ -20,6 +20,10 @@
 
 #include "GaloisRing/Inverse.hpp"
 
+#if defined(BASEFOLD_USE_OPENMP)
+#include <omp.h>
+#endif
+
 using NTL::BytesFromZZ;
 using NTL::coeff;
 using NTL::LogicError;
@@ -47,6 +51,69 @@ long Pow2Checked(long e) {
     LogicError("Pow2Checked: exponent too large for long");
   }
   return 1L << e;
+}
+
+long ParsePositiveEnvLong(const char *name, long fallback) {
+  const char *raw = std::getenv(name);
+  if (raw == nullptr || *raw == '\0') return fallback;
+  char *end = nullptr;
+  const long v = std::strtol(raw, &end, 10);
+  if (end == raw || *end != '\0' || v <= 0) return fallback;
+  return v;
+}
+
+int ParsePositiveEnvInt(const char *name, int fallback) {
+  const char *raw = std::getenv(name);
+  if (raw == nullptr || *raw == '\0') return fallback;
+  char *end = nullptr;
+  const long v = std::strtol(raw, &end, 10);
+  if (end == raw || *end != '\0' || v <= 0 ||
+      v > static_cast<long>(std::numeric_limits<int>::max())) {
+    return fallback;
+  }
+  return static_cast<int>(v);
+}
+
+MerkleBuildParallelConfig ParseMerkleBuildParallelConfigFromEnv() {
+  MerkleBuildParallelConfig cfg;
+  cfg.leafs_per_thread = ParsePositiveEnvLong(
+      "BASEFOLD_MERKLE_LEAFS_PER_THREAD", cfg.leafs_per_thread);
+  cfg.parallel_level_threshold = ParsePositiveEnvLong(
+      "BASEFOLD_MERKLE_PARALLEL_LEVEL_THRESHOLD",
+      cfg.parallel_level_threshold);
+  cfg.max_threads =
+      ParsePositiveEnvInt("BASEFOLD_MERKLE_MAX_THREADS", cfg.max_threads);
+  return cfg;
+}
+
+MerkleBuildParallelConfig &MutableMerkleBuildParallelConfig() {
+  static MerkleBuildParallelConfig cfg = ParseMerkleBuildParallelConfigFromEnv();
+  return cfg;
+}
+
+MerkleBuildParallelConfig LoadMerkleBuildParallelConfig() {
+  MerkleBuildParallelConfig cfg = MutableMerkleBuildParallelConfig();
+  if (cfg.leafs_per_thread <= 0) cfg.leafs_per_thread = 32768;
+  if (cfg.parallel_level_threshold <= 0) cfg.parallel_level_threshold = 8192;
+  if (cfg.max_threads <= 0) cfg.max_threads = 8;
+  return cfg;
+}
+
+int ChooseMerkleBuildThreads(long leaf_count,
+                             const MerkleBuildParallelConfig &cfg) {
+#if defined(BASEFOLD_USE_OPENMP)
+  if (leaf_count < cfg.leafs_per_thread) return 1;
+  const int max_threads = omp_get_max_threads();
+  int threads_to_use = static_cast<int>(leaf_count / cfg.leafs_per_thread);
+  if (threads_to_use > cfg.max_threads) threads_to_use = cfg.max_threads;
+  if (threads_to_use > max_threads) threads_to_use = max_threads;
+  if (threads_to_use < 1) threads_to_use = 1;
+  return threads_to_use;
+#else
+  (void)leaf_count;
+  (void)cfg;
+  return 1;
+#endif
 }
 
 void ValidateParamsOrThrow(const FoldableCodeParams &params) {
@@ -425,6 +492,18 @@ bool SolveLinearSystemRref(vec_ZZ_pE &x_out, mat_ZZ_pE &aug) {
 
 } // namespace
 
+void ResetMerkleBuildParallelConfigFromEnv() {
+  MutableMerkleBuildParallelConfig() = ParseMerkleBuildParallelConfigFromEnv();
+}
+
+void SetMerkleBuildParallelConfig(const MerkleBuildParallelConfig &cfg) {
+  MutableMerkleBuildParallelConfig() = cfg;
+}
+
+MerkleBuildParallelConfig GetMerkleBuildParallelConfig() {
+  return LoadMerkleBuildParallelConfig();
+}
+
 long MessageLengthAtLevel(const FoldableCodeParams &params, long level) {
   ValidateParamsOrThrow(params);
   if (level < 0 || level > params.d) {
@@ -737,22 +816,87 @@ MerkleTree MerkleTree::Build(const Oracle &oracle) {
   }
 
   std::vector<Digest> level;
-  level.reserve(static_cast<std::size_t>(leaf_count));
-  for (long i = 0; i < leaf_count; ++i) {
-    level.push_back(HashLeaf(i, oracle[i]));
-  }
-
-  while (level.size() > 1) {
-    if (level.size() % 2 == 1)
-      level.push_back(level.back());
-
+  level.resize(static_cast<std::size_t>(leaf_count));
+  const MerkleBuildParallelConfig merkle_cfg = LoadMerkleBuildParallelConfig();
+#if defined(BASEFOLD_USE_OPENMP)
+  const int threads_to_use = ChooseMerkleBuildThreads(leaf_count, merkle_cfg);
+  if (threads_to_use >= 2) {
+    const ZZ base_modulus = NTL::ZZ_p::modulus();
+    const ZZ_pX extension_modulus = NTL::ZZ_pE::modulus().val();
     std::vector<Digest> next;
-    next.reserve(level.size() / 2);
-    for (std::size_t i = 0; i < level.size(); i += 2) {
-      next.push_back(HashNode(level[i], level[i + 1]));
+    long next_size = 0;
+    bool done = false;
+    bool parallel_level = false;
+    const long parallel_level_threshold = merkle_cfg.parallel_level_threshold;
+
+#pragma omp parallel num_threads(threads_to_use) shared(level, next, next_size, done, parallel_level, t)
+    {
+      NTL::ZZ_p::init(base_modulus);
+      NTL::ZZ_pE::init(extension_modulus);
+
+#pragma omp for schedule(static)
+      for (long i = 0; i < leaf_count; ++i) {
+        level[static_cast<std::size_t>(i)] = HashLeaf(i, oracle[i]);
+      }
+
+      while (true) {
+#pragma omp single
+        {
+          done = (level.size() <= 1);
+          if (!done) {
+            if (level.size() % 2 == 1) {
+              level.push_back(level.back());
+            }
+            next_size = static_cast<long>(level.size() / 2);
+            next.resize(static_cast<std::size_t>(next_size));
+            parallel_level = (next_size >= parallel_level_threshold);
+          }
+        }
+        if (done) break;
+
+        if (parallel_level) {
+#pragma omp for schedule(static)
+          for (long i = 0; i < next_size; ++i) {
+            const std::size_t j = static_cast<std::size_t>(2 * i);
+            next[static_cast<std::size_t>(i)] = HashNode(level[j], level[j + 1]);
+          }
+        } else {
+#pragma omp single
+          {
+            for (long i = 0; i < next_size; ++i) {
+              const std::size_t j = static_cast<std::size_t>(2 * i);
+              next[static_cast<std::size_t>(i)] = HashNode(level[j], level[j + 1]);
+            }
+          }
+        }
+
+#pragma omp single
+        {
+          t.levels_.push_back(std::move(level));
+          level = std::move(next);
+        }
+      }
     }
-    t.levels_.push_back(std::move(level));
-    level = std::move(next);
+  } else
+#endif
+  {
+    for (long i = 0; i < leaf_count; ++i) {
+      level[static_cast<std::size_t>(i)] = HashLeaf(i, oracle[i]);
+    }
+    while (level.size() > 1) {
+      if (level.size() % 2 == 1)
+        level.push_back(level.back());
+
+      std::vector<Digest> next;
+      const long next_size = static_cast<long>(level.size() / 2);
+      next.resize(static_cast<std::size_t>(next_size));
+      for (long i = 0; i < next_size; ++i) {
+        const std::size_t j = static_cast<std::size_t>(2 * i);
+        next[static_cast<std::size_t>(i)] = HashNode(level[j], level[j + 1]);
+      }
+      t.levels_.push_back(std::move(level));
+      level = std::move(next);
+    }
   }
 
   t.raw_root_ = level[0];

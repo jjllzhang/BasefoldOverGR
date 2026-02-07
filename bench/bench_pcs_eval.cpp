@@ -627,6 +627,7 @@ void PrintHelp() {
       << "Usage:\n"
       << "  bench_pcs_eval [--mode field|ring|both] [--c <int>] [--k0 <int>] [--d <int>]\n"
       << "               [--queries <int>] [--checked] [--profile] [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
+      << "               [--merkle-leafs-per-thread <int>] [--merkle-level-threshold <int>] [--merkle-max-threads <int>]\n"
       << "               [--use-extension-challenges]\n"
       << "               [--field-challenge-ext <a0;a1;...>] [--ring-challenge-ext <a0;a1;...>]\n"
       << "               [--auto-zeta teich]\n"
@@ -642,6 +643,11 @@ void PrintHelp() {
       << "  coefficients and ',' for each ZZ_pE coefficient polynomial.\n"
       << "  Example: '0,1;1;1' means E(U)=x + U + U^2.\n\n"
       << "  If --*-challenge-ext is omitted, default is E(U)=zeta + U + U^2.\n\n"
+      << "  Merkle build parallel tuning can be configured by env vars:\n"
+      << "    BASEFOLD_MERKLE_LEAFS_PER_THREAD\n"
+      << "    BASEFOLD_MERKLE_PARALLEL_LEVEL_THRESHOLD\n"
+      << "    BASEFOLD_MERKLE_MAX_THREADS\n"
+      << "  and overridden by the CLI flags above.\n\n"
       << "  PCS Eval supports k0 = 2^κ. The multilinear point dimension is (d + κ).\n\n"
       << "Examples:\n"
       << "  # GF(2^2) with F(x)=x^2+x+1 and zeta=x\n"
@@ -749,6 +755,9 @@ int main(int argc, char **argv) {
   int reps = 3;
   std::uint64_t seed = 0;
   bool auto_zeta_teich = false;
+  basefold::ResetMerkleBuildParallelConfigFromEnv();
+  basefold::MerkleBuildParallelConfig merkle_cfg =
+      basefold::GetMerkleBuildParallelConfig();
 
   bool do_field = true;
   bool do_ring = true;
@@ -823,6 +832,26 @@ int main(int argc, char **argv) {
         std::cerr << "Invalid --warmup\n";
         return 2;
       }
+    } else if (arg == "--merkle-leafs-per-thread") {
+      if (!ParseLong(NeedValue("--merkle-leafs-per-thread"),
+                     merkle_cfg.leafs_per_thread) ||
+          merkle_cfg.leafs_per_thread <= 0) {
+        std::cerr << "Invalid --merkle-leafs-per-thread\n";
+        return 2;
+      }
+    } else if (arg == "--merkle-level-threshold") {
+      if (!ParseLong(NeedValue("--merkle-level-threshold"),
+                     merkle_cfg.parallel_level_threshold) ||
+          merkle_cfg.parallel_level_threshold <= 0) {
+        std::cerr << "Invalid --merkle-level-threshold\n";
+        return 2;
+      }
+    } else if (arg == "--merkle-max-threads") {
+      if (!ParseInt(NeedValue("--merkle-max-threads"), merkle_cfg.max_threads) ||
+          merkle_cfg.max_threads <= 0) {
+        std::cerr << "Invalid --merkle-max-threads\n";
+        return 2;
+      }
     } else if (arg == "--reps") {
       if (!ParseInt(NeedValue("--reps"), reps) || reps <= 0) {
         std::cerr << "Invalid --reps\n";
@@ -877,6 +906,7 @@ int main(int argc, char **argv) {
   }
 
   try {
+    basefold::SetMerkleBuildParallelConfig(merkle_cfg);
     if (!do_field && !do_ring) {
       std::cerr << "Nothing to do: --mode disabled both field and ring\n";
       return 2;

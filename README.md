@@ -265,6 +265,38 @@ RING_ZETA=0,1
 ./build/bench_pcs_eval --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --use-extension-challenges --ring-challenge-ext '0,3;1;1' --d 10 --queries 2 --reps 1 --warmup 0
 ```
 
+### Merkle Build 并行阈值调优
+
+`MerkleTree::Build` 支持通过环境变量或 `bench_pcs_eval` CLI 调整并行策略：
+
+```bash
+# 环境变量（对所有 bench 生效）
+export BASEFOLD_MERKLE_LEAFS_PER_THREAD=32768
+export BASEFOLD_MERKLE_PARALLEL_LEVEL_THRESHOLD=4096
+export BASEFOLD_MERKLE_MAX_THREADS=8
+
+# CLI（仅 bench_pcs_eval，优先级高于环境变量）
+./build/bench_pcs_eval ... --merkle-leafs-per-thread 32768 --merkle-level-threshold 4096 --merkle-max-threads 8
+```
+
+自动 sweep（示例）：
+
+```bash
+csv=/tmp/merkle_threshold_sweep.csv
+echo "threshold,prover_mean_ms,merkle_build_total_ms" > "$csv"
+for t in 256 512 1024 2048 4096 8192 16384 32768 65536; do
+  out=$(./build/bench_pcs_eval --mode field \
+    --field-mod 326594724262804054738278293730872375507 \
+    --field-F 1,0,1 --field-zeta 0,1 \
+    --d 14 --queries 4 --warmup 1 --reps 2 --profile \
+    --merkle-level-threshold "$t")
+  prover=$(printf '%s\n' "$out" | awk '/prover   mean/{print $3; exit}')
+  merkle=$(printf '%s\n' "$out" | awk '/MerkleTree::Build:/{print $2; exit}')
+  echo "$t,$prover,$merkle" | tee -a "$csv"
+done
+cat "$csv"
+```
+
 ### Profiling（`--profile`）
 
 `bench_pcs_eval --profile` 会打印 prover/verifier 的 breakdown（数值用 `...` 省略）：

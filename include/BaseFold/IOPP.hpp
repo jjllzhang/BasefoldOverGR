@@ -202,6 +202,26 @@ struct MerkleOpening {
 // A Merkle commitment to an oracle π_i (root digest).
 using MerkleRoot = Digest;
 
+// Runtime tuning knobs for MerkleTree::Build parallelization.
+// Defaults can also be provided via environment variables:
+// - BASEFOLD_MERKLE_LEAFS_PER_THREAD
+// - BASEFOLD_MERKLE_PARALLEL_LEVEL_THRESHOLD
+// - BASEFOLD_MERKLE_MAX_THREADS
+struct MerkleBuildParallelConfig {
+  long leafs_per_thread = 32768;
+  long parallel_level_threshold = 8192;
+  int max_threads = 8;
+};
+
+// Loads merkle build parallel config from environment variables and applies it.
+void ResetMerkleBuildParallelConfigFromEnv();
+
+// Applies merkle build parallel config for the current process.
+void SetMerkleBuildParallelConfig(const MerkleBuildParallelConfig &cfg);
+
+// Returns the currently active merkle build parallel config.
+MerkleBuildParallelConfig GetMerkleBuildParallelConfig();
+
 // Computes the Merkle root for an oracle.
 MerkleRoot MerkleCommitOracle(const Oracle &oracle);
 
