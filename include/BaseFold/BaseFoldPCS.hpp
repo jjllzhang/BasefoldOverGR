@@ -27,11 +27,18 @@ struct ExtensionQuadraticPoly {
   NTL::ZZ_pEX a2;
 };
 
+// One opened leaf in an extension-ring Merkle-committed oracle.
+struct ExtensionMerkleOpening {
+  long index = 0;
+  NTL::ZZ_pEX value;
+  MerkleAuthPath auth_path;
+};
+
 // One query repetition's values along the extension-ring folding chain.
 struct BaseFoldPCSQueryProofExtension {
-  std::vector<NTL::ZZ_pEX> left;    // size == params.d
-  std::vector<NTL::ZZ_pEX> right;   // size == params.d
-  std::vector<NTL::ZZ_pEX> folded;  // size == params.d
+  std::vector<ExtensionMerkleOpening> left;    // size == params.d
+  std::vector<ExtensionMerkleOpening> right;   // size == params.d
+  std::vector<ExtensionMerkleOpening> folded;  // size == params.d
 };
 
 // Additional proof payload used by the extension-challenge path.
@@ -40,6 +47,10 @@ struct BaseFoldPCSQueryProofExtension {
 // sumcheck/folding arithmetic below runs in the extension ring E(U).
 struct BaseFoldPCSExtensionProofData {
   bool enabled = false;
+
+  // Merkle roots for extension oracles π_0..π_{d-1}.
+  // Top-level π_d commitment is still in BaseFoldPCSEvalProof::commitments.
+  std::vector<MerkleRoot> roots_by_level;
 
   // h_{i+1}(X) for i=0..d-1, represented in E(U).
   std::vector<ExtensionQuadraticPoly> h_by_level;

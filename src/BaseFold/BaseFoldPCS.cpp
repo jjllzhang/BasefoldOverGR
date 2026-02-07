@@ -3,6 +3,7 @@
 #include <NTL/ZZ.h>
 #include <NTL/ZZ_p.h>
 #include <NTL/ZZ_pEX.h>
+#include <NTL/ZZ_pEXFactoring.h>
 #include <NTL/ZZ_pX.h>
 #include <NTL/mat_ZZ_pE.h>
 
@@ -369,8 +370,74 @@ void ValidateParamsOrThrow(const FoldableCodeParams &params) {
   (void)MessageLength(params);
 }
 
+ZZ PositiveMod(const ZZ &a, const ZZ &m) {
+  ZZ r = a % m;
+  if (r < 0) {
+    r += m;
+  }
+  return r;
+}
+
+bool IsPrimePowerOf(const ZZ &n, const ZZ &p) {
+  if (n <= 1 || p <= 1) {
+    return false;
+  }
+  ZZ t = n;
+  long exp = 0;
+  while (true) {
+    const ZZ r = t % p;
+    if (r != 0) {
+      break;
+    }
+    t /= p;
+    ++exp;
+  }
+  return exp > 0 && t == 1;
+}
+
+ZZ_pX ReduceZZpXModPrime(const ZZ_pX &poly_over_pk, const ZZ &p) {
+  ZZ_pX out;
+  NTL::clear(out);
+  const long d = NTL::deg(poly_over_pk);
+  for (long i = 0; i <= d; ++i) {
+    ZZ_p c_mod_p;
+    NTL::conv(c_mod_p, PositiveMod(rep(coeff(poly_over_pk, i)), p));
+    if (c_mod_p != 0) {
+      NTL::SetCoeff(out, i, c_mod_p);
+    }
+  }
+  out.normalize();
+  return out;
+}
+
+ZZ_pEX ReduceZZ_pEXToResidueField(const ZZ_pEX &poly_over_pk_ext,
+                                  const ZZ &p, long base_degree) {
+  ZZ_pEX out;
+  NTL::clear(out);
+  const long d = NTL::deg(poly_over_pk_ext);
+  for (long i = 0; i <= d; ++i) {
+    const ZZ_pX coeff_poly_over_pk = rep(coeff(poly_over_pk_ext, i));
+    ZZ_pX coeff_poly_mod_p;
+    NTL::clear(coeff_poly_mod_p);
+    for (long j = 0; j < base_degree; ++j) {
+      ZZ_p c_mod_p;
+      NTL::conv(c_mod_p, PositiveMod(rep(coeff(coeff_poly_over_pk, j)), p));
+      if (c_mod_p != 0) {
+        NTL::SetCoeff(coeff_poly_mod_p, j, c_mod_p);
+      }
+    }
+    coeff_poly_mod_p.normalize();
+    ZZ_pE coeff_ext;
+    NTL::conv(coeff_ext, coeff_poly_mod_p);
+    NTL::SetCoeff(out, i, coeff_ext);
+  }
+  out.normalize();
+  return out;
+}
+
 void ValidateChallengeConfigOrThrow(
-    const BaseFoldPCSChallengeConfig &challenge_cfg) {
+    const BaseFoldPCSChallengeConfig &challenge_cfg,
+    const FoldableCodeParams &params) {
   if (!challenge_cfg.use_extension_challenges) {
     return;
   }
@@ -387,6 +454,81 @@ void ValidateChallengeConfigOrThrow(
   if (NTL::LeadCoeff(challenge_cfg.challenge_extension_modulus) != one) {
     LogicError(
         "ValidateChallengeConfigOrThrow: extension modulus must be monic");
+  }
+
+  const ZZ modulus = ZZ_p::modulus();
+  if (modulus <= 1) {
+    LogicError("ValidateChallengeConfigOrThrow: invalid ZZ_p modulus");
+  }
+
+  const long base_degree = ZZ_pE::degree();
+  if (base_degree <= 0) {
+    LogicError("ValidateChallengeConfigOrThrow: invalid ZZ_pE degree");
+  }
+
+  ZZ base_prime = params.p;
+  if (base_prime <= 1) {
+    if (NTL::ProbPrime(modulus)) {
+      base_prime = modulus;
+    } else {
+      LogicError(
+          "ValidateChallengeConfigOrThrow: params.p must be set to the base "
+          "prime in ring mode");
+    }
+  }
+  if (!NTL::ProbPrime(base_prime)) {
+    LogicError("ValidateChallengeConfigOrThrow: params.p must be prime");
+  }
+  if (!IsPrimePowerOf(modulus, base_prime)) {
+    LogicError(
+        "ValidateChallengeConfigOrThrow: current ZZ_p modulus must be a power "
+        "of params.p");
+  }
+
+  if (NTL::ProbPrime(modulus)) {
+    if (NTL::IterIrredTest(challenge_cfg.challenge_extension_modulus) != 1) {
+      LogicError(
+          "ValidateChallengeConfigOrThrow: extension modulus must be "
+          "irreducible over the current base field");
+    }
+    return;
+  }
+
+  const ZZ_pX base_modulus_over_pk = ZZ_pE::modulus().val();
+
+  NTL::ZZ_pBak modulus_bak;
+  modulus_bak.save();
+  NTL::ZZ_pEBak extension_bak;
+  extension_bak.save();
+
+  ZZ_p::init(base_prime);
+
+  const ZZ_pX base_modulus_over_p =
+      ReduceZZpXModPrime(base_modulus_over_pk, base_prime);
+  if (NTL::deg(base_modulus_over_p) != base_degree) {
+    LogicError(
+        "ValidateChallengeConfigOrThrow: current ZZ_pE modulus must stay "
+        "full-degree after mod-p reduction");
+  }
+  if (NTL::IterIrredTest(base_modulus_over_p) != 1) {
+    LogicError(
+        "ValidateChallengeConfigOrThrow: current ZZ_pE modulus must reduce to "
+        "an irreducible polynomial modulo p");
+  }
+  ZZ_pE::init(base_modulus_over_p);
+
+  const ZZ_pEX ext_modulus_over_p = ReduceZZ_pEXToResidueField(
+      challenge_cfg.challenge_extension_modulus, base_prime, base_degree);
+
+  if (NTL::deg(ext_modulus_over_p) != ext_degree) {
+    LogicError(
+        "ValidateChallengeConfigOrThrow: extension modulus must stay "
+        "full-degree after mod-p reduction");
+  }
+  if (NTL::IterIrredTest(ext_modulus_over_p) != 1) {
+    LogicError(
+        "ValidateChallengeConfigOrThrow: extension modulus must be basic "
+        "irreducible (irreducible after mod-p reduction)");
   }
 }
 
@@ -922,37 +1064,197 @@ bool CheckExtensionSumcheckRelations(
   return true;
 }
 
-std::vector<std::vector<ZZ_pEX>> BuildExtensionOracleChain(
-    const Oracle &pi_d_base, const std::vector<ZZ_pEX> &r_by_level,
-    const FoldableCodeParams &params, const ZZ_pEX &extension_modulus) {
-  if (static_cast<long>(r_by_level.size()) != params.d) {
-    LogicError("BuildExtensionOracleChain: r_by_level has wrong size");
+void ProverCommitRoundExtensionNoValidate(
+    std::vector<ZZ_pEX> &pi_i, const std::vector<ZZ_pEX> &pi_ip1,
+    const ZZ_pEX &alpha_i, long level_i, const FoldableCodeParams &params,
+    const ZZ_pEX &extension_modulus) {
+  const long n_i = CodewordLengthAtLevelNoValidate(params, level_i);
+  if (static_cast<long>(pi_ip1.size()) != 2 * n_i) {
+    LogicError("ProverCommitRoundExtensionNoValidate: pi_ip1 has wrong length");
   }
+  pi_i.resize(static_cast<std::size_t>(n_i));
 
-  std::vector<std::vector<ZZ_pEX>> ext_oracles;
-  ext_oracles.resize(static_cast<std::size_t>(params.d + 1));
-  ext_oracles[static_cast<std::size_t>(params.d)] =
-      LiftOracleToExtension(pi_d_base);
+  for (long j = 0; j < n_i; ++j) {
+    const FieldElement &t = params.diag_T[static_cast<std::size_t>(level_i)][j];
+    const FieldElement x1 = t;
+    const FieldElement x2 = params.zeta * t;
+    pi_i[static_cast<std::size_t>(j)] = EvalLineAtExtension(
+        alpha_i, x1, pi_ip1[static_cast<std::size_t>(j)], x2,
+        pi_ip1[static_cast<std::size_t>(j + n_i)], extension_modulus);
+  }
+}
 
-  for (long i = params.d; i-- > 0;) {
-    const long n_i = CodewordLengthAtLevelNoValidate(params, i);
-    std::vector<ZZ_pEX> &pi_i = ext_oracles[static_cast<std::size_t>(i)];
-    const std::vector<ZZ_pEX> &pi_ip1 =
-        ext_oracles[static_cast<std::size_t>(i + 1)];
-    pi_i.resize(static_cast<std::size_t>(n_i));
+Digest BytesToDigest32(const Bytes &bytes, const char *func_name) {
+  if (bytes.size() != 32) {
+    const std::string msg = std::string(func_name) + ": digest must be 32 bytes";
+    LogicError(msg.c_str());
+  }
+  Digest out{};
+  std::copy(bytes.begin(), bytes.end(), out.begin());
+  return out;
+}
 
-    for (long j = 0; j < n_i; ++j) {
-      const FieldElement &t = params.diag_T[static_cast<std::size_t>(i)][j];
-      const FieldElement x1 = t;
-      const FieldElement x2 = params.zeta * t;
-      pi_i[static_cast<std::size_t>(j)] = EvalLineAtExtension(
-          r_by_level[static_cast<std::size_t>(i)], x1,
-          pi_ip1[static_cast<std::size_t>(j)], x2,
-          pi_ip1[static_cast<std::size_t>(j + n_i)], extension_modulus);
+Digest HashExtensionLeaf(long index, const ZZ_pEX &value,
+                         const ZZ_pEX &extension_modulus) {
+  Bytes payload;
+  payload.reserve(1 + 8 + 8);
+  payload.push_back(static_cast<Byte>(0x30));
+  AppendU64(payload, static_cast<std::uint64_t>(index));
+  const Bytes encoded = SerializeExtensionElement(value, extension_modulus);
+  AppendU64(payload, static_cast<std::uint64_t>(encoded.size()));
+  payload.insert(payload.end(), encoded.begin(), encoded.end());
+  return BytesToDigest32(Sha256(payload), "HashExtensionLeaf");
+}
+
+Digest HashExtensionNode(const Digest &left, const Digest &right) {
+  Bytes payload;
+  payload.reserve(1 + left.size() + right.size());
+  payload.push_back(static_cast<Byte>(0x31));
+  payload.insert(payload.end(), left.begin(), left.end());
+  payload.insert(payload.end(), right.begin(), right.end());
+  return BytesToDigest32(Sha256(payload), "HashExtensionNode");
+}
+
+Digest HashExtensionRawRootEmpty() {
+  const Bytes payload{static_cast<Byte>(0x32)};
+  return BytesToDigest32(Sha256(payload), "HashExtensionRawRootEmpty");
+}
+
+Digest HashExtensionRootWithCount(long leaf_count, const Digest &raw_root) {
+  if (leaf_count <= 0) {
+    LogicError("HashExtensionRootWithCount: invalid leaf_count");
+  }
+  Bytes payload;
+  payload.reserve(1 + 8 + raw_root.size());
+  payload.push_back(static_cast<Byte>(0x33));
+  AppendU64(payload, static_cast<std::uint64_t>(leaf_count));
+  payload.insert(payload.end(), raw_root.begin(), raw_root.end());
+  return BytesToDigest32(Sha256(payload), "HashExtensionRootWithCount");
+}
+
+std::size_t ExpectedExtensionMerkleHeight(long leaf_count) {
+  if (leaf_count <= 0) {
+    return 0;
+  }
+  std::size_t height = 0;
+  long n = leaf_count;
+  while (n > 1) {
+    if ((n & 1L) == 1L) {
+      ++n;
     }
+    n >>= 1;
+    ++height;
+  }
+  return height;
+}
+
+class ExtensionMerkleTree {
+ public:
+  ExtensionMerkleTree() = default;
+
+  static ExtensionMerkleTree Build(const std::vector<ZZ_pEX> &oracle,
+                                   const ZZ_pEX &extension_modulus) {
+    if (oracle.empty()) {
+      LogicError("ExtensionMerkleTree::Build: oracle must be non-empty");
+    }
+
+    ExtensionMerkleTree tree;
+    tree.leaf_count_ = static_cast<long>(oracle.size());
+
+    std::vector<Digest> level;
+    level.resize(oracle.size());
+    for (long i = 0; i < tree.leaf_count_; ++i) {
+      level[static_cast<std::size_t>(i)] = HashExtensionLeaf(
+          i, oracle[static_cast<std::size_t>(i)], extension_modulus);
+    }
+
+    tree.levels_.clear();
+    tree.levels_.push_back(level);
+    while (level.size() > 1) {
+      if ((level.size() % 2U) == 1U) {
+        level.push_back(level.back());
+      }
+      tree.levels_.back() = level;
+
+      std::vector<Digest> next;
+      next.reserve(level.size() / 2U);
+      for (std::size_t i = 0; i < level.size(); i += 2U) {
+        next.push_back(HashExtensionNode(level[i], level[i + 1U]));
+      }
+      tree.levels_.push_back(next);
+      level = std::move(next);
+    }
+
+    if (tree.levels_.empty()) {
+      tree.raw_root_ = HashExtensionRawRootEmpty();
+    } else {
+      tree.raw_root_ = tree.levels_.back()[0];
+    }
+    return tree;
   }
 
-  return ext_oracles;
+  long LeafCount() const { return leaf_count_; }
+
+  MerkleRoot Root() const { return HashExtensionRootWithCount(leaf_count_, raw_root_); }
+
+  ExtensionMerkleOpening Open(const std::vector<ZZ_pEX> &oracle, long index) const {
+    if (leaf_count_ <= 0) {
+      LogicError("ExtensionMerkleTree::Open: empty tree");
+    }
+    if (static_cast<long>(oracle.size()) != leaf_count_) {
+      LogicError("ExtensionMerkleTree::Open: oracle length mismatch");
+    }
+    if (index < 0 || index >= leaf_count_) {
+      LogicError("ExtensionMerkleTree::Open: index out of range");
+    }
+
+    ExtensionMerkleOpening opening;
+    opening.index = index;
+    opening.value = oracle[static_cast<std::size_t>(index)];
+
+    long cur = index;
+    const std::size_t height = levels_.size();
+    for (std::size_t h = 0; h + 1U < height; ++h) {
+      const std::vector<Digest> &level = levels_[h];
+      const long sibling_index = (cur & 1L) ? (cur - 1L) : (cur + 1L);
+      opening.auth_path.sibling_hashes.push_back(
+          level[static_cast<std::size_t>(sibling_index)]);
+      cur >>= 1;
+    }
+    return opening;
+  }
+
+ private:
+  long leaf_count_ = 0;
+  Digest raw_root_{};
+  std::vector<std::vector<Digest>> levels_;
+};
+
+bool VerifyExtensionMerkleOpening(const MerkleRoot &root, long leaf_count,
+                                  const ExtensionMerkleOpening &opening,
+                                  const ZZ_pEX &extension_modulus) {
+  if (leaf_count <= 0) {
+    return false;
+  }
+  if (opening.index < 0 || opening.index >= leaf_count) {
+    return false;
+  }
+  if (opening.auth_path.sibling_hashes.size() !=
+      ExpectedExtensionMerkleHeight(leaf_count)) {
+    return false;
+  }
+
+  Digest cur = HashExtensionLeaf(opening.index, opening.value, extension_modulus);
+  long idx = opening.index;
+  for (const Digest &sib : opening.auth_path.sibling_hashes) {
+    if (idx & 1L) {
+      cur = HashExtensionNode(sib, cur);
+    } else {
+      cur = HashExtensionNode(cur, sib);
+    }
+    idx >>= 1;
+  }
+  return HashExtensionRootWithCount(leaf_count, cur) == root;
 }
 
 BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesUnchecked(
@@ -975,6 +1277,7 @@ BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesUnchecked(
   for (long i = 0; i < params.d; ++i) {
     proof.commitments.roots_by_level[static_cast<std::size_t>(i)].fill(0);
   }
+  proof.extension.roots_by_level.resize(static_cast<std::size_t>(params.d));
 
   Oracle pi_d_base;
   EncodeFoldableUnchecked(pi_d_base, f_coeffs, params);
@@ -990,6 +1293,13 @@ BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesUnchecked(
   proof.extension.r_by_level.resize(static_cast<std::size_t>(params.d));
   proof.h_by_level.resize(static_cast<std::size_t>(params.d));
 
+  std::vector<std::vector<ZZ_pEX>> ext_oracles;
+  ext_oracles.resize(static_cast<std::size_t>(params.d + 1));
+  ext_oracles[static_cast<std::size_t>(params.d)] = LiftOracleToExtension(pi_d_base);
+
+  std::vector<ExtensionMerkleTree> ext_merkle_trees;
+  ext_merkle_trees.resize(static_cast<std::size_t>(params.d));
+
   ExtensionSumcheckProver sumcheck_ext(f_coeffs, z, extension_modulus);
   const ExtensionQuadraticPoly h_d_ext = sumcheck_ext.CurrentPolynomial();
   proof.extension.h_by_level[static_cast<std::size_t>(params.d - 1)] = h_d_ext;
@@ -999,6 +1309,17 @@ BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesUnchecked(
     const ZZ_pEX r_i_ext = SampleExtensionChallenge(
         transcript, "r/" + std::to_string(i), extension_modulus);
     proof.extension.r_by_level[static_cast<std::size_t>(i)] = r_i_ext;
+
+    ProverCommitRoundExtensionNoValidate(
+        ext_oracles[static_cast<std::size_t>(i)],
+        ext_oracles[static_cast<std::size_t>(i + 1)], r_i_ext, i, params,
+        extension_modulus);
+    ext_merkle_trees[static_cast<std::size_t>(i)] = ExtensionMerkleTree::Build(
+        ext_oracles[static_cast<std::size_t>(i)], extension_modulus);
+    proof.extension.roots_by_level[static_cast<std::size_t>(i)] =
+        ext_merkle_trees[static_cast<std::size_t>(i)].Root();
+    transcript.AbsorbDigest(
+        proof.extension.roots_by_level[static_cast<std::size_t>(i)]);
 
     sumcheck_ext.ReceiveChallenge(r_i_ext);
     if (i > 0) {
@@ -1019,9 +1340,6 @@ BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesUnchecked(
         ProjectExtensionToBaseConstant(h_ext.a2);
   }
 
-  const std::vector<std::vector<ZZ_pEX>> ext_oracles =
-      BuildExtensionOracleChain(pi_d_base, proof.extension.r_by_level, params,
-                                extension_modulus);
   proof.extension.pi0_full = ext_oracles[0];
 
   const long kappa = Log2ExactPowerOfTwoLong(params.k0);
@@ -1062,25 +1380,38 @@ BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesUnchecked(
     for (long i = 0; i < params.d; ++i) {
       const long mu_i = plan.mu_by_level[static_cast<std::size_t>(i)];
       const long n_i = CodewordLengthAtLevelNoValidate(params, i);
-      qp_ext.left[static_cast<std::size_t>(i)] =
-          ext_oracles[static_cast<std::size_t>(i + 1)]
-                     [static_cast<std::size_t>(mu_i)];
-      qp_ext.right[static_cast<std::size_t>(i)] =
-          ext_oracles[static_cast<std::size_t>(i + 1)]
-                     [static_cast<std::size_t>(mu_i + n_i)];
       qp_ext.folded[static_cast<std::size_t>(i)] =
-          ext_oracles[static_cast<std::size_t>(i)]
-                     [static_cast<std::size_t>(mu_i)];
+          ext_merkle_trees[static_cast<std::size_t>(i)].Open(
+              ext_oracles[static_cast<std::size_t>(i)], mu_i);
+
+      if (i == params.d - 1) {
+        qp_ext.left[static_cast<std::size_t>(i)].index = mu_i;
+        qp_ext.left[static_cast<std::size_t>(i)].value =
+            ext_oracles[static_cast<std::size_t>(i + 1)]
+                       [static_cast<std::size_t>(mu_i)];
+        qp_ext.right[static_cast<std::size_t>(i)].index = mu_i + n_i;
+        qp_ext.right[static_cast<std::size_t>(i)].value =
+            ext_oracles[static_cast<std::size_t>(i + 1)]
+                       [static_cast<std::size_t>(mu_i + n_i)];
+      } else {
+        qp_ext.left[static_cast<std::size_t>(i)] =
+            ext_merkle_trees[static_cast<std::size_t>(i + 1)].Open(
+                ext_oracles[static_cast<std::size_t>(i + 1)], mu_i);
+        qp_ext.right[static_cast<std::size_t>(i)] =
+            ext_merkle_trees[static_cast<std::size_t>(i + 1)].Open(
+                ext_oracles[static_cast<std::size_t>(i + 1)], mu_i + n_i);
+      }
 
       qp.left[static_cast<std::size_t>(i)].index = mu_i;
       qp.left[static_cast<std::size_t>(i)].value =
-          ProjectExtensionToBaseConstant(qp_ext.left[static_cast<std::size_t>(i)]);
+          ProjectExtensionToBaseConstant(
+              qp_ext.left[static_cast<std::size_t>(i)].value);
       qp.right[static_cast<std::size_t>(i)].index = mu_i + n_i;
       qp.right[static_cast<std::size_t>(i)].value = ProjectExtensionToBaseConstant(
-          qp_ext.right[static_cast<std::size_t>(i)]);
+          qp_ext.right[static_cast<std::size_t>(i)].value);
       qp.folded[static_cast<std::size_t>(i)].index = mu_i;
       qp.folded[static_cast<std::size_t>(i)].value = ProjectExtensionToBaseConstant(
-          qp_ext.folded[static_cast<std::size_t>(i)]);
+          qp_ext.folded[static_cast<std::size_t>(i)].value);
     }
 
     const long top_i = params.d - 1;
@@ -1123,6 +1454,8 @@ bool VerifyEvalWithExtensionChallenges(
     return false;
   if (!proof.extension.enabled)
     return false;
+  if (static_cast<long>(proof.extension.roots_by_level.size()) != params.d)
+    return false;
   if (static_cast<long>(proof.extension.h_by_level.size()) != params.d)
     return false;
   if (static_cast<long>(proof.extension.r_by_level.size()) != params.d)
@@ -1161,6 +1494,8 @@ bool VerifyEvalWithExtensionChallenges(
     if (proof.extension.r_by_level[static_cast<std::size_t>(i)] != r_i) {
       return false;
     }
+    transcript.AbsorbDigest(
+        proof.extension.roots_by_level[static_cast<std::size_t>(i)]);
     if (i > 0) {
       AbsorbExtensionQuadraticPoly(
           transcript, proof.extension.h_by_level[static_cast<std::size_t>(i - 1)],
@@ -1231,6 +1566,10 @@ bool VerifyEvalWithExtensionChallenges(
   if (expected_pi0 != proof.extension.pi0_full) {
     return false;
   }
+  if (proof.extension.roots_by_level[0] !=
+      ExtensionMerkleTree::Build(proof.extension.pi0_full, extension_modulus).Root()) {
+    return false;
+  }
 
   const long n_last = CodewordLengthAtLevel(params, params.d - 1);
   const long n_d = CodewordLengthAtLevel(params, params.d);
@@ -1268,9 +1607,19 @@ bool VerifyEvalWithExtensionChallenges(
       return false;
     }
 
-    if (qp_ext.left[static_cast<std::size_t>(top_i)] !=
+    if (qp_ext.left[static_cast<std::size_t>(top_i)].index != mu_top ||
+        qp_ext.right[static_cast<std::size_t>(top_i)].index != mu_top + n_top) {
+      return false;
+    }
+    if (!qp_ext.left[static_cast<std::size_t>(top_i)].auth_path.sibling_hashes
+             .empty() ||
+        !qp_ext.right[static_cast<std::size_t>(top_i)].auth_path.sibling_hashes
+             .empty()) {
+      return false;
+    }
+    if (qp_ext.left[static_cast<std::size_t>(top_i)].value !=
             LiftBaseToExtension(left_top.value) ||
-        qp_ext.right[static_cast<std::size_t>(top_i)] !=
+        qp_ext.right[static_cast<std::size_t>(top_i)].value !=
             LiftBaseToExtension(right_top.value)) {
       return false;
     }
@@ -1281,34 +1630,63 @@ bool VerifyEvalWithExtensionChallenges(
       if (mu_i < 0 || mu_i >= n_i) {
         return false;
       }
+      const ExtensionMerkleOpening &left_ext =
+          qp_ext.left[static_cast<std::size_t>(i)];
+      const ExtensionMerkleOpening &right_ext =
+          qp_ext.right[static_cast<std::size_t>(i)];
+      const ExtensionMerkleOpening &folded_ext =
+          qp_ext.folded[static_cast<std::size_t>(i)];
+
+      if (folded_ext.index != mu_i) {
+        return false;
+      }
+      if (!VerifyExtensionMerkleOpening(
+              proof.extension.roots_by_level[static_cast<std::size_t>(i)], n_i,
+              folded_ext, extension_modulus)) {
+        return false;
+      }
+
+      if (left_ext.index != mu_i || right_ext.index != mu_i + n_i) {
+        return false;
+      }
+      if (i < params.d - 1) {
+        const long n_ip1 = CodewordLengthAtLevel(params, i + 1);
+        if (!VerifyExtensionMerkleOpening(
+                proof.extension.roots_by_level[static_cast<std::size_t>(i + 1)],
+                n_ip1, left_ext, extension_modulus) ||
+            !VerifyExtensionMerkleOpening(
+                proof.extension.roots_by_level[static_cast<std::size_t>(i + 1)],
+                n_ip1, right_ext, extension_modulus)) {
+          return false;
+        }
+      }
 
       const FieldElement &t = params.diag_T[static_cast<std::size_t>(i)][mu_i];
       const FieldElement x1 = t;
       const FieldElement x2 = params.zeta * t;
       const ZZ_pEX expected_folded = EvalLineAtExtension(
-          r_by_level[static_cast<std::size_t>(i)], x1,
-          qp_ext.left[static_cast<std::size_t>(i)], x2,
-          qp_ext.right[static_cast<std::size_t>(i)], extension_modulus);
+          r_by_level[static_cast<std::size_t>(i)], x1, left_ext.value, x2,
+          right_ext.value, extension_modulus);
 
-      if (expected_folded != qp_ext.folded[static_cast<std::size_t>(i)]) {
+      if (expected_folded != folded_ext.value) {
         return false;
       }
 
       if (i > 0) {
         const long n_prev = CodewordLengthAtLevel(params, i - 1);
         if (mu_i < n_prev) {
-          if (qp_ext.folded[static_cast<std::size_t>(i)] !=
-              qp_ext.left[static_cast<std::size_t>(i - 1)]) {
+          if (folded_ext.value !=
+              qp_ext.left[static_cast<std::size_t>(i - 1)].value) {
             return false;
           }
         } else {
-          if (qp_ext.folded[static_cast<std::size_t>(i)] !=
-              qp_ext.right[static_cast<std::size_t>(i - 1)]) {
+          if (folded_ext.value !=
+              qp_ext.right[static_cast<std::size_t>(i - 1)].value) {
             return false;
           }
         }
       } else {
-        if (qp_ext.folded[0] !=
+        if (folded_ext.value !=
             proof.extension.pi0_full[static_cast<std::size_t>(mu_i)]) {
           return false;
         }
@@ -1640,7 +2018,7 @@ BaseFoldPCSEvalProof BaseFoldPCSProveEvalWithChallengeConfig(
     const FieldElement &claimed_y, long num_queries,
     const FoldableCodeParams &params,
     const BaseFoldPCSChallengeConfig &challenge_cfg) {
-  ValidateChallengeConfigOrThrow(challenge_cfg);
+  ValidateChallengeConfigOrThrow(challenge_cfg, params);
   if (!challenge_cfg.use_extension_challenges) {
     return BaseFoldPCSProveEval(f_coeffs, z, claimed_y, num_queries, params);
   }
@@ -1669,7 +2047,7 @@ BaseFoldPCSEvalProof BaseFoldPCSProveEvalWithChallengeConfigUnchecked(
     const FieldElement &claimed_y, long num_queries,
     const FoldableCodeParams &params,
     const BaseFoldPCSChallengeConfig &challenge_cfg) {
-  ValidateChallengeConfigOrThrow(challenge_cfg);
+  ValidateChallengeConfigOrThrow(challenge_cfg, params);
   if (!challenge_cfg.use_extension_challenges) {
     return BaseFoldPCSProveEvalUnchecked(f_coeffs, z, claimed_y, num_queries,
                                          params);
@@ -1684,7 +2062,7 @@ bool BaseFoldPCSVerifyEvalWithChallengeConfig(
     const FieldElement &claimed_y, long num_queries,
     const BaseFoldPCSEvalProof &proof, const FoldableCodeParams &params,
     const BaseFoldPCSChallengeConfig &challenge_cfg) {
-  ValidateChallengeConfigOrThrow(challenge_cfg);
+  ValidateChallengeConfigOrThrow(challenge_cfg, params);
   if (!challenge_cfg.use_extension_challenges) {
     return BaseFoldPCSVerifyEval(commitment_C, z, claimed_y, num_queries, proof,
                                  params);

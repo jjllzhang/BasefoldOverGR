@@ -48,6 +48,16 @@ std::size_t SerializedExtensionElementSize(const NTL::ZZ_pEX &x) {
   return total;
 }
 
+std::size_t SerializedExtensionMerkleOpeningSize(
+    const ExtensionMerkleOpening &o) {
+  static constexpr std::size_t kHashBytes = 32;
+  std::size_t total = 0;
+  total += 8;  // index as u64
+  total += SerializedExtensionElementSize(o.value);
+  total += o.auth_path.sibling_hashes.size() * kHashBytes;
+  return total;
+}
+
 }  // namespace
 
 std::uint64_t BaseFoldPCSEvalProofSizeBytes(const BaseFoldPCSEvalProof &p) {
@@ -81,6 +91,9 @@ std::uint64_t BaseFoldPCSEvalProofSizeBytes(const BaseFoldPCSEvalProof &p) {
 
   if (p.extension.enabled) {
     total += 1;  // enabled flag
+    for (const MerkleRoot &r : p.extension.roots_by_level) {
+      total += static_cast<std::uint64_t>(r.size());
+    }
     for (const ExtensionQuadraticPoly &h : p.extension.h_by_level) {
       total += static_cast<std::uint64_t>(SerializedExtensionElementSize(h.a0));
       total += static_cast<std::uint64_t>(SerializedExtensionElementSize(h.a1));
@@ -96,14 +109,17 @@ std::uint64_t BaseFoldPCSEvalProofSizeBytes(const BaseFoldPCSEvalProof &p) {
       total += static_cast<std::uint64_t>(SerializedExtensionElementSize(v));
     }
     for (const BaseFoldPCSQueryProofExtension &qp : p.extension.query_proofs) {
-      for (const NTL::ZZ_pEX &v : qp.left) {
-        total += static_cast<std::uint64_t>(SerializedExtensionElementSize(v));
+      for (const ExtensionMerkleOpening &o : qp.left) {
+        total += static_cast<std::uint64_t>(
+            SerializedExtensionMerkleOpeningSize(o));
       }
-      for (const NTL::ZZ_pEX &v : qp.right) {
-        total += static_cast<std::uint64_t>(SerializedExtensionElementSize(v));
+      for (const ExtensionMerkleOpening &o : qp.right) {
+        total += static_cast<std::uint64_t>(
+            SerializedExtensionMerkleOpeningSize(o));
       }
-      for (const NTL::ZZ_pEX &v : qp.folded) {
-        total += static_cast<std::uint64_t>(SerializedExtensionElementSize(v));
+      for (const ExtensionMerkleOpening &o : qp.folded) {
+        total += static_cast<std::uint64_t>(
+            SerializedExtensionMerkleOpeningSize(o));
       }
     }
   }
