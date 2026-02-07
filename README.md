@@ -166,6 +166,8 @@
 
 - PCS eval proof 性能基准：测量 prover time 与 verifier time（Merkle + Fiat–Shamir）。
 - 默认 prover 走 `BaseFoldPCSProveEvalUnchecked`；如需把校验也算进 prover time，可加 `--checked`。
+- 可加 `--use-extension-challenges` 切到扩域/扩环 challenge 路径（`BaseFoldPCSChallengeConfig`），此时 sumcheck/folding 在扩域/扩环上运行，顶层 commitment 仍在原域/环。
+- 可选 `--field-challenge-ext` / `--ring-challenge-ext` 指定 challenge 扩域模多项式 `E(U)`，格式为 `a0;a1;...;ad`（每个 `ai` 是一个 `ZZ_pE` 元素，写作 `c0,c1,...`）；若不指定，默认 `E(U)=zeta + U + U^2`。
 - 可加 `--profile` 输出 prover/verifier 内部耗时拆分（profile 会在 `reps` 次迭代上累加，不包含 `warmup`；建议 `--warmup 0 --reps 1` 方便阅读）。
 - 可选 `--k0 <int>`（默认 `1`，要求 2 的幂）；此时多项式点维度为 `d+log2(k0)`，消息长度为 `k_d = k0*2^d`。
 - 可选 `--auto-zeta teich` 自动从 `(p,k,F)` 推导 Teichmüller 子群生成元作为 `zeta`（启用后忽略 `--field-zeta/--ring-zeta`）。
@@ -249,6 +251,15 @@ cmake --build build-release
 ./build/bench_pcs_commit --mode ring --ring-mod 1849 --ring-p 43 --ring-F 1,0,1 --auto-zeta teich --d 16 --reps 5 --warmup 1
 ./build/bench_pcs_eval --mode ring --ring-mod 1849 --ring-p 43 --ring-F 1,0,1 --auto-zeta teich --d 16 --queries 4 --reps 3 --warmup 1
 ./build/bench_pcs_proof_size --mode ring --ring-mod 1849 --ring-p 43 --ring-F 1,0,1 --auto-zeta teich --d 16 --queries 4
+
+# ===== 5) 扩域 challenge 路径（扩域，F_(2^11)）=====
+# 注意：challenge 多项式参数含 ';'，请使用引号
+# F(x)=x^11+x^2+1；E(U)=U^2+U+1（写作 '1;1;1'）
+./build/bench_pcs_eval --mode field --field-mod 2 --field-F 1,0,1,0,0,0,0,0,0,0,0,1 --auto-zeta teich --use-extension-challenges --field-challenge-ext '1;1;1' --d 16 --queries 4 --reps 3 --warmup 1
+
+# ===== 6) 扩环 challenge 路径（扩环，GR(4,11)）=====
+# F(x)=x^11+x^2+1；E(U)=U^2+U+1（写作 '1;1;1'）
+./build/bench_pcs_eval --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,0,1,0,0,0,0,0,0,0,0,1 --auto-zeta teich --use-extension-challenges --ring-challenge-ext '1;1;1' --d 16 --queries 4 --reps 3 --warmup 1
 ```
 
 ### Profiling（`--profile`）
