@@ -238,6 +238,7 @@ cmake --build build-release
 - 计算并区分：
   - `l_min_iopp_only`：满足 `2d/(gamma^3 q) + (1-delta+gamma*d)^l <= 2^-lambda`；
   - `l_min_for_PCS`（推荐）：满足 `2d/q + 2d/(gamma^3 q) + (1-delta+gamma*d)^l <= 2^-lambda`。
+- 支持 `--auto-gamma`：在给定 `c,d,k0,lambda,q` 时自动搜索 `gamma`，目标最小化 `l_min_for_PCS`。
 
 示例：
 
@@ -250,6 +251,12 @@ cmake --build build-release
 
 # 查看每一层递推细节（ell_i, t_i）
 ./build/calc_iopp_params --d 16 --c 16 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --gamma 0.00625 --show-levels
+
+# 自动选 gamma（目标：l_min_for_PCS 最小）
+./build/calc_iopp_params --d 20 --c 16 --k0 1 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --auto-gamma
+
+# 可选：限制搜索区间和精度
+./build/calc_iopp_params --d 20 --c 16 --k0 1 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --auto-gamma --gamma-min 1e-4 --gamma-max 0.05 --gamma-steps 8000
 ```
 
 示例（128-bit 可复现参数，一套常量覆盖四个 bench）：

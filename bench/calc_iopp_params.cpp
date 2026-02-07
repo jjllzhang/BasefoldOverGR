@@ -20,6 +20,10 @@ struct CliArgs {
   std::optional<long long> r;         // residue degree
   long long m = 1;                    // extension multiplier
   std::optional<long double> gamma;   // slack parameter
+  bool auto_gamma = false;
+  std::optional<long double> gamma_min;
+  std::optional<long double> gamma_max;
+  long long gamma_steps = 4000;
   bool show_levels = false;
   bool help = false;
 };
@@ -34,6 +38,11 @@ struct LevelInfo {
 struct CalcResult {
   long double q = 0;
   long double gamma = 0;
+  bool gamma_auto = false;
+  bool gamma_auto_feasible = true;
+  long double gamma_search_min = 0;
+  long double gamma_search_max = 0;
+  long long gamma_search_steps = 0;
   long double k_d = 0;
   long double n_d = 0;
   long double t_d = 0;
@@ -77,6 +86,10 @@ void PrintUsage(const char* argv0) {
       << "Optional:\n"
       << "  --k0 <int>          Base message dimension k0 (default: 1)\n"
       << "  --gamma <real>      Slack gamma in (0,1) (default: 1/(10*max(1,d)))\n"
+      << "  --auto-gamma        Search gamma automatically to minimize l_min_for_PCS\n"
+      << "  --gamma-min <real>  Auto-search lower bound (default: 1e-9)\n"
+      << "  --gamma-max <real>  Auto-search upper bound (default: 0.99)\n"
+      << "  --gamma-steps <int> Auto-search grid points (default: 4000)\n"
       << "  --show-levels       Print per-level (n_{i-1}, ell_i, t_i)\n"
       << "  --help              Show this message\n\n"
       << "Formulas (from Basefold_over_GR.pdf, parameter selection):\n"
@@ -184,6 +197,14 @@ CliArgs ParseArgs(int argc, char** argv) {
       args.lambda = ParseInt(need_value("--lambda"), "--lambda");
     } else if (a == "--gamma") {
       args.gamma = ParseReal(need_value("--gamma"), "--gamma");
+    } else if (a == "--auto-gamma") {
+      args.auto_gamma = true;
+    } else if (a == "--gamma-min") {
+      args.gamma_min = ParseReal(need_value("--gamma-min"), "--gamma-min");
+    } else if (a == "--gamma-max") {
+      args.gamma_max = ParseReal(need_value("--gamma-max"), "--gamma-max");
+    } else if (a == "--gamma-steps") {
+      args.gamma_steps = ParseInt(need_value("--gamma-steps"), "--gamma-steps");
     } else if (a == "--q") {
       args.q = ParseReal(need_value("--q"), "--q");
     } else if (a == "--p") {
@@ -252,20 +273,30 @@ LSolveResult SolveMinimalL(long double base, long double residual_budget) {
   return out;
 }
 
-CalcResult Compute(const CliArgs& args) {
+void ValidateBasicArgs(const CliArgs& args) {
   if (args.d < 0) throw std::runtime_error("--d must be >= 0");
   if (args.c < 2) throw std::runtime_error("--c must be >= 2");
   if (args.k0 <= 0) throw std::runtime_error("--k0 must be > 0");
   if (args.lambda <= 0) throw std::runtime_error("--lambda must be > 0");
   if (args.m <= 0) throw std::runtime_error("--m must be > 0");
+  if (args.gamma_steps <= 1) {
+    throw std::runtime_error("--gamma-steps must be > 1");
+  }
+  if (args.auto_gamma && args.gamma.has_value()) {
+    throw std::runtime_error("Use either --gamma or --auto-gamma, not both");
+  }
+}
 
+long double ResolveQ(const CliArgs& args) {
   if (args.q.has_value() && (args.p.has_value() || args.r.has_value())) {
     throw std::runtime_error("Use either --q OR (--p,--r,[--m]), not both");
   }
 
-  CalcResult out;
   if (args.q.has_value()) {
-    out.q = *args.q;
+    if (!(*args.q > 3.0L)) {
+      throw std::runtime_error("q must satisfy q > 3 (equivalently |F*| > 2)");
+    }
+    return *args.q;
   } else {
     if (!args.p.has_value() || !args.r.has_value()) {
       throw std::runtime_error(
@@ -275,32 +306,35 @@ CalcResult Compute(const CliArgs& args) {
     if (*args.r <= 0) throw std::runtime_error("--r must be > 0");
     const long long exp = (*args.r) * args.m;
     if (exp <= 0) throw std::runtime_error("r*m must be > 0");
-    out.q = PowIntLD(*args.p, exp);
+    const long double q = PowIntLD(*args.p, exp);
+    if (!(q > 3.0L)) {
+      throw std::runtime_error("q must satisfy q > 3 (equivalently |F*| > 2)");
+    }
+    return q;
   }
+}
 
-  if (!(out.q > 3.0L)) {
-    throw std::runtime_error(
-        "q must satisfy q > 3 (equivalently |F*| > 2 for distance theorem)");
-  }
-
-  out.gamma = args.gamma.value_or(
-      1.0L / (10.0L * static_cast<long double>((args.d > 0) ? args.d : 1)));
-  if (!(out.gamma > 0.0L && out.gamma < 1.0L)) {
+CalcResult ComputeAtGamma(const CliArgs& args, long double q, long double gamma,
+                          bool keep_levels) {
+  if (!(gamma > 0.0L && gamma < 1.0L)) {
     throw std::runtime_error("gamma must be in (0,1)");
   }
+  CalcResult out;
+  out.q = q;
+  out.gamma = gamma;
 
   const long double d_ld = static_cast<long double>(args.d);
   const long double c_ld = static_cast<long double>(args.c);
   const long double k0_ld = static_cast<long double>(args.k0);
   const long double lambda_ld = static_cast<long double>(args.lambda);
 
-  const long double log_qm1 = std::log2(out.q - 1.0L);
+  const long double log_qm1 = std::log2(q - 1.0L);
   const long double denom = log_qm1 - 1.0L;
   if (!(denom > 0.0L)) {
     throw std::runtime_error("Need log2(q-1) - 1 > 0; this requires q > 3");
   }
 
-  const long double coeff_t = 2.0L * std::log2(out.q / (out.q - 1.0L)) + 2.0L;
+  const long double coeff_t = 2.0L * std::log2(q / (q - 1.0L)) + 2.0L;
   const long double coeff_n = std::log2(9.0L / 4.0L);
 
   long double t = k0_ld;
@@ -310,7 +344,7 @@ CalcResult Compute(const CliArgs& args) {
   }
 
   out.levels.clear();
-  out.levels.reserve(static_cast<std::size_t>(args.d));
+  if (keep_levels) out.levels.reserve(static_cast<std::size_t>(args.d));
   for (long long i = 1; i <= args.d; ++i) {
     const long double ell_i =
         ((coeff_t * t) + (coeff_n * n_prev) + lambda_ld) / denom;
@@ -318,7 +352,7 @@ CalcResult Compute(const CliArgs& args) {
     if (!std::isfinite(ell_i) || !std::isfinite(t)) {
       throw std::runtime_error("Numeric overflow in recurrence");
     }
-    out.levels.push_back(LevelInfo{i, n_prev, ell_i, t});
+    if (keep_levels) out.levels.push_back(LevelInfo{i, n_prev, ell_i, t});
     n_prev *= 2.0L;
   }
 
@@ -333,8 +367,8 @@ CalcResult Compute(const CliArgs& args) {
   out.base = 1.0L - out.delta + out.gamma * d_ld;
   out.target_2_minus_lambda = std::exp2(-lambda_ld);
   out.iopp_first_term =
-      (2.0L * d_ld) / (std::pow(out.gamma, 3.0L) * out.q);
-  out.sumcheck_term = (2.0L * d_ld) / out.q;
+      (2.0L * d_ld) / (std::pow(out.gamma, 3.0L) * q);
+  out.sumcheck_term = (2.0L * d_ld) / q;
 
   out.iopp_budget = out.target_2_minus_lambda - out.iopp_first_term;
   out.pcs_budget = out.target_2_minus_lambda - out.iopp_first_term - out.sumcheck_term;
@@ -359,6 +393,99 @@ CalcResult Compute(const CliArgs& args) {
   return out;
 }
 
+CalcResult Compute(const CliArgs& args) {
+  ValidateBasicArgs(args);
+  const long double q = ResolveQ(args);
+
+  if (!args.auto_gamma) {
+    const long double gamma = args.gamma.value_or(
+        1.0L / (10.0L * static_cast<long double>((args.d > 0) ? args.d : 1)));
+    CalcResult out = ComputeAtGamma(args, q, gamma, true);
+    out.gamma_auto = false;
+    return out;
+  }
+
+  long double g_min = args.gamma_min.value_or(1e-9L);
+  long double g_max = args.gamma_max.value_or(0.99L);
+  if (!(g_min > 0.0L && g_min < 1.0L)) {
+    throw std::runtime_error("--gamma-min must be in (0,1)");
+  }
+  if (!(g_max > 0.0L && g_max < 1.0L)) {
+    throw std::runtime_error("--gamma-max must be in (0,1)");
+  }
+  if (!(g_min < g_max)) {
+    throw std::runtime_error("Need gamma_min < gamma_max");
+  }
+
+  const long double d_ld = static_cast<long double>(args.d);
+  const long double target = std::exp2(-static_cast<long double>(args.lambda));
+  const long double sumcheck_term = (2.0L * d_ld) / q;
+  const long double residual = target - sumcheck_term;
+  if (residual > 0.0L) {
+    const long double lb = std::cbrt((2.0L * d_ld) / (q * residual)) * 1.0000000001L;
+    if (std::isfinite(lb) && lb > g_min && lb < 1.0L) {
+      g_min = lb;
+    }
+  }
+  if (!(g_min < g_max)) {
+    g_min = args.gamma_min.value_or(1e-9L);
+    g_max = args.gamma_max.value_or(0.99L);
+  }
+
+  bool have_feasible = false;
+  CalcResult best_feasible;
+  long double best_feasible_gamma = 0.0L;
+  bool have_any = false;
+  CalcResult best_any;
+  long double best_any_gamma = 0.0L;
+
+  const long long steps = args.gamma_steps;
+  const long double log_min = std::log(g_min);
+  const long double log_max = std::log(g_max);
+  for (long long i = 0; i < steps; ++i) {
+    const long double t = static_cast<long double>(i) /
+                          static_cast<long double>(steps - 1);
+    const long double gamma = std::exp(log_min + t * (log_max - log_min));
+    CalcResult cur = ComputeAtGamma(args, q, gamma, false);
+
+    if (!have_any ||
+        (cur.pcs_budget > best_any.pcs_budget) ||
+        (cur.pcs_budget == best_any.pcs_budget && cur.base < best_any.base)) {
+      best_any = cur;
+      best_any_gamma = gamma;
+      have_any = true;
+    }
+
+    if (cur.has_finite_l_pcs) {
+      if (!have_feasible ||
+          (cur.l_min_pcs < best_feasible.l_min_pcs) ||
+          (cur.l_min_pcs == best_feasible.l_min_pcs &&
+           cur.pcs_bound_at_l_pcs < best_feasible.pcs_bound_at_l_pcs) ||
+          (cur.l_min_pcs == best_feasible.l_min_pcs &&
+           cur.pcs_bound_at_l_pcs == best_feasible.pcs_bound_at_l_pcs &&
+           gamma < best_feasible_gamma)) {
+        best_feasible = cur;
+        best_feasible_gamma = gamma;
+        have_feasible = true;
+      }
+    }
+  }
+
+  if (!have_any) {
+    throw std::runtime_error("auto-gamma search failed: empty candidate set");
+  }
+
+  CalcResult out = have_feasible
+                       ? ComputeAtGamma(args, q, best_feasible_gamma, true)
+                       : ComputeAtGamma(args, q, best_any_gamma, true);
+  out.gamma_auto = true;
+  out.gamma_auto_feasible = have_feasible;
+  out.gamma_search_min = g_min;
+  out.gamma_search_max = g_max;
+  out.gamma_search_steps = steps;
+  return out;
+}
+
 void PrintResult(const CliArgs& args, const CalcResult& out) {
   std::cout << std::setprecision(18);
   std::cout << "Input parameters:\n";
@@ -367,9 +494,17 @@ void PrintResult(const CliArgs& args, const CalcResult& out) {
   std::cout << "  k0       = " << args.k0 << "\n";
   std::cout << "  lambda   = " << args.lambda << "\n";
   std::cout << "  q        = " << out.q << "\n";
-  std::cout << "  gamma    = " << out.gamma
-            << (args.gamma.has_value() ? " (user)" : " (default=1/(10*max(1,d)))")
-            << "\n\n";
+  if (out.gamma_auto) {
+    std::cout << "  gamma    = " << out.gamma << " (auto-selected)\n";
+    std::cout << "  gamma-search range = [" << out.gamma_search_min << ", "
+              << out.gamma_search_max << "], steps=" << out.gamma_search_steps
+              << "\n\n";
+  } else {
+    std::cout << "  gamma    = " << out.gamma
+              << (args.gamma.has_value() ? " (user)"
+                                         : " (default=1/(10*max(1,d)))")
+              << "\n\n";
+  }
 
   std::cout << "Code parameters:\n";
   std::cout << "  k_d      = " << out.k_d << "\n";
@@ -417,6 +552,9 @@ void PrintResult(const CliArgs& args, const CalcResult& out) {
   } else {
     std::cout << "  l_min_for_PCS   = N/A (no finite l)\n\n";
     std::cout << "Reason: budget(pcs) <= 0 or base >= 1, so no l can force PCS bound below 2^-lambda.\n";
+    if (out.gamma_auto && !out.gamma_auto_feasible) {
+      std::cout << "Auto-search result: no feasible gamma found in the search range.\n";
+    }
     std::cout << "Adjust gamma / c / q (or extension-challenge domain) to increase budget(pcs).\n";
   }
 }
