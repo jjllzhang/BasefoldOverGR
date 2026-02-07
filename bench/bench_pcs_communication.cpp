@@ -1,5 +1,6 @@
 #include <NTL/ZZ.h>
 
+#include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <iomanip>
@@ -9,14 +10,16 @@
 #include <vector>
 
 using NTL::LogicError;
+using NTL::to_ZZ;
+using NTL::ZZ;
 
 namespace {
 
 struct ContextSpec {
   std::string label;
-  long mod = 0;      // ZZ_p modulus (p for fields, p^s for rings)
-  long prime_p = 0;  // optional metadata (not needed for byte-size estimation)
-  std::vector<long> F_coeffs;
+  ZZ mod = ZZ(0);      // ZZ_p modulus (p for fields, p^s for rings)
+  ZZ prime_p = ZZ(0);  // optional metadata (not needed for byte-size estimation)
+  std::vector<ZZ> F_coeffs;
 };
 
 bool IsPowerOfTwoLong(long n) { return n > 0 && (n & (n - 1)) == 0; }
@@ -46,8 +49,37 @@ bool ParseLong(const char *s, long &out) {
   }
 }
 
-std::vector<long> ParseCoeffList(const std::string &s) {
-  std::vector<long> out;
+bool ParseZZString(const std::string &s, ZZ &out) {
+  if (s.empty())
+    return false;
+  std::size_t pos = 0;
+  bool neg = false;
+  if (s[pos] == '+' || s[pos] == '-') {
+    neg = (s[pos] == '-');
+    ++pos;
+  }
+  if (pos >= s.size())
+    return false;
+
+  ZZ v(0);
+  for (; pos < s.size(); ++pos) {
+    const unsigned char ch = static_cast<unsigned char>(s[pos]);
+    if (!std::isdigit(ch))
+      return false;
+    v *= 10;
+    v += static_cast<long>(ch - static_cast<unsigned char>('0'));
+  }
+  out = neg ? -v : v;
+  return true;
+}
+
+bool ParseZZ(const char *s, ZZ &out) {
+  if (!s) return false;
+  return ParseZZString(std::string(s), out);
+}
+
+std::vector<ZZ> ParseCoeffList(const std::string &s) {
+  std::vector<ZZ> out;
   std::size_t pos = 0;
   while (pos < s.size()) {
     const std::size_t comma = s.find(',', pos);
@@ -61,16 +93,8 @@ std::vector<long> ParseCoeffList(const std::string &s) {
     }
     token = token.substr(first, last - first + 1);
 
-    std::size_t idx = 0;
-    long v = 0;
-    try {
-      v = std::stol(token, &idx, 10);
-    } catch (...) {
-      LogicError("ParseCoeffList: bad integer token");
-    }
-    if (idx != token.size()) {
-      LogicError("ParseCoeffList: bad integer token");
-    }
+    ZZ v;
+    if (!ParseZZString(token, v)) LogicError("ParseCoeffList: bad integer token");
 
     out.push_back(v);
     pos = (comma == std::string::npos) ? s.size() : (comma + 1);
@@ -81,14 +105,14 @@ std::vector<long> ParseCoeffList(const std::string &s) {
   return out;
 }
 
-long NormalizeMod(long x, long mod) {
+ZZ NormalizeMod(const ZZ &x, const ZZ &mod) {
   if (mod <= 0) LogicError("NormalizeMod: mod must be positive");
-  long r = x % mod;
+  ZZ r = x % mod;
   if (r < 0) r += mod;
   return r;
 }
 
-void ValidateMonic(const std::vector<long> &coeffs, long mod, const char *what) {
+void ValidateMonic(const std::vector<ZZ> &coeffs, const ZZ &mod, const char *what) {
   if (coeffs.empty()) {
     const std::string msg = std::string(what) + ": empty polynomial";
     LogicError(msg.c_str());
@@ -102,7 +126,7 @@ void ValidateMonic(const std::vector<long> &coeffs, long mod, const char *what) 
     const std::string msg = std::string(what) + ": degree must be >= 1";
     LogicError(msg.c_str());
   }
-  const long lead = NormalizeMod(coeffs[static_cast<std::size_t>(last)], mod);
+  const ZZ lead = NormalizeMod(coeffs[static_cast<std::size_t>(last)], mod);
   if (lead != 1) {
     const std::string msg =
         std::string(what) + ": leading coefficient must be 1 (monic)";
@@ -110,7 +134,7 @@ void ValidateMonic(const std::vector<long> &coeffs, long mod, const char *what) 
   }
 }
 
-long PolyDegree(const std::vector<long> &coeffs, long mod) {
+long PolyDegree(const std::vector<ZZ> &coeffs, const ZZ &mod) {
   if (coeffs.empty()) {
     LogicError("PolyDegree: empty polynomial");
   }
@@ -130,20 +154,15 @@ std::uint64_t CheckedToU64(unsigned __int128 value, const char *where) {
   return static_cast<std::uint64_t>(value);
 }
 
-std::uint64_t FixedCoeffByteWidth(long mod) {
+std::uint64_t FixedCoeffByteWidth(const ZZ &mod) {
   if (mod <= 1) {
     LogicError("FixedCoeffByteWidth: mod must be > 1");
   }
-  std::uint64_t x = static_cast<std::uint64_t>(mod - 1);
-  int bits = 0;
-  while (x > 0) {
-    ++bits;
-    x >>= 1;
-  }
+  const long bits = NTL::NumBits(mod - 1);
   return static_cast<std::uint64_t>((bits + 7) / 8);
 }
 
-std::uint64_t FixedFieldElementBytes(long mod, long ext_degree) {
+std::uint64_t FixedFieldElementBytes(const ZZ &mod, long ext_degree) {
   if (ext_degree <= 0) {
     LogicError("FixedFieldElementBytes: ext_degree must be > 0");
   }
@@ -212,7 +231,7 @@ struct CommunicationEstimate {
   std::uint64_t total_fs = 0;
 };
 
-CommunicationEstimate EstimateCommunicationBytes(long mod, long c, long k0, long d,
+CommunicationEstimate EstimateCommunicationBytes(const ZZ &mod, long c, long k0, long d,
                                                  long num_queries, long ext_degree) {
   static constexpr std::uint64_t kHashBytes = 32;
   if (mod <= 1) LogicError("EstimateCommunicationBytes: mod must be > 1");
@@ -312,8 +331,8 @@ void PrintHelp() {
       << "bench_pcs_communication (estimate PCS prover/verifier communication)\n\n"
       << "Usage:\n"
       << "  bench_pcs_communication [--mode field|ring|both] [--c <int>] [--k0 <int>] [--d <int>]\n"
-      << "                          [--queries <int>] [--field-mod <int>] [--field-F <a0,a1,...>]\n"
-      << "                          [--ring-mod <int>] [--ring-p <int>] [--ring-F <a0,a1,...>]\n\n"
+      << "                          [--queries <int>] [--field-mod <decimal-int>] [--field-F <a0,a1,...>]\n"
+      << "                          [--ring-mod <decimal-int>] [--ring-p <decimal-int>] [--ring-F <a0,a1,...>]\n\n"
       << "Estimation model:\n"
       << "  - No prover execution; formula-only from parameters.\n"
       << "  - Prover->Verifier follows BaseFoldPCSEvalProof payload layout:\n"
@@ -399,15 +418,15 @@ int main(int argc, char **argv) {
 
   ContextSpec field;
   field.label = "Field";
-  field.mod = 2;
-  field.prime_p = 0;
-  field.F_coeffs = {1, 1, 1};  // x^2 + x + 1
+  field.mod = to_ZZ(2);
+  field.prime_p = ZZ(0);
+  field.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};  // x^2 + x + 1
 
   ContextSpec ring;
   ring.label = "Ring";
-  ring.mod = 4;
-  ring.prime_p = 2;
-  ring.F_coeffs = {1, 1, 1};  // x^2 + x + 1
+  ring.mod = to_ZZ(4);
+  ring.prime_p = to_ZZ(2);
+  ring.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};  // x^2 + x + 1
 
   for (int i = 1; i < argc; ++i) {
     const std::string arg(argv[i]);
@@ -455,19 +474,19 @@ int main(int argc, char **argv) {
         return 2;
       }
     } else if (arg == "--field-mod") {
-      if (!ParseLong(NeedValue("--field-mod"), field.mod) || field.mod <= 1) {
+      if (!ParseZZ(NeedValue("--field-mod"), field.mod) || field.mod <= 1) {
         std::cerr << "Invalid --field-mod\n";
         return 2;
       }
     } else if (arg == "--field-F") {
       field.F_coeffs = ParseCoeffList(NeedValue("--field-F"));
     } else if (arg == "--ring-mod") {
-      if (!ParseLong(NeedValue("--ring-mod"), ring.mod) || ring.mod <= 1) {
+      if (!ParseZZ(NeedValue("--ring-mod"), ring.mod) || ring.mod <= 1) {
         std::cerr << "Invalid --ring-mod\n";
         return 2;
       }
     } else if (arg == "--ring-p") {
-      if (!ParseLong(NeedValue("--ring-p"), ring.prime_p) || ring.prime_p <= 1) {
+      if (!ParseZZ(NeedValue("--ring-p"), ring.prime_p) || ring.prime_p <= 1) {
         std::cerr << "Invalid --ring-p\n";
         return 2;
       }

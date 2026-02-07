@@ -31,12 +31,17 @@ find_library(NTL_LIBRARY NAMES ntl REQUIRED)
 find_library(GMP_LIBRARY NAMES gmp REQUIRED)
 find_library(M_LIBRARY NAMES m)
 find_package(OpenSSL REQUIRED)
+find_package(OpenMP)
 
 target_link_libraries(galoisring PUBLIC
   ${NTL_LIBRARY}
   ${GMP_LIBRARY}
   OpenSSL::Crypto
 )
+if(OpenMP_CXX_FOUND)
+  target_link_libraries(galoisring PUBLIC OpenMP::OpenMP_CXX)
+  target_compile_definitions(galoisring PUBLIC BASEFOLD_USE_OPENMP=1)
+endif()
 if(M_LIBRARY)
   target_link_libraries(galoisring PUBLIC ${M_LIBRARY})
 endif()

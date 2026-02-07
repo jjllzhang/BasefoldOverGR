@@ -6,6 +6,10 @@
 
 #include <limits>
 
+#if defined(BASEFOLD_USE_OPENMP)
+#include <omp.h>
+#endif
+
 using NTL::ZZ;
 using NTL::LogicError;
 using NTL::clear;
@@ -28,6 +32,37 @@ long Pow2(long e) {
     LogicError("Pow2: exponent too large for long");
   }
   return 1L << e;
+}
+
+template <typename Fn>
+void ForEachIndexMaybeParallel(long begin, long end, long parallel_threshold,
+                               const Fn &fn) {
+  if (end <= begin) return;
+#if defined(BASEFOLD_USE_OPENMP)
+  const long work_items = end - begin;
+  if (work_items >= parallel_threshold) {
+    const int max_threads = omp_get_max_threads();
+    int threads_to_use = static_cast<int>(work_items / parallel_threshold);
+    if (threads_to_use > max_threads) threads_to_use = max_threads;
+    if (threads_to_use >= 2) {
+      const ZZ base_modulus = NTL::ZZ_p::modulus();
+      const ZZ_pX extension_modulus = NTL::ZZ_pE::modulus().val();
+#pragma omp parallel num_threads(threads_to_use)
+      {
+        NTL::ZZ_p::init(base_modulus);
+        NTL::ZZ_pE::init(extension_modulus);
+#pragma omp for schedule(static)
+        for (long i = begin; i < end; ++i) {
+          fn(i);
+        }
+      }
+      return;
+    }
+  }
+#endif
+  for (long i = begin; i < end; ++i) {
+    fn(i);
+  }
 }
 
 bool IsUnitByReductionModP(const ZZ_pE &a, const ZZ &p) {
@@ -155,15 +190,16 @@ void EncodeFoldable_k0_1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
   out.SetLength(nd);
 
   const ZZ_pE &zeta = params.zeta;
+  const long parallel_threshold = 1024;
 
   // Level 0: encode each scalar message symbol using the single-row G0.
-  for (long block = 0; block < kd; ++block) {
+  ForEachIndexMaybeParallel(0, kd, parallel_threshold, [&](long block) {
     const ZZ_pE &m = msg[block];
     const long base = block * c;
     for (long j = 0; j < c; ++j) {
       out[base + j] = m * params.G0[0][j];
     }
-  }
+  });
 
   long block_len = c;  // n_0
   long blocks = kd;    // number of blocks at current level
@@ -172,26 +208,33 @@ void EncodeFoldable_k0_1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
     const bool t_all_ones = IsAllOnes(t);
     const long new_block_len = 2 * block_len;
 
-    for (long b = 0; b < blocks / 2; ++b) {
-      const long base = b * new_block_len;
-      const long left = base;
-      const long right = base + block_len;
-
-      if (t_all_ones) {
+    const long half_blocks = blocks / 2;
+    if (t_all_ones) {
+      ForEachIndexMaybeParallel(0, half_blocks, parallel_threshold,
+                                [&](long b) {
+        const long base = b * new_block_len;
+        const long left = base;
+        const long right = base + block_len;
         for (long i = 0; i < block_len; ++i) {
           const ZZ_pE l = out[left + i];
           const ZZ_pE r = out[right + i];
           out[left + i] = l + r;
           out[right + i] = l + zeta * r;
         }
-      } else {
+      });
+    } else {
+      ForEachIndexMaybeParallel(0, half_blocks, parallel_threshold,
+                                [&](long b) {
+        const long base = b * new_block_len;
+        const long left = base;
+        const long right = base + block_len;
         for (long i = 0; i < block_len; ++i) {
           const ZZ_pE l = out[left + i];
           const ZZ_pE tr = t[i] * out[right + i];
           out[left + i] = l + tr;
           out[right + i] = l + zeta * tr;
         }
-      }
+      });
     }
     block_len = new_block_len;
     blocks /= 2;
@@ -224,10 +267,11 @@ void EncodeFoldable_k0_gt1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
   const long blocks0 = kd / k0;
 
   out.SetLength(nd);
+  const long parallel_threshold = 1024;
 
   // Level 0: encode each length-k0 message block using the k0 x n0 generator.
   // out is laid out as consecutive codewords of length n0.
-  for (long block = 0; block < blocks0; ++block) {
+  ForEachIndexMaybeParallel(0, blocks0, parallel_threshold, [&](long block) {
     const long msg_base = block * k0;
     const long out_base = block * n0;
 
@@ -240,7 +284,7 @@ void EncodeFoldable_k0_gt1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
         out[out_base + j] += m * params.G0[r][j];
       }
     }
-  }
+  });
 
   const ZZ_pE &zeta = params.zeta;
 
@@ -251,26 +295,33 @@ void EncodeFoldable_k0_gt1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
     const bool t_all_ones = IsAllOnes(t);
     const long new_block_len = 2 * block_len;
 
-    for (long b = 0; b < blocks / 2; ++b) {
-      const long base = b * new_block_len;
-      const long left = base;
-      const long right = base + block_len;
-
-      if (t_all_ones) {
+    const long half_blocks = blocks / 2;
+    if (t_all_ones) {
+      ForEachIndexMaybeParallel(0, half_blocks, parallel_threshold,
+                                [&](long b) {
+        const long base = b * new_block_len;
+        const long left = base;
+        const long right = base + block_len;
         for (long i = 0; i < block_len; ++i) {
           const ZZ_pE l = out[left + i];
           const ZZ_pE r = out[right + i];
           out[left + i] = l + r;
           out[right + i] = l + zeta * r;
         }
-      } else {
+      });
+    } else {
+      ForEachIndexMaybeParallel(0, half_blocks, parallel_threshold,
+                                [&](long b) {
+        const long base = b * new_block_len;
+        const long left = base;
+        const long right = base + block_len;
         for (long i = 0; i < block_len; ++i) {
           const ZZ_pE l = out[left + i];
           const ZZ_pE tr = t[i] * out[right + i];
           out[left + i] = l + tr;
           out[right + i] = l + zeta * tr;
         }
-      }
+      });
     }
 
     block_len = new_block_len;

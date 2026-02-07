@@ -136,30 +136,37 @@ void AppendU64(Bytes &out, std::uint64_t v) {
   }
 }
 
-Bytes ZZToBytes(const ZZ &x) {
-  const long n = NumBytes(x);
-  Bytes out;
-  out.resize(static_cast<std::size_t>(n));
-  if (n > 0) {
-    BytesFromZZ(reinterpret_cast<unsigned char *>(out.data()), x, n);
+void StoreU64BigEndian(Byte *dst, std::uint64_t v) {
+  for (int i = 0; i < 8; ++i) {
+    dst[i] = static_cast<Byte>((v >> (8 * (7 - i))) & 0xff);
   }
-  return out;
 }
 
-Bytes SerializeFieldElement(const FieldElement &x) {
+void AppendSerializedFieldElement(Bytes &out, const FieldElement &x,
+                                  const char *func_name) {
   const long r = ZZ_pE::degree();
-  if (r <= 0)
-    LogicError("SerializeFieldElement: invalid extension degree");
+  if (r <= 0) {
+    const std::string msg = std::string(func_name) + ": invalid extension degree";
+    LogicError(msg.c_str());
+  }
 
   const ZZ_pX &poly = rep(x);
-  Bytes out;
   AppendU64(out, static_cast<std::uint64_t>(r));
   for (long i = 0; i < r; ++i) {
     const ZZ c = rep(coeff(poly, i));
-    const Bytes c_bytes = ZZToBytes(c);
-    AppendU64(out, static_cast<std::uint64_t>(c_bytes.size()));
-    out.insert(out.end(), c_bytes.begin(), c_bytes.end());
+    const long n = NumBytes(c);
+    AppendU64(out, static_cast<std::uint64_t>(n));
+    if (n > 0) {
+      const std::size_t old_size = out.size();
+      out.resize(old_size + static_cast<std::size_t>(n));
+      BytesFromZZ(reinterpret_cast<unsigned char *>(out.data() + old_size), c, n);
+    }
   }
+}
+
+Bytes SerializeFieldElement(const FieldElement &x) {
+  Bytes out;
+  AppendSerializedFieldElement(out, x, "SerializeFieldElement");
   return out;
 }
 
@@ -180,6 +187,25 @@ Bytes Sha256(const Byte *data, std::size_t len) {
 }
 
 Bytes Sha256(const Bytes &data) { return Sha256(data.data(), data.size()); }
+
+Digest Sha256Digest(const Byte *data, std::size_t len, const char *func_name) {
+  Digest out{};
+  unsigned int out_len = 0;
+  const int ok = EVP_Digest(
+      static_cast<const void *>(data), len,
+      reinterpret_cast<unsigned char *>(out.data()), &out_len, EVP_sha256(),
+      nullptr);
+  if (ok != 1) {
+    const std::string msg = std::string(func_name) + ": EVP_Digest failed";
+    LogicError(msg.c_str());
+  }
+  if (out_len != out.size()) {
+    const std::string msg =
+        std::string(func_name) + ": unexpected digest size";
+    LogicError(msg.c_str());
+  }
+  return out;
+}
 
 Bytes TaggedHash(Byte tag, const Bytes &state, const Bytes &payload) {
   Bytes in;
@@ -572,6 +598,35 @@ long ExtensionDegreeOrThrow(const ZZ_pEX &extension_modulus,
   return ext_degree;
 }
 
+const NTL::ZZ_pEXModulus &ExtensionModulusContextOrThrow(
+    const ZZ_pEX &extension_modulus, const char *func_name) {
+  const long ext_degree = ExtensionDegreeOrThrow(extension_modulus, func_name);
+  (void)ext_degree;
+
+  struct CachedModulusContext {
+    bool initialized = false;
+    ZZ base_modulus;
+    long base_degree = 0;
+    ZZ_pEX modulus_poly;
+    NTL::ZZ_pEXModulus modulus_ctx;
+  };
+
+  thread_local CachedModulusContext cache;
+
+  const ZZ &cur_base_modulus = ZZ_p::modulus();
+  const long cur_base_degree = ZZ_pE::degree();
+  if (!cache.initialized || cache.base_modulus != cur_base_modulus ||
+      cache.base_degree != cur_base_degree ||
+      cache.modulus_poly != extension_modulus) {
+    cache.base_modulus = cur_base_modulus;
+    cache.base_degree = cur_base_degree;
+    cache.modulus_poly = extension_modulus;
+    NTL::build(cache.modulus_ctx, cache.modulus_poly);
+    cache.initialized = true;
+  }
+  return cache.modulus_ctx;
+}
+
 FieldElement BaseRingOne() {
   FieldElement one;
   NTL::set(one);
@@ -590,12 +645,13 @@ FieldElement ProjectExtensionToBaseConstant(const ZZ_pEX &x) {
 }
 
 void ReduceExtensionElementInPlace(ZZ_pEX &x, const ZZ_pEX &extension_modulus) {
-  const long extension_degree = NTL::deg(extension_modulus);
-  if (extension_degree <= 0) {
-    LogicError("ReduceExtensionElementInPlace: invalid extension degree");
-  }
+  const long extension_degree =
+      ExtensionDegreeOrThrow(extension_modulus, "ReduceExtensionElementInPlace");
   if (NTL::deg(x) >= extension_degree) {
-    NTL::rem(x, x, extension_modulus);
+    const NTL::ZZ_pEXModulus &mod_ctx =
+        ExtensionModulusContextOrThrow(extension_modulus,
+                                       "ReduceExtensionElementInPlace");
+    NTL::rem(x, x, mod_ctx);
     x.normalize();
   }
 }
@@ -629,12 +685,12 @@ ZZ_pEX SubBaseConstantFromExtension(const ZZ_pEX &a, const FieldElement &c) {
 ZZ_pEX AddExtension(const ZZ_pEX &a, const ZZ_pEX &b,
                     const ZZ_pEX &extension_modulus) {
   ZZ_pEX out = a + b;
-  const long extension_degree = NTL::deg(extension_modulus);
-  if (extension_degree <= 0) {
-    LogicError("AddExtension: invalid extension degree");
-  }
+  const long extension_degree =
+      ExtensionDegreeOrThrow(extension_modulus, "AddExtension");
   if (NTL::deg(out) >= extension_degree) {
-    NTL::rem(out, out, extension_modulus);
+    const NTL::ZZ_pEXModulus &mod_ctx =
+        ExtensionModulusContextOrThrow(extension_modulus, "AddExtension");
+    NTL::rem(out, out, mod_ctx);
     out.normalize();
   }
   return out;
@@ -643,12 +699,12 @@ ZZ_pEX AddExtension(const ZZ_pEX &a, const ZZ_pEX &b,
 ZZ_pEX SubExtension(const ZZ_pEX &a, const ZZ_pEX &b,
                     const ZZ_pEX &extension_modulus) {
   ZZ_pEX out = a - b;
-  const long extension_degree = NTL::deg(extension_modulus);
-  if (extension_degree <= 0) {
-    LogicError("SubExtension: invalid extension degree");
-  }
+  const long extension_degree =
+      ExtensionDegreeOrThrow(extension_modulus, "SubExtension");
   if (NTL::deg(out) >= extension_degree) {
-    NTL::rem(out, out, extension_modulus);
+    const NTL::ZZ_pEXModulus &mod_ctx =
+        ExtensionModulusContextOrThrow(extension_modulus, "SubExtension");
+    NTL::rem(out, out, mod_ctx);
     out.normalize();
   }
   return out;
@@ -656,10 +712,8 @@ ZZ_pEX SubExtension(const ZZ_pEX &a, const ZZ_pEX &b,
 
 ZZ_pEX MulExtension(const ZZ_pEX &a, const ZZ_pEX &b,
                     const ZZ_pEX &extension_modulus) {
-  const long extension_degree = NTL::deg(extension_modulus);
-  if (extension_degree <= 0) {
-    LogicError("MulExtension: invalid extension degree");
-  }
+  const long extension_degree =
+      ExtensionDegreeOrThrow(extension_modulus, "MulExtension");
 
   const long deg_a = NTL::deg(a);
   const long deg_b = NTL::deg(b);
@@ -670,11 +724,15 @@ ZZ_pEX MulExtension(const ZZ_pEX &a, const ZZ_pEX &b,
   } else if (deg_b <= 0) {
     out = MulExtensionByBaseConstant(a, coeff(b, 0));
   } else {
-    out = a * b;
+    const NTL::ZZ_pEXModulus &mod_ctx =
+        ExtensionModulusContextOrThrow(extension_modulus, "MulExtension");
+    NTL::MulMod(out, a, b, mod_ctx);
   }
 
   if (NTL::deg(out) >= extension_degree) {
-    NTL::rem(out, out, extension_modulus);
+    const NTL::ZZ_pEXModulus &mod_ctx =
+        ExtensionModulusContextOrThrow(extension_modulus, "MulExtension");
+    NTL::rem(out, out, mod_ctx);
     out.normalize();
   }
   return out;
@@ -702,21 +760,24 @@ ZZ_pEX EvalExtensionQuadraticPoly(const ExtensionQuadraticPoly &p,
                       extension_modulus);
 }
 
-Bytes SerializeExtensionElement(const ZZ_pEX &x,
-                                const ZZ_pEX &extension_modulus) {
-  const long ext_degree =
-      ExtensionDegreeOrThrow(extension_modulus, "SerializeExtensionElement");
-
+void AppendSerializedExtensionElement(Bytes &out, const ZZ_pEX &x,
+                                      const ZZ_pEX &extension_modulus,
+                                      const char *func_name) {
+  const long ext_degree = ExtensionDegreeOrThrow(extension_modulus, func_name);
   ZZ_pEX reduced = x;
   ReduceExtensionElementInPlace(reduced, extension_modulus);
 
-  Bytes out;
   AppendU64(out, static_cast<std::uint64_t>(ext_degree));
   for (long i = 0; i < ext_degree; ++i) {
-    const Bytes c_bytes = SerializeFieldElement(coeff(reduced, i));
-    AppendU64(out, static_cast<std::uint64_t>(c_bytes.size()));
-    out.insert(out.end(), c_bytes.begin(), c_bytes.end());
+    AppendSerializedFieldElement(out, coeff(reduced, i), func_name);
   }
+}
+
+Bytes SerializeExtensionElement(const ZZ_pEX &x,
+                                const ZZ_pEX &extension_modulus) {
+  Bytes out;
+  AppendSerializedExtensionElement(out, x, extension_modulus,
+                                   "SerializeExtensionElement");
   return out;
 }
 
@@ -1234,52 +1295,72 @@ void ProverCommitRoundExtensionNoValidate(
   }
 }
 
-Digest BytesToDigest32(const Bytes &bytes, const char *func_name) {
-  if (bytes.size() != 32) {
-    const std::string msg = std::string(func_name) + ": digest must be 32 bytes";
+std::size_t MaxSerializedFieldElementSizeOrThrow(const char *func_name) {
+  const long r = ZZ_pE::degree();
+  if (r <= 0) {
+    const std::string msg = std::string(func_name) + ": invalid extension degree";
     LogicError(msg.c_str());
   }
-  Digest out{};
-  std::copy(bytes.begin(), bytes.end(), out.begin());
-  return out;
+  const long coeff_max_bytes = std::max<long>(1, NumBytes(ZZ_p::modulus()));
+  return static_cast<std::size_t>(8) +
+         static_cast<std::size_t>(r) *
+             (static_cast<std::size_t>(8) +
+              static_cast<std::size_t>(coeff_max_bytes));
+}
+
+std::size_t MaxSerializedExtensionElementSizeOrThrow(
+    const ZZ_pEX &extension_modulus, const char *func_name) {
+  const long ext_degree = ExtensionDegreeOrThrow(extension_modulus, func_name);
+  return static_cast<std::size_t>(8) +
+         static_cast<std::size_t>(ext_degree) *
+             MaxSerializedFieldElementSizeOrThrow(func_name);
 }
 
 Digest HashExtensionLeaf(long index, const ZZ_pEX &value,
-                         const ZZ_pEX &extension_modulus) {
-  Bytes payload;
-  payload.reserve(1 + 8 + 8);
+                         const ZZ_pEX &extension_modulus,
+                         Bytes *scratch_payload = nullptr) {
+  Bytes local_payload;
+  Bytes &payload = (scratch_payload != nullptr) ? *scratch_payload : local_payload;
+  payload.clear();
   payload.push_back(static_cast<Byte>(0x30));
   AppendU64(payload, static_cast<std::uint64_t>(index));
-  const Bytes encoded = SerializeExtensionElement(value, extension_modulus);
-  AppendU64(payload, static_cast<std::uint64_t>(encoded.size()));
-  payload.insert(payload.end(), encoded.begin(), encoded.end());
-  return BytesToDigest32(Sha256(payload), "HashExtensionLeaf");
+
+  const std::size_t encoded_len_pos = payload.size();
+  AppendU64(payload, 0);
+  const std::size_t encoded_start = payload.size();
+  AppendSerializedExtensionElement(payload, value, extension_modulus,
+                                   "HashExtensionLeaf");
+  const std::uint64_t encoded_len =
+      static_cast<std::uint64_t>(payload.size() - encoded_start);
+  StoreU64BigEndian(payload.data() + encoded_len_pos, encoded_len);
+
+  return Sha256Digest(payload.data(), payload.size(), "HashExtensionLeaf");
 }
 
 Digest HashExtensionNode(const Digest &left, const Digest &right) {
-  Bytes payload;
-  payload.reserve(1 + left.size() + right.size());
-  payload.push_back(static_cast<Byte>(0x31));
-  payload.insert(payload.end(), left.begin(), left.end());
-  payload.insert(payload.end(), right.begin(), right.end());
-  return BytesToDigest32(Sha256(payload), "HashExtensionNode");
+  std::array<Byte, 1 + 32 + 32> payload{};
+  payload[0] = static_cast<Byte>(0x31);
+  std::copy(left.begin(), left.end(), payload.begin() + 1);
+  std::copy(right.begin(), right.end(), payload.begin() + 1 + left.size());
+  return Sha256Digest(payload.data(), payload.size(), "HashExtensionNode");
 }
 
 Digest HashExtensionRawRootEmpty() {
-  const Bytes payload{static_cast<Byte>(0x32)};
-  return BytesToDigest32(Sha256(payload), "HashExtensionRawRootEmpty");
+  const Byte payload[1] = {static_cast<Byte>(0x32)};
+  return Sha256Digest(payload, sizeof(payload), "HashExtensionRawRootEmpty");
 }
 
 Digest HashExtensionRootWithCount(long leaf_count, const Digest &raw_root) {
   if (leaf_count <= 0) {
     LogicError("HashExtensionRootWithCount: invalid leaf_count");
   }
-  Bytes payload;
-  payload.reserve(1 + 8 + raw_root.size());
-  payload.push_back(static_cast<Byte>(0x33));
-  AppendU64(payload, static_cast<std::uint64_t>(leaf_count));
-  payload.insert(payload.end(), raw_root.begin(), raw_root.end());
-  return BytesToDigest32(Sha256(payload), "HashExtensionRootWithCount");
+  std::array<Byte, 1 + 8 + 32> payload{};
+  payload[0] = static_cast<Byte>(0x33);
+  StoreU64BigEndian(payload.data() + 1,
+                    static_cast<std::uint64_t>(leaf_count));
+  std::copy(raw_root.begin(), raw_root.end(), payload.begin() + 1 + 8);
+  return Sha256Digest(payload.data(), payload.size(),
+                      "HashExtensionRootWithCount");
 }
 
 std::size_t ExpectedExtensionMerkleHeight(long leaf_count) {
@@ -1315,11 +1396,17 @@ class ExtensionMerkleTree {
     ExtensionMerkleTree tree;
     tree.leaf_count_ = static_cast<long>(oracle.size());
 
+    Bytes leaf_payload;
+    leaf_payload.reserve(static_cast<std::size_t>(1 + 8 + 8) +
+                         MaxSerializedExtensionElementSizeOrThrow(
+                             extension_modulus, "ExtensionMerkleTree::Build"));
+
     std::vector<Digest> level;
     level.resize(oracle.size());
     for (long i = 0; i < tree.leaf_count_; ++i) {
       level[static_cast<std::size_t>(i)] = HashExtensionLeaf(
-          i, oracle[static_cast<std::size_t>(i)], extension_modulus);
+          i, oracle[static_cast<std::size_t>(i)], extension_modulus,
+          &leaf_payload);
     }
 
     tree.levels_.clear();

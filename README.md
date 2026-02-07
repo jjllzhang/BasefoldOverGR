@@ -228,48 +228,41 @@ cmake --build build-release
 ./build/bench_pcs_communication --help
 ```
 
-示例（4 类用例在 commit/eval/proof_size 的对照）：
+示例（128-bit 可复现参数，一套常量覆盖四个 bench）：
 
 ```bash
-# ===== 1) 大素数域 F_p (p>1000), p=1223, zeta = -1 =====
-./build/bench_pcs_commit --mode field --field-mod 1223 --field-F 0,1 --field-zeta 1222 --d 16 --reps 5 --warmup 1
-./build/bench_pcs_eval --mode field --field-mod 1223 --field-F 0,1 --field-zeta 1222 --d 16 --queries 4 --reps 3 --warmup 1
-./build/bench_pcs_proof_size --mode field --field-mod 1223 --field-F 0,1 --field-zeta 1222 --d 16 --queries 4
+# ---------- 固定参数（可选；仅在你想用变量写法时需要） ----------
+# 128-bit 素数（field）
+FIELD_MOD_128=326594724262804054738278293730872375507
+# 64-bit 素数 p，以及 p^2（128-bit，ring）
+RING_P_64=18446744073709551557
+RING_MOD_128=340282366920938461286658806734041124249   # = RING_P_64^2
+#
+# field: F(x)=x^2+1, zeta=x
+FIELD_F=1,0,1
+FIELD_ZETA=0,1
+#
+# ring:  F(x)=x^2+x+1, zeta=x
+RING_F=1,1,1
+RING_ZETA=0,1
 
-# ===== 1b) 大素数域 F_p (p>1000), p=1223, zeta != -1（auto-zeta 版本） =====
-./build/bench_pcs_commit --mode field --field-mod 1223 --field-F 0,1 --auto-zeta teich --d 16 --reps 5 --warmup 1
-./build/bench_pcs_eval --mode field --field-mod 1223 --field-F 0,1 --auto-zeta teich --d 16 --queries 4 --reps 3 --warmup 1
-./build/bench_pcs_proof_size --mode field --field-mod 1223 --field-F 0,1 --auto-zeta teich --d 16 --queries 4
+# ---------- Field profile (GF(p^2), p 为 128-bit；无变量版本，直接可运行) ----------
+./build/bench_pcs_commit --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --reps 3 --warmup 1
+./build/bench_pcs_eval --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --queries 2 --reps 2 --warmup 1
+./build/bench_pcs_proof_size --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --queries 2 --formula
+./build/bench_pcs_communication --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --d 10 --queries 2
 
-# ===== 2) 2 的扩域 F_(2^r), r>10（r=11）, zeta auto =====
-# F(x)=x^11+x^2+1 -> coeffs: 1,0,1,0,0,0,0,0,0,0,0,1
-./build/bench_pcs_commit --mode field --field-mod 2 --field-F 1,0,1,0,0,0,0,0,0,0,0,1 --auto-zeta teich --d 16 --reps 5 --warmup 1
-./build/bench_pcs_eval --mode field --field-mod 2 --field-F 1,0,1,0,0,0,0,0,0,0,0,1 --auto-zeta teich --d 16 --queries 4 --reps 3 --warmup 1
-./build/bench_pcs_proof_size --mode field --field-mod 2 --field-F 1,0,1,0,0,0,0,0,0,0,0,1 --auto-zeta teich --d 16 --queries 4
+# ---------- Ring profile (GR(p^2,2), p 为 64-bit, p^2 为 128-bit；无变量版本，直接可运行) ----------
+./build/bench_pcs_commit --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --reps 3 --warmup 1
+./build/bench_pcs_eval --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --queries 2 --reps 2 --warmup 1
+./build/bench_pcs_proof_size --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --queries 2 --formula
+./build/bench_pcs_communication --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --d 10 --queries 2
 
-# ===== 3) GR(2^r,s), s>10（2^r=4, s=11）, zeta auto =====
-./build/bench_pcs_commit --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,0,1,0,0,0,0,0,0,0,0,1 --auto-zeta teich --d 16 --reps 5 --warmup 1
-./build/bench_pcs_eval --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,0,1,0,0,0,0,0,0,0,0,1 --auto-zeta teich --d 16 --queries 4 --reps 3 --warmup 1
-./build/bench_pcs_proof_size --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,0,1,0,0,0,0,0,0,0,0,1 --auto-zeta teich --d 16 --queries 4
-
-# ===== 4) 一般 GR(p^r,s), p!=2 且 p^s>1000（p=43, r=2, s=2）, zeta = -1 =====
-./build/bench_pcs_commit --mode ring --ring-mod 1849 --ring-p 43 --ring-F 1,0,1 --ring-zeta 1848 --d 16 --reps 5 --warmup 1
-./build/bench_pcs_eval --mode ring --ring-mod 1849 --ring-p 43 --ring-F 1,0,1 --ring-zeta 1848 --d 16 --queries 4 --reps 3 --warmup 1
-./build/bench_pcs_proof_size --mode ring --ring-mod 1849 --ring-p 43 --ring-F 1,0,1 --ring-zeta 1848 --d 16 --queries 4
-
-# ===== 4b) 一般 GR(p^r,s), p!=2 且 p^s>1000（p=43, r=2, s=2）, zeta != -1（auto-zeta 版本） =====
-./build/bench_pcs_commit --mode ring --ring-mod 1849 --ring-p 43 --ring-F 1,0,1 --auto-zeta teich --d 16 --reps 5 --warmup 1
-./build/bench_pcs_eval --mode ring --ring-mod 1849 --ring-p 43 --ring-F 1,0,1 --auto-zeta teich --d 16 --queries 4 --reps 3 --warmup 1
-./build/bench_pcs_proof_size --mode ring --ring-mod 1849 --ring-p 43 --ring-F 1,0,1 --auto-zeta teich --d 16 --queries 4
-
-# ===== 5) 扩域 challenge 路径（扩域，F_(2^11)）=====
+# ---------- extension-challenge 路径 ----------
 # 注意：challenge 多项式参数含 ';'，请使用引号
-# F(x)=x^11+x^2+1；E(U)=U^2+U+1（写作 '1;1;1'）
-./build/bench_pcs_eval --mode field --field-mod 2 --field-F 1,0,1,0,0,0,0,0,0,0,0,1 --auto-zeta teich --use-extension-challenges --field-challenge-ext '1;1;1' --d 16 --queries 4 --reps 3 --warmup 1
-
-# ===== 6) 扩环 challenge 路径（扩环，GR(4,11)）=====
-# F(x)=x^11+x^2+1；E(U)=U^2+U+1（写作 '1;1;1'）
-./build/bench_pcs_eval --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,0,1,0,0,0,0,0,0,0,0,1 --auto-zeta teich --use-extension-challenges --ring-challenge-ext '1;1;1' --d 16 --queries 4 --reps 3 --warmup 1
+# E(U) = (0 + 3*x) + U + U^2  => '0,3;1;1'
+./build/bench_pcs_eval --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --use-extension-challenges --field-challenge-ext '0,3;1;1' --d 10 --queries 2 --reps 1 --warmup 0
+./build/bench_pcs_eval --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --use-extension-challenges --ring-challenge-ext '0,3;1;1' --d 10 --queries 2 --reps 1 --warmup 0
 ```
 
 ### Profiling（`--profile`）
@@ -322,6 +315,6 @@ cmake --build build-release
 示例：
 
 ```bash
-./build/bench_pcs_communication --mode field --field-mod 2 --field-F 1,1,1 --d 16 --queries 4
-./build/bench_pcs_communication --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --d 16 --queries 4
+./build/bench_pcs_communication --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --d 10 --queries 2
+./build/bench_pcs_communication --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --d 10 --queries 2
 ```
