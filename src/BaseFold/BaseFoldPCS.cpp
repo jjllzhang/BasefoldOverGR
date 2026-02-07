@@ -23,6 +23,10 @@
 #include "BaseFold/Profile.hpp"
 #include "GaloisRing/Inverse.hpp"
 
+#if defined(BASEFOLD_USE_OPENMP)
+#include <omp.h>
+#endif
+
 using NTL::BytesFromZZ;
 using NTL::coeff;
 using NTL::LogicError;
@@ -41,6 +45,37 @@ using NTL::ZZ_pX;
 
 namespace basefold {
 namespace {
+
+template <typename Fn>
+void ForEachIndexMaybeParallel(long begin, long end, long parallel_threshold,
+                               const Fn &fn) {
+  if (end <= begin) return;
+#if defined(BASEFOLD_USE_OPENMP)
+  const long work_items = end - begin;
+  if (work_items >= parallel_threshold) {
+    const int max_threads = omp_get_max_threads();
+    int threads_to_use = static_cast<int>(work_items / parallel_threshold);
+    if (threads_to_use > max_threads) threads_to_use = max_threads;
+    if (threads_to_use >= 2) {
+      const ZZ base_modulus = NTL::ZZ_p::modulus();
+      const ZZ_pX extension_modulus = NTL::ZZ_pE::modulus().val();
+#pragma omp parallel num_threads(threads_to_use)
+      {
+        NTL::ZZ_p::init(base_modulus);
+        NTL::ZZ_pE::init(extension_modulus);
+#pragma omp for schedule(static)
+        for (long i = begin; i < end; ++i) {
+          fn(i);
+        }
+      }
+      return;
+    }
+  }
+#endif
+  for (long i = begin; i < end; ++i) {
+    fn(i);
+  }
+}
 
 long Pow2Checked(long e) {
   if (e < 0)
@@ -1269,30 +1304,31 @@ void ProverCommitRoundExtensionNoValidate(
 
   std::vector<FieldElement> denoms;
   denoms.resize(static_cast<std::size_t>(n_i));
-  for (long j = 0; j < n_i; ++j) {
+  constexpr long kParallelThreshold = 4096;
+  ForEachIndexMaybeParallel(0, n_i, kParallelThreshold, [&](long j) {
     const FieldElement &t = diag[static_cast<std::size_t>(j)];
     denoms[static_cast<std::size_t>(j)] = zeta_minus_one * t;
-  }
+  });
 
   std::vector<FieldElement> inv_denoms;
   if (!BatchInvertBaseUnits(inv_denoms, denoms)) {
     inv_denoms.resize(static_cast<std::size_t>(n_i));
-    for (long j = 0; j < n_i; ++j) {
+    ForEachIndexMaybeParallel(0, n_i, kParallelThreshold, [&](long j) {
       if (!TryInvertBaseUnit(inv_denoms[static_cast<std::size_t>(j)],
                              denoms[static_cast<std::size_t>(j)])) {
         LogicError(
             "ProverCommitRoundExtensionNoValidate: denominator is not invertible");
       }
-    }
+    });
   }
 
-  for (long j = 0; j < n_i; ++j) {
+  ForEachIndexMaybeParallel(0, n_i, kParallelThreshold, [&](long j) {
     const FieldElement &x1 = diag[static_cast<std::size_t>(j)];
     pi_i[static_cast<std::size_t>(j)] = EvalLineAtExtensionWithInvDenom(
         alpha_i, x1, pi_ip1[static_cast<std::size_t>(j)],
         pi_ip1[static_cast<std::size_t>(j + n_i)],
         inv_denoms[static_cast<std::size_t>(j)], extension_modulus);
-  }
+  });
 }
 
 std::size_t MaxSerializedFieldElementSizeOrThrow(const char *func_name) {
