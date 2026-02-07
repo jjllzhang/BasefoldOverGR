@@ -2,6 +2,7 @@
 
 #include <NTL/ZZ.h>
 #include <NTL/ZZ_pE.h>
+#include <NTL/ZZ_pEX.h>
 #include <NTL/ZZ_pX.h>
 
 #include <cstddef>
@@ -36,6 +37,17 @@ std::size_t SerializedMerkleOpeningSize(const MerkleOpening &o) {
   return total;
 }
 
+std::size_t SerializedExtensionElementSize(const NTL::ZZ_pEX &x) {
+  const long d = NTL::deg(x);
+  std::size_t total = 8;  // coeff count as u64
+  for (long i = 0; i <= d; ++i) {
+    const std::size_t c_size =
+        SerializedFieldElementSize(NTL::coeff(x, i));
+    total += 8 + c_size;
+  }
+  return total;
+}
+
 }  // namespace
 
 std::uint64_t BaseFoldPCSEvalProofSizeBytes(const BaseFoldPCSEvalProof &p) {
@@ -64,6 +76,35 @@ std::uint64_t BaseFoldPCSEvalProofSizeBytes(const BaseFoldPCSEvalProof &p) {
     }
     for (const MerkleOpening &o : qp.folded) {
       total += static_cast<std::uint64_t>(SerializedMerkleOpeningSize(o));
+    }
+  }
+
+  if (p.extension.enabled) {
+    total += 1;  // enabled flag
+    for (const ExtensionQuadraticPoly &h : p.extension.h_by_level) {
+      total += static_cast<std::uint64_t>(SerializedExtensionElementSize(h.a0));
+      total += static_cast<std::uint64_t>(SerializedExtensionElementSize(h.a1));
+      total += static_cast<std::uint64_t>(SerializedExtensionElementSize(h.a2));
+    }
+    for (const NTL::ZZ_pEX &r : p.extension.r_by_level) {
+      total += static_cast<std::uint64_t>(SerializedExtensionElementSize(r));
+    }
+    for (const NTL::ZZ_pEX &c : p.extension.msg0_coeffs) {
+      total += static_cast<std::uint64_t>(SerializedExtensionElementSize(c));
+    }
+    for (const NTL::ZZ_pEX &v : p.extension.pi0_full) {
+      total += static_cast<std::uint64_t>(SerializedExtensionElementSize(v));
+    }
+    for (const BaseFoldPCSQueryProofExtension &qp : p.extension.query_proofs) {
+      for (const NTL::ZZ_pEX &v : qp.left) {
+        total += static_cast<std::uint64_t>(SerializedExtensionElementSize(v));
+      }
+      for (const NTL::ZZ_pEX &v : qp.right) {
+        total += static_cast<std::uint64_t>(SerializedExtensionElementSize(v));
+      }
+      for (const NTL::ZZ_pEX &v : qp.folded) {
+        total += static_cast<std::uint64_t>(SerializedExtensionElementSize(v));
+      }
     }
   }
 

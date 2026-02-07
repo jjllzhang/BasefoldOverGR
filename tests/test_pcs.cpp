@@ -389,10 +389,22 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
       basefold::BaseFoldPCSProveEvalWithChallengeConfig(f_coeffs, z, y,
                                                         num_queries, params, cfg);
 
+  CHECK(proof.extension.enabled);
+  CHECK(static_cast<long>(proof.extension.r_by_level.size()) == params.d);
+
   CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
       C, z, y, num_queries, proof, params, cfg));
 
   CHECK(!basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params));
+
+  basefold::BaseFoldPCSEvalProof proof_ext_tampered = proof;
+  ZZ_pE coeff1 = NTL::coeff(
+      proof_ext_tampered.extension.query_proofs[0].folded[0], 1);
+  coeff1 += testutil::ConstZZpE(1);
+  NTL::SetCoeff(proof_ext_tampered.extension.query_proofs[0].folded[0], 1,
+                coeff1);
+  CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      C, z, y, num_queries, proof_ext_tampered, params, cfg));
 
   basefold::BaseFoldPCSChallengeConfig cfg_bad = cfg;
   ZZ_pEX E_bad;

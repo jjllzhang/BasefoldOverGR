@@ -20,6 +20,7 @@
 
 #include "BaseFold/Multilinear.hpp"
 #include "BaseFold/Profile.hpp"
+#include "GaloisRing/Inverse.hpp"
 
 using NTL::BytesFromZZ;
 using NTL::coeff;
@@ -396,7 +397,8 @@ void AbsorbPublicInput(Sha256Transcript &transcript, const MerkleRoot &commitmen
 Bytes SerializeExtensionPolynomial(const ZZ_pEX &poly) {
   const long d = NTL::deg(poly);
   Bytes out;
-  const std::uint64_t coeff_count = (d < 0) ? 0ULL : static_cast<std::uint64_t>(d + 1);
+  const std::uint64_t coeff_count =
+      (d < 0) ? 0ULL : static_cast<std::uint64_t>(d + 1);
   AppendU64(out, coeff_count);
   for (long i = 0; i <= d; ++i) {
     const Bytes coeff_bytes = SerializeFieldElement(coeff(poly, i));
@@ -418,14 +420,123 @@ void AbsorbChallengeConfig(Sha256Transcript &transcript,
       SerializeExtensionPolynomial(challenge_cfg.challenge_extension_modulus));
 }
 
-FieldElement SampleProjectedBaseChallengeFromExtension(
-    const Sha256Transcript &transcript, const std::string &label,
-    const ZZ_pEX &extension_modulus) {
+long ExtensionDegreeOrThrow(const ZZ_pEX &extension_modulus,
+                           const char *func_name) {
   const long ext_degree = NTL::deg(extension_modulus);
   if (ext_degree <= 0) {
-    LogicError(
-        "SampleProjectedBaseChallengeFromExtension: invalid extension degree");
+    const std::string msg = std::string(func_name) + ": invalid extension degree";
+    LogicError(msg.c_str());
   }
+  return ext_degree;
+}
+
+FieldElement BaseRingOne() {
+  FieldElement one;
+  NTL::set(one);
+  return one;
+}
+
+ZZ_pEX LiftBaseToExtension(const FieldElement &x) {
+  ZZ_pEX out;
+  NTL::clear(out);
+  NTL::SetCoeff(out, 0, x);
+  return out;
+}
+
+FieldElement ProjectExtensionToBaseConstant(const ZZ_pEX &x) {
+  return coeff(x, 0);
+}
+
+void ReduceExtensionElementInPlace(ZZ_pEX &x, const ZZ_pEX &extension_modulus) {
+  NTL::rem(x, x, extension_modulus);
+  x.normalize();
+}
+
+ZZ_pEX ExtensionZero() {
+  ZZ_pEX out;
+  NTL::clear(out);
+  return out;
+}
+
+ZZ_pEX ExtensionOne() { return LiftBaseToExtension(BaseRingOne()); }
+
+ZZ_pEX AddExtension(const ZZ_pEX &a, const ZZ_pEX &b,
+                    const ZZ_pEX &extension_modulus) {
+  ZZ_pEX out = a + b;
+  ReduceExtensionElementInPlace(out, extension_modulus);
+  return out;
+}
+
+ZZ_pEX SubExtension(const ZZ_pEX &a, const ZZ_pEX &b,
+                    const ZZ_pEX &extension_modulus) {
+  ZZ_pEX out = a - b;
+  ReduceExtensionElementInPlace(out, extension_modulus);
+  return out;
+}
+
+ZZ_pEX MulExtension(const ZZ_pEX &a, const ZZ_pEX &b,
+                    const ZZ_pEX &extension_modulus) {
+  ZZ_pEX out = a * b;
+  ReduceExtensionElementInPlace(out, extension_modulus);
+  return out;
+}
+
+ZZ_pEX EqFactorExtension(const ZZ_pEX &z_i, const ZZ_pEX &x_i,
+                         const ZZ_pEX &extension_modulus) {
+  const ZZ_pEX one = ExtensionOne();
+  const ZZ_pEX zx = MulExtension(z_i, x_i, extension_modulus);
+  const ZZ_pEX left = SubExtension(one, z_i, extension_modulus);
+  const ZZ_pEX right = SubExtension(one, x_i, extension_modulus);
+  const ZZ_pEX tail = MulExtension(left, right, extension_modulus);
+  return AddExtension(zx, tail, extension_modulus);
+}
+
+ZZ_pEX EvalExtensionQuadraticPoly(const ExtensionQuadraticPoly &p,
+                                  const ZZ_pEX &x,
+                                  const ZZ_pEX &extension_modulus) {
+  const ZZ_pEX x2 = MulExtension(x, x, extension_modulus);
+  const ZZ_pEX t1 = MulExtension(p.a1, x, extension_modulus);
+  const ZZ_pEX t2 = MulExtension(p.a2, x2, extension_modulus);
+  return AddExtension(AddExtension(p.a0, t1, extension_modulus), t2,
+                      extension_modulus);
+}
+
+Bytes SerializeExtensionElement(const ZZ_pEX &x,
+                                const ZZ_pEX &extension_modulus) {
+  const long ext_degree =
+      ExtensionDegreeOrThrow(extension_modulus, "SerializeExtensionElement");
+
+  ZZ_pEX reduced = x;
+  ReduceExtensionElementInPlace(reduced, extension_modulus);
+
+  Bytes out;
+  AppendU64(out, static_cast<std::uint64_t>(ext_degree));
+  for (long i = 0; i < ext_degree; ++i) {
+    const Bytes c_bytes = SerializeFieldElement(coeff(reduced, i));
+    AppendU64(out, static_cast<std::uint64_t>(c_bytes.size()));
+    out.insert(out.end(), c_bytes.begin(), c_bytes.end());
+  }
+  return out;
+}
+
+void AbsorbExtensionElement(Sha256Transcript &transcript, const ZZ_pEX &x,
+                            const ZZ_pEX &extension_modulus) {
+  transcript.AbsorbBytes(SerializeExtensionElement(x, extension_modulus));
+}
+
+void AbsorbExtensionQuadraticPoly(Sha256Transcript &transcript,
+                                  const ExtensionQuadraticPoly &p,
+                                  const ZZ_pEX &extension_modulus) {
+  AbsorbExtensionElement(transcript, p.a0, extension_modulus);
+  AbsorbExtensionElement(transcript, p.a1, extension_modulus);
+  AbsorbExtensionElement(transcript, p.a2, extension_modulus);
+}
+
+ZZ_pEX SampleExtensionChallenge(const Sha256Transcript &transcript,
+                                const std::string &label,
+                                const ZZ_pEX &extension_modulus) {
+  const long ext_degree =
+      ExtensionDegreeOrThrow(extension_modulus, "SampleExtensionChallenge");
 
   ZZ_pEX sampled;
   NTL::clear(sampled);
@@ -434,10 +545,414 @@ FieldElement SampleProjectedBaseChallengeFromExtension(
         "ext/" + label + "/coeff/" + std::to_string(i));
     NTL::SetCoeff(sampled, i, c);
   }
+  ReduceExtensionElementInPlace(sampled, extension_modulus);
+  return sampled;
+}
 
-  // Compatibility bridge for the first stage: keep the existing proof layout
-  // and arithmetic by projecting the sampled extension challenge to the base.
-  return coeff(sampled, 0);
+bool TryInvertBaseUnit(FieldElement &inv_out, const FieldElement &a) {
+  if (a == 0) {
+    return false;
+  }
+
+  const ZZ modulus = ZZ_p::modulus();
+  if (modulus <= 1) {
+    LogicError("TryInvertBaseUnit: invalid base modulus");
+  }
+
+  if (NTL::ProbPrime(modulus)) {
+    try {
+      inv_out = NTL::inv(a);
+      return true;
+    } catch (...) {
+      return false;
+    }
+  }
+
+  const long r = ZZ_pE::degree();
+  if (r <= 0) {
+    LogicError("TryInvertBaseUnit: invalid extension degree");
+  }
+
+  if (r == 1) {
+    const ZZ a_rep = rep(coeff(rep(a), 0));
+    ZZ inv_rep;
+    if (NTL::InvModStatus(inv_rep, a_rep, modulus) != 0) {
+      return false;
+    }
+    NTL::ZZ_p inv_base;
+    NTL::conv(inv_base, inv_rep);
+    ZZ_pX poly;
+    NTL::clear(poly);
+    NTL::SetCoeff(poly, 0, inv_base);
+    NTL::conv(inv_out, poly);
+    return true;
+  }
+
+  inv_out = Inv(a, r);
+  if (inv_out == 0) {
+    return false;
+  }
+
+  const FieldElement one = BaseRingOne();
+  return a * inv_out == one;
+}
+
+ZZ_pEX EvalLineAtExtension(const ZZ_pEX &x, const FieldElement &x1,
+                           const ZZ_pEX &y1, const FieldElement &x2,
+                           const ZZ_pEX &y2,
+                           const ZZ_pEX &extension_modulus) {
+  const FieldElement denom = x2 - x1;
+  FieldElement inv_denom;
+  if (!TryInvertBaseUnit(inv_denom, denom)) {
+    LogicError("EvalLineAtExtension: denominator is not invertible");
+  }
+
+  const ZZ_pEX inv_denom_ext = LiftBaseToExtension(inv_denom);
+  const ZZ_pEX delta_y = SubExtension(y2, y1, extension_modulus);
+  const ZZ_pEX slope = MulExtension(delta_y, inv_denom_ext, extension_modulus);
+  const ZZ_pEX x1_ext = LiftBaseToExtension(x1);
+  const ZZ_pEX delta_x = SubExtension(x, x1_ext, extension_modulus);
+  const ZZ_pEX correction = MulExtension(slope, delta_x, extension_modulus);
+  return AddExtension(y1, correction, extension_modulus);
+}
+
+std::vector<ZZ_pEX> LiftOracleToExtension(const Oracle &oracle) {
+  std::vector<ZZ_pEX> out;
+  out.resize(static_cast<std::size_t>(oracle.length()));
+  for (long i = 0; i < oracle.length(); ++i) {
+    out[static_cast<std::size_t>(i)] = LiftBaseToExtension(oracle[i]);
+  }
+  return out;
+}
+
+std::vector<ZZ_pEX> BooleanEvalTableFromMonomialCoeffsExtension(
+    const std::vector<ZZ_pEX> &coeffs, long k,
+    const ZZ_pEX &extension_modulus) {
+  if (k < 0) {
+    LogicError(
+        "BooleanEvalTableFromMonomialCoeffsExtension: negative dimension");
+  }
+  if (static_cast<long>(coeffs.size()) != (1L << k)) {
+    LogicError(
+        "BooleanEvalTableFromMonomialCoeffsExtension: length mismatch");
+  }
+
+  std::vector<ZZ_pEX> eval = coeffs;
+  for (long bit = 0; bit < k; ++bit) {
+    const long step = 1L << bit;
+    for (long mask = 0; mask < static_cast<long>(eval.size()); ++mask) {
+      if (mask & step) {
+        eval[static_cast<std::size_t>(mask)] =
+            AddExtension(eval[static_cast<std::size_t>(mask)],
+                         eval[static_cast<std::size_t>(mask ^ step)],
+                         extension_modulus);
+      }
+    }
+  }
+  return eval;
+}
+
+std::vector<ZZ_pEX> Msg0CoeffsAtSuffixChallenges(
+    const vec_ZZ_pE &f_coeffs, long kappa, const std::vector<ZZ_pEX> &r_by_level,
+    const ZZ_pEX &extension_modulus) {
+  if (kappa < 0) {
+    LogicError("Msg0CoeffsAtSuffixChallenges: negative kappa");
+  }
+  const long d = static_cast<long>(r_by_level.size());
+  const long point_dim = kappa + d;
+  if (f_coeffs.length() != (1L << point_dim)) {
+    LogicError("Msg0CoeffsAtSuffixChallenges: f_coeffs length mismatch");
+  }
+
+  std::vector<ZZ_pEX> cur;
+  cur.resize(static_cast<std::size_t>(f_coeffs.length()));
+  for (long i = 0; i < f_coeffs.length(); ++i) {
+    cur[static_cast<std::size_t>(i)] =
+        LiftBaseToExtension(f_coeffs[static_cast<std::size_t>(i)]);
+  }
+
+  long cur_len = static_cast<long>(cur.size());
+  for (long var = point_dim; var-- > kappa;) {
+    const long half = cur_len / 2;
+    const ZZ_pEX &r_var = r_by_level[static_cast<std::size_t>(var - kappa)];
+    for (long i = 0; i < half; ++i) {
+      cur[static_cast<std::size_t>(i)] =
+          AddExtension(cur[static_cast<std::size_t>(i)],
+                       MulExtension(cur[static_cast<std::size_t>(i + half)],
+                                    r_var, extension_modulus),
+                       extension_modulus);
+    }
+    cur.resize(static_cast<std::size_t>(half));
+    cur_len = half;
+  }
+  return cur;
+}
+
+std::vector<ZZ_pEX> EncodeC0Extension(const std::vector<ZZ_pEX> &msg0_coeffs,
+                                      const FoldableCodeParams &params,
+                                      const ZZ_pEX &extension_modulus) {
+  if (static_cast<long>(msg0_coeffs.size()) != params.k0) {
+    LogicError("EncodeC0Extension: msg0_coeffs has wrong length");
+  }
+
+  const long n0 = CodewordLengthAtLevelNoValidate(params, 0);
+  std::vector<ZZ_pEX> out;
+  out.resize(static_cast<std::size_t>(n0), ExtensionZero());
+
+  for (long j = 0; j < n0; ++j) {
+    ZZ_pEX acc = ExtensionZero();
+    for (long row = 0; row < params.k0; ++row) {
+      const ZZ_pEX g = LiftBaseToExtension(
+          params.G0[static_cast<std::size_t>(row)][j]);
+      const ZZ_pEX term = MulExtension(
+          msg0_coeffs[static_cast<std::size_t>(row)], g, extension_modulus);
+      acc = AddExtension(acc, term, extension_modulus);
+    }
+    out[static_cast<std::size_t>(j)] = acc;
+  }
+
+  return out;
+}
+
+class ExtensionSumcheckProver {
+ public:
+  ExtensionSumcheckProver(const FieldVec &f_coeffs,
+                          const std::vector<FieldElement> &z,
+                          const ZZ_pEX &extension_modulus)
+      : extension_modulus_(extension_modulus) {
+    const long n = f_coeffs.length();
+    if (!IsPowerOfTwoLong(n)) {
+      LogicError("ExtensionSumcheckProver: f_coeffs length must be 2^d");
+    }
+    d_ = Log2ExactPowerOfTwoLong(n);
+    if (static_cast<long>(z.size()) != d_) {
+      LogicError("ExtensionSumcheckProver: z dimension mismatch");
+    }
+
+    cur_k_ = d_;
+    z_.resize(static_cast<std::size_t>(d_));
+    for (long i = 0; i < d_; ++i) {
+      z_[static_cast<std::size_t>(i)] =
+          LiftBaseToExtension(z[static_cast<std::size_t>(i)]);
+    }
+
+    std::vector<ZZ_pEX> lifted_coeffs;
+    lifted_coeffs.resize(static_cast<std::size_t>(n));
+    for (long i = 0; i < n; ++i) {
+      lifted_coeffs[static_cast<std::size_t>(i)] =
+          LiftBaseToExtension(f_coeffs[static_cast<std::size_t>(i)]);
+    }
+    f_eval_table_ = BooleanEvalTableFromMonomialCoeffsExtension(
+        lifted_coeffs, d_, extension_modulus_);
+
+    prefix_eq_by_vars_.resize(static_cast<std::size_t>(d_));
+    if (d_ > 0) {
+      prefix_eq_by_vars_[0].resize(1);
+      prefix_eq_by_vars_[0][0] = ExtensionOne();
+
+      for (long t = 1; t < d_; ++t) {
+        const ZZ_pEX z_var = z_[static_cast<std::size_t>(t - 1)];
+        const ZZ_pEX factor0 = SubExtension(ExtensionOne(), z_var,
+                                            extension_modulus_);
+        const ZZ_pEX factor1 = z_var;
+
+        const std::vector<ZZ_pEX> &prev =
+            prefix_eq_by_vars_[static_cast<std::size_t>(t - 1)];
+        const long old = static_cast<long>(prev.size());
+        prefix_eq_by_vars_[static_cast<std::size_t>(t)].resize(
+            static_cast<std::size_t>(2 * old));
+        std::vector<ZZ_pEX> &cur =
+            prefix_eq_by_vars_[static_cast<std::size_t>(t)];
+        for (long mask = 0; mask < old; ++mask) {
+          const ZZ_pEX base = prev[static_cast<std::size_t>(mask)];
+          cur[static_cast<std::size_t>(mask)] =
+              MulExtension(base, factor0, extension_modulus_);
+          cur[static_cast<std::size_t>(mask + old)] =
+              MulExtension(base, factor1, extension_modulus_);
+        }
+      }
+    }
+
+    suffix_eq_prod_ = ExtensionOne();
+  }
+
+  ExtensionQuadraticPoly CurrentPolynomial() const {
+    if (cur_k_ <= 0) {
+      LogicError("ExtensionSumcheckProver::CurrentPolynomial: no variables");
+    }
+
+    const long k = cur_k_;
+    const long n = static_cast<long>(f_eval_table_.size());
+    if (n != (1L << k)) {
+      LogicError(
+          "ExtensionSumcheckProver::CurrentPolynomial: internal length "
+          "mismatch");
+    }
+
+    const long half = 1L << (k - 1);
+    const std::vector<ZZ_pEX> &prefix =
+        prefix_eq_by_vars_[static_cast<std::size_t>(k - 1)];
+    if (static_cast<long>(prefix.size()) != half) {
+      LogicError(
+          "ExtensionSumcheckProver::CurrentPolynomial: prefix size mismatch");
+    }
+
+    const ZZ_pEX one = ExtensionOne();
+    const ZZ_pEX z_k = z_[static_cast<std::size_t>(k - 1)];
+    const ZZ_pEX factor0 = SubExtension(one, z_k, extension_modulus_);
+    const ZZ_pEX factor1 = z_k;
+    const ZZ_pEX delta_factor =
+        SubExtension(factor1, factor0, extension_modulus_);
+
+    ExtensionQuadraticPoly out;
+    out.a0 = ExtensionZero();
+    out.a1 = ExtensionZero();
+    out.a2 = ExtensionZero();
+
+    for (long mask = 0; mask < half; ++mask) {
+      const ZZ_pEX common =
+          MulExtension(prefix[static_cast<std::size_t>(mask)], suffix_eq_prod_,
+                       extension_modulus_);
+
+      const ZZ_pEX eq0 = MulExtension(common, factor0, extension_modulus_);
+      const ZZ_pEX delta_eq =
+          MulExtension(common, delta_factor, extension_modulus_);
+
+      const ZZ_pEX f0 = f_eval_table_[static_cast<std::size_t>(mask)];
+      const ZZ_pEX f1 = f_eval_table_[static_cast<std::size_t>(mask + half)];
+      const ZZ_pEX delta_f = SubExtension(f1, f0, extension_modulus_);
+
+      out.a0 = AddExtension(
+          out.a0, MulExtension(f0, eq0, extension_modulus_),
+          extension_modulus_);
+
+      const ZZ_pEX term1 = MulExtension(f0, delta_eq, extension_modulus_);
+      const ZZ_pEX term2 = MulExtension(delta_f, eq0, extension_modulus_);
+      out.a1 =
+          AddExtension(out.a1, AddExtension(term1, term2, extension_modulus_),
+                       extension_modulus_);
+
+      out.a2 =
+          AddExtension(out.a2, MulExtension(delta_f, delta_eq, extension_modulus_),
+                       extension_modulus_);
+    }
+
+    return out;
+  }
+
+  void ReceiveChallenge(const ZZ_pEX &r_kminus1) {
+    if (cur_k_ <= 0) {
+      LogicError("ExtensionSumcheckProver::ReceiveChallenge: no variables");
+    }
+
+    const long k = cur_k_;
+    const long n = static_cast<long>(f_eval_table_.size());
+    if (n != (1L << k)) {
+      LogicError(
+          "ExtensionSumcheckProver::ReceiveChallenge: internal length "
+          "mismatch");
+    }
+
+    const ZZ_pEX eq = EqFactorExtension(
+        z_[static_cast<std::size_t>(k - 1)], r_kminus1, extension_modulus_);
+    suffix_eq_prod_ = MulExtension(suffix_eq_prod_, eq, extension_modulus_);
+
+    const long half = n / 2;
+    for (long i = 0; i < half; ++i) {
+      const ZZ_pEX f0 = f_eval_table_[static_cast<std::size_t>(i)];
+      const ZZ_pEX f1 = f_eval_table_[static_cast<std::size_t>(i + half)];
+      const ZZ_pEX delta_f = SubExtension(f1, f0, extension_modulus_);
+      f_eval_table_[static_cast<std::size_t>(i)] =
+          AddExtension(f0, MulExtension(delta_f, r_kminus1, extension_modulus_),
+                       extension_modulus_);
+    }
+    f_eval_table_.resize(static_cast<std::size_t>(half));
+    --cur_k_;
+  }
+
+ private:
+  long d_ = 0;
+  long cur_k_ = 0;
+  ZZ_pEX extension_modulus_;
+  std::vector<ZZ_pEX> z_;
+  std::vector<ZZ_pEX> f_eval_table_;
+  std::vector<std::vector<ZZ_pEX>> prefix_eq_by_vars_;
+  ZZ_pEX suffix_eq_prod_;
+};
+
+bool CheckExtensionSumcheckRelations(
+    const std::vector<ExtensionQuadraticPoly> &h_by_level,
+    const std::vector<ZZ_pEX> &r, const FieldElement &claimed_y,
+    const ZZ_pEX &extension_modulus) {
+  const long d = static_cast<long>(h_by_level.size());
+  if (static_cast<long>(r.size()) != d) {
+    return false;
+  }
+  if (d == 0) {
+    return true;
+  }
+
+  const ZZ_pEX zero = ExtensionZero();
+  const ZZ_pEX one = ExtensionOne();
+  const ZZ_pEX claimed_y_ext = LiftBaseToExtension(claimed_y);
+
+  const ExtensionQuadraticPoly &h_d = h_by_level[static_cast<std::size_t>(d - 1)];
+  const ZZ_pEX hd0 = EvalExtensionQuadraticPoly(h_d, zero, extension_modulus);
+  const ZZ_pEX hd1 = EvalExtensionQuadraticPoly(h_d, one, extension_modulus);
+  if (AddExtension(hd0, hd1, extension_modulus) != claimed_y_ext) {
+    return false;
+  }
+
+  for (long k = 1; k < d; ++k) {
+    const ExtensionQuadraticPoly &h_k =
+        h_by_level[static_cast<std::size_t>(k - 1)];
+    const ExtensionQuadraticPoly &h_kp1 =
+        h_by_level[static_cast<std::size_t>(k)];
+    const ZZ_pEX lhs = AddExtension(
+        EvalExtensionQuadraticPoly(h_k, zero, extension_modulus),
+        EvalExtensionQuadraticPoly(h_k, one, extension_modulus),
+        extension_modulus);
+    const ZZ_pEX rhs = EvalExtensionQuadraticPoly(
+        h_kp1, r[static_cast<std::size_t>(k)], extension_modulus);
+    if (lhs != rhs) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+std::vector<std::vector<ZZ_pEX>> BuildExtensionOracleChain(
+    const Oracle &pi_d_base, const std::vector<ZZ_pEX> &r_by_level,
+    const FoldableCodeParams &params, const ZZ_pEX &extension_modulus) {
+  if (static_cast<long>(r_by_level.size()) != params.d) {
+    LogicError("BuildExtensionOracleChain: r_by_level has wrong size");
+  }
+
+  std::vector<std::vector<ZZ_pEX>> ext_oracles;
+  ext_oracles.resize(static_cast<std::size_t>(params.d + 1));
+  ext_oracles[static_cast<std::size_t>(params.d)] =
+      LiftOracleToExtension(pi_d_base);
+
+  for (long i = params.d; i-- > 0;) {
+    const long n_i = CodewordLengthAtLevelNoValidate(params, i);
+    std::vector<ZZ_pEX> &pi_i = ext_oracles[static_cast<std::size_t>(i)];
+    const std::vector<ZZ_pEX> &pi_ip1 =
+        ext_oracles[static_cast<std::size_t>(i + 1)];
+    pi_i.resize(static_cast<std::size_t>(n_i));
+
+    for (long j = 0; j < n_i; ++j) {
+      const FieldElement &t = params.diag_T[static_cast<std::size_t>(i)][j];
+      const FieldElement x1 = t;
+      const FieldElement x2 = params.zeta * t;
+      pi_i[static_cast<std::size_t>(j)] = EvalLineAtExtension(
+          r_by_level[static_cast<std::size_t>(i)], x1,
+          pi_ip1[static_cast<std::size_t>(j)], x2,
+          pi_ip1[static_cast<std::size_t>(j + n_i)], extension_modulus);
+    }
+  }
+
+  return ext_oracles;
 }
 
 BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesUnchecked(
@@ -445,70 +960,88 @@ BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesUnchecked(
     const FieldElement &claimed_y, long num_queries,
     const FoldableCodeParams &params,
     const BaseFoldPCSChallengeConfig &challenge_cfg) {
+  if (params.d == 0) {
+    return BaseFoldPCSProveEvalUnchecked(f_coeffs, z, claimed_y, num_queries,
+                                         params);
+  }
+
+  const ZZ_pEX &extension_modulus = challenge_cfg.challenge_extension_modulus;
+  ExtensionDegreeOrThrow(extension_modulus,
+                         "ProveEvalWithExtensionChallengesUnchecked");
+
   BaseFoldPCSEvalProof proof;
+  proof.extension.enabled = true;
   proof.commitments.roots_by_level.resize(static_cast<std::size_t>(params.d + 1));
-  proof.h_by_level.resize(static_cast<std::size_t>(params.d));
+  for (long i = 0; i < params.d; ++i) {
+    proof.commitments.roots_by_level[static_cast<std::size_t>(i)].fill(0);
+  }
 
-  IOPPOracles oracles;
-  oracles.pi.resize(static_cast<std::size_t>(params.d + 1));
-
-  std::vector<MerkleTree> merkle;
-  merkle.resize(static_cast<std::size_t>(params.d + 1));
-
-  EncodeFoldableUnchecked(oracles.pi[static_cast<std::size_t>(params.d)], f_coeffs,
-                          params);
-  merkle[static_cast<std::size_t>(params.d)] =
-      MerkleTree::Build(oracles.pi[static_cast<std::size_t>(params.d)]);
-  const MerkleRoot root_d =
-      merkle[static_cast<std::size_t>(params.d)].Root();
+  Oracle pi_d_base;
+  EncodeFoldableUnchecked(pi_d_base, f_coeffs, params);
+  const MerkleTree merkle_d = MerkleTree::Build(pi_d_base);
+  const MerkleRoot root_d = merkle_d.Root();
   proof.commitments.roots_by_level[static_cast<std::size_t>(params.d)] = root_d;
 
   Sha256Transcript transcript;
   AbsorbPublicInput(transcript, root_d, z, claimed_y);
   AbsorbChallengeConfig(transcript, challenge_cfg);
 
-  if (params.d == 0) {
-    proof.pi0_full = oracles.pi[0];
-    proof.query_proofs.resize(static_cast<std::size_t>(num_queries));
-    return proof;
-  }
+  proof.extension.h_by_level.resize(static_cast<std::size_t>(params.d));
+  proof.extension.r_by_level.resize(static_cast<std::size_t>(params.d));
+  proof.h_by_level.resize(static_cast<std::size_t>(params.d));
 
-  SumcheckProver sumcheck(f_coeffs, z);
-
-  // h_d
-  const QuadraticPoly h_d = sumcheck.CurrentPolynomial();
-  proof.h_by_level[static_cast<std::size_t>(params.d - 1)] = h_d;
-  transcript.AbsorbQuadraticPoly(h_d);
-
-  std::vector<FieldElement> r_by_level;
-  r_by_level.resize(static_cast<std::size_t>(params.d));
+  ExtensionSumcheckProver sumcheck_ext(f_coeffs, z, extension_modulus);
+  const ExtensionQuadraticPoly h_d_ext = sumcheck_ext.CurrentPolynomial();
+  proof.extension.h_by_level[static_cast<std::size_t>(params.d - 1)] = h_d_ext;
+  AbsorbExtensionQuadraticPoly(transcript, h_d_ext, extension_modulus);
 
   for (long i = params.d; i-- > 0;) {
-    const FieldElement r_i = SampleProjectedBaseChallengeFromExtension(
-        transcript, "r/" + std::to_string(i),
-        challenge_cfg.challenge_extension_modulus);
-    r_by_level[static_cast<std::size_t>(i)] = r_i;
+    const ZZ_pEX r_i_ext = SampleExtensionChallenge(
+        transcript, "r/" + std::to_string(i), extension_modulus);
+    proof.extension.r_by_level[static_cast<std::size_t>(i)] = r_i_ext;
 
-    ProverCommitRoundNoValidate(oracles.pi[static_cast<std::size_t>(i)],
-                                oracles.pi[static_cast<std::size_t>(i + 1)],
-                                r_i, i, params);
-
-    merkle[static_cast<std::size_t>(i)] =
-        MerkleTree::Build(oracles.pi[static_cast<std::size_t>(i)]);
-    const MerkleRoot root_i = merkle[static_cast<std::size_t>(i)].Root();
-    proof.commitments.roots_by_level[static_cast<std::size_t>(i)] = root_i;
-    transcript.AbsorbDigest(root_i);
-
-    sumcheck.ReceiveChallenge(r_i);
+    sumcheck_ext.ReceiveChallenge(r_i_ext);
     if (i > 0) {
-      const QuadraticPoly h_i = sumcheck.CurrentPolynomial();
-      proof.h_by_level[static_cast<std::size_t>(i - 1)] = h_i;
-      transcript.AbsorbQuadraticPoly(h_i);
+      const ExtensionQuadraticPoly h_i_ext = sumcheck_ext.CurrentPolynomial();
+      proof.extension.h_by_level[static_cast<std::size_t>(i - 1)] = h_i_ext;
+      AbsorbExtensionQuadraticPoly(transcript, h_i_ext, extension_modulus);
     }
   }
 
-  proof.pi0_full = oracles.pi[0];
+  for (long i = 0; i < params.d; ++i) {
+    const ExtensionQuadraticPoly &h_ext =
+        proof.extension.h_by_level[static_cast<std::size_t>(i)];
+    proof.h_by_level[static_cast<std::size_t>(i)].a0 =
+        ProjectExtensionToBaseConstant(h_ext.a0);
+    proof.h_by_level[static_cast<std::size_t>(i)].a1 =
+        ProjectExtensionToBaseConstant(h_ext.a1);
+    proof.h_by_level[static_cast<std::size_t>(i)].a2 =
+        ProjectExtensionToBaseConstant(h_ext.a2);
+  }
+
+  const std::vector<std::vector<ZZ_pEX>> ext_oracles =
+      BuildExtensionOracleChain(pi_d_base, proof.extension.r_by_level, params,
+                                extension_modulus);
+  proof.extension.pi0_full = ext_oracles[0];
+
+  const long kappa = Log2ExactPowerOfTwoLong(params.k0);
+  proof.extension.msg0_coeffs = Msg0CoeffsAtSuffixChallenges(
+      f_coeffs, kappa, proof.extension.r_by_level, extension_modulus);
+  const std::vector<ZZ_pEX> expected_pi0 = EncodeC0Extension(
+      proof.extension.msg0_coeffs, params, extension_modulus);
+  if (expected_pi0 != proof.extension.pi0_full) {
+    LogicError("ProveEvalWithExtensionChallengesUnchecked: internal pi0 mismatch");
+  }
+
+  proof.pi0_full.SetLength(
+      static_cast<long>(proof.extension.pi0_full.size()));
+  for (long i = 0; i < proof.pi0_full.length(); ++i) {
+    proof.pi0_full[i] = ProjectExtensionToBaseConstant(
+        proof.extension.pi0_full[static_cast<std::size_t>(i)]);
+  }
+
   proof.query_proofs.resize(static_cast<std::size_t>(num_queries));
+  proof.extension.query_proofs.resize(static_cast<std::size_t>(num_queries));
 
   const long n_last = CodewordLengthAtLevelNoValidate(params, params.d - 1);
   for (long q = 0; q < num_queries; ++q) {
@@ -521,21 +1054,44 @@ BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesUnchecked(
     qp.right.resize(static_cast<std::size_t>(params.d));
     qp.folded.resize(static_cast<std::size_t>(params.d));
 
+    BaseFoldPCSQueryProofExtension qp_ext;
+    qp_ext.left.resize(static_cast<std::size_t>(params.d));
+    qp_ext.right.resize(static_cast<std::size_t>(params.d));
+    qp_ext.folded.resize(static_cast<std::size_t>(params.d));
+
     for (long i = 0; i < params.d; ++i) {
       const long mu_i = plan.mu_by_level[static_cast<std::size_t>(i)];
       const long n_i = CodewordLengthAtLevelNoValidate(params, i);
-      qp.left[static_cast<std::size_t>(i)] =
-          merkle[static_cast<std::size_t>(i + 1)].Open(
-              oracles.pi[static_cast<std::size_t>(i + 1)], mu_i);
-      qp.right[static_cast<std::size_t>(i)] =
-          merkle[static_cast<std::size_t>(i + 1)].Open(
-              oracles.pi[static_cast<std::size_t>(i + 1)], mu_i + n_i);
-      qp.folded[static_cast<std::size_t>(i)] =
-          merkle[static_cast<std::size_t>(i)].Open(
-              oracles.pi[static_cast<std::size_t>(i)], mu_i);
+      qp_ext.left[static_cast<std::size_t>(i)] =
+          ext_oracles[static_cast<std::size_t>(i + 1)]
+                     [static_cast<std::size_t>(mu_i)];
+      qp_ext.right[static_cast<std::size_t>(i)] =
+          ext_oracles[static_cast<std::size_t>(i + 1)]
+                     [static_cast<std::size_t>(mu_i + n_i)];
+      qp_ext.folded[static_cast<std::size_t>(i)] =
+          ext_oracles[static_cast<std::size_t>(i)]
+                     [static_cast<std::size_t>(mu_i)];
+
+      qp.left[static_cast<std::size_t>(i)].index = mu_i;
+      qp.left[static_cast<std::size_t>(i)].value =
+          ProjectExtensionToBaseConstant(qp_ext.left[static_cast<std::size_t>(i)]);
+      qp.right[static_cast<std::size_t>(i)].index = mu_i + n_i;
+      qp.right[static_cast<std::size_t>(i)].value = ProjectExtensionToBaseConstant(
+          qp_ext.right[static_cast<std::size_t>(i)]);
+      qp.folded[static_cast<std::size_t>(i)].index = mu_i;
+      qp.folded[static_cast<std::size_t>(i)].value = ProjectExtensionToBaseConstant(
+          qp_ext.folded[static_cast<std::size_t>(i)]);
     }
 
+    const long top_i = params.d - 1;
+    const long mu_top = plan.mu_by_level[static_cast<std::size_t>(top_i)];
+    const long n_top = CodewordLengthAtLevelNoValidate(params, top_i);
+    qp.left[static_cast<std::size_t>(top_i)] = merkle_d.Open(pi_d_base, mu_top);
+    qp.right[static_cast<std::size_t>(top_i)] =
+        merkle_d.Open(pi_d_base, mu_top + n_top);
+
     proof.query_proofs[static_cast<std::size_t>(q)] = std::move(qp);
+    proof.extension.query_proofs[static_cast<std::size_t>(q)] = std::move(qp_ext);
   }
 
   return proof;
@@ -546,6 +1102,14 @@ bool VerifyEvalWithExtensionChallenges(
     const FieldElement &claimed_y, long num_queries,
     const BaseFoldPCSEvalProof &proof, const FoldableCodeParams &params,
     const BaseFoldPCSChallengeConfig &challenge_cfg) {
+  if (params.d == 0) {
+    return BaseFoldPCSVerifyEval(commitment_C, z, claimed_y, num_queries, proof,
+                                 params);
+  }
+
+  const ZZ_pEX &extension_modulus = challenge_cfg.challenge_extension_modulus;
+  ExtensionDegreeOrThrow(extension_modulus, "VerifyEvalWithExtensionChallenges");
+
   ValidateParamsOrThrow(params);
   if (!IsPowerOfTwoLong(params.k0))
     return false;
@@ -557,7 +1121,18 @@ bool VerifyEvalWithExtensionChallenges(
     return false;
   if (static_cast<long>(proof.commitments.roots_by_level.size()) != params.d + 1)
     return false;
-  if (static_cast<long>(proof.h_by_level.size()) != params.d)
+  if (!proof.extension.enabled)
+    return false;
+  if (static_cast<long>(proof.extension.h_by_level.size()) != params.d)
+    return false;
+  if (static_cast<long>(proof.extension.r_by_level.size()) != params.d)
+    return false;
+  if (static_cast<long>(proof.extension.msg0_coeffs.size()) != params.k0)
+    return false;
+  const long n0 = CodewordLengthAtLevel(params, 0);
+  if (static_cast<long>(proof.extension.pi0_full.size()) != n0)
+    return false;
+  if (static_cast<long>(proof.extension.query_proofs.size()) != num_queries)
     return false;
   if (static_cast<long>(proof.query_proofs.size()) != num_queries)
     return false;
@@ -567,111 +1142,98 @@ bool VerifyEvalWithExtensionChallenges(
     return false;
   }
 
-  const long n0 = CodewordLengthAtLevel(params, 0);
-  if (proof.pi0_full.length() != n0)
-    return false;
-
-  if (params.d == 0) {
-    if (!proof.h_by_level.empty())
-      return false;
-    if (MerkleCommitOracle(proof.pi0_full) != commitment_C)
-      return false;
-
-    vec_ZZ_pE msg0;
-    if (!DecodeC0(msg0, proof.pi0_full, params))
-      return false;
-    if (msg0.length() != params.k0)
-      return false;
-
-    return EvalMultilinearMonomialCoeffs(msg0, z) == claimed_y;
-  }
-
   Sha256Transcript transcript;
   AbsorbPublicInput(transcript, commitment_C, z, claimed_y);
   AbsorbChallengeConfig(transcript, challenge_cfg);
 
-  // h_d
-  transcript.AbsorbQuadraticPoly(
-      proof.h_by_level[static_cast<std::size_t>(params.d - 1)]);
+  AbsorbExtensionQuadraticPoly(
+      transcript,
+      proof.extension.h_by_level[static_cast<std::size_t>(params.d - 1)],
+      extension_modulus);
 
-  std::vector<FieldElement> r_by_level;
+  std::vector<ZZ_pEX> r_by_level;
   r_by_level.resize(static_cast<std::size_t>(params.d));
 
   for (long i = params.d; i-- > 0;) {
-    const FieldElement r_i = SampleProjectedBaseChallengeFromExtension(
-        transcript, "r/" + std::to_string(i),
-        challenge_cfg.challenge_extension_modulus);
+    const ZZ_pEX r_i = SampleExtensionChallenge(
+        transcript, "r/" + std::to_string(i), extension_modulus);
     r_by_level[static_cast<std::size_t>(i)] = r_i;
-
-    transcript.AbsorbDigest(
-        proof.commitments.roots_by_level[static_cast<std::size_t>(i)]);
+    if (proof.extension.r_by_level[static_cast<std::size_t>(i)] != r_i) {
+      return false;
+    }
     if (i > 0) {
-      transcript.AbsorbQuadraticPoly(
-          proof.h_by_level[static_cast<std::size_t>(i - 1)]);
+      AbsorbExtensionQuadraticPoly(
+          transcript, proof.extension.h_by_level[static_cast<std::size_t>(i - 1)],
+          extension_modulus);
     }
   }
 
-  if (!CheckSumcheckRelations(proof.h_by_level, r_by_level, claimed_y))
+  if (!CheckExtensionSumcheckRelations(proof.extension.h_by_level, r_by_level,
+                                       claimed_y, extension_modulus))
     return false;
 
-  const FieldElement r0 = r_by_level[0];
-  const FieldElement h1_r0 = proof.h_by_level[0].Eval(r0);
+  const ZZ_pEX r0 = r_by_level[0];
+  const ZZ_pEX h1_r0 = EvalExtensionQuadraticPoly(
+      proof.extension.h_by_level[0], r0, extension_modulus);
 
-  vec_ZZ_pE msg0;
-  if (!DecodeC0(msg0, proof.pi0_full, params))
-    return false;
-  if (msg0.length() != params.k0)
-    return false;
-
-  FieldElement suffix_eq;
-  NTL::set(suffix_eq);
+  ZZ_pEX suffix_eq = ExtensionOne();
   for (long i = 0; i < params.d; ++i) {
-    suffix_eq *= EqFactor(z[static_cast<std::size_t>(kappa + i)],
-                          r_by_level[static_cast<std::size_t>(i)]);
+    const ZZ_pEX zi_ext =
+        LiftBaseToExtension(z[static_cast<std::size_t>(kappa + i)]);
+    suffix_eq = MulExtension(
+        suffix_eq,
+        EqFactorExtension(zi_ext, r_by_level[static_cast<std::size_t>(i)],
+                          extension_modulus),
+        extension_modulus);
   }
 
-  vec_ZZ_pE f_eval = msg0;
-  for (long bit = 0; bit < kappa; ++bit) {
-    const long step = 1L << bit;
-    for (long mask = 0; mask < f_eval.length(); ++mask) {
-      if (mask & step) {
-        f_eval[mask] += f_eval[mask ^ step];
-      }
-    }
-  }
+  const std::vector<ZZ_pEX> f_eval = BooleanEvalTableFromMonomialCoeffsExtension(
+      proof.extension.msg0_coeffs, kappa, extension_modulus);
 
-  vec_ZZ_pE prefix_eq;
-  prefix_eq.SetLength(f_eval.length());
+  std::vector<ZZ_pEX> prefix_eq;
+  prefix_eq.resize(f_eval.size());
   if (kappa == 0) {
-    prefix_eq[0] = FieldElement(1);
+    prefix_eq[0] = ExtensionOne();
   } else {
-    prefix_eq.SetLength(1L << kappa);
-    prefix_eq[0] = FieldElement(1);
+    prefix_eq.resize(static_cast<std::size_t>(1L << kappa));
+    prefix_eq[0] = ExtensionOne();
+    const ZZ_pEX one = ExtensionOne();
     for (long var = 0; var < kappa; ++var) {
       const long old = 1L << var;
-      const FieldElement zi = z[static_cast<std::size_t>(var)];
-      const FieldElement f0 = FieldElement(1) - zi;
-      const FieldElement f1 = zi;
+      const ZZ_pEX zi = LiftBaseToExtension(z[static_cast<std::size_t>(var)]);
+      const ZZ_pEX f0 = SubExtension(one, zi, extension_modulus);
+      const ZZ_pEX f1 = zi;
       for (long mask = 0; mask < old; ++mask) {
-        const FieldElement base = prefix_eq[mask];
-        prefix_eq[mask] = base * f0;
-        prefix_eq[mask + old] = base * f1;
+        const ZZ_pEX base = prefix_eq[static_cast<std::size_t>(mask)];
+        prefix_eq[static_cast<std::size_t>(mask)] =
+            MulExtension(base, f0, extension_modulus);
+        prefix_eq[static_cast<std::size_t>(mask + old)] =
+            MulExtension(base, f1, extension_modulus);
       }
     }
   }
 
-  FieldElement sum = FieldElement(0);
-  for (long mask = 0; mask < f_eval.length(); ++mask) {
-    sum += f_eval[mask] * prefix_eq[mask];
+  ZZ_pEX sum = ExtensionZero();
+  for (long mask = 0; mask < static_cast<long>(f_eval.size()); ++mask) {
+    sum = AddExtension(
+        sum,
+        MulExtension(f_eval[static_cast<std::size_t>(mask)],
+                     prefix_eq[static_cast<std::size_t>(mask)],
+                     extension_modulus),
+        extension_modulus);
   }
 
-  if (suffix_eq * sum != h1_r0)
+  if (MulExtension(suffix_eq, sum, extension_modulus) != h1_r0)
     return false;
 
-  IOPPChallenges challenges;
-  challenges.alphas = r_by_level;
+  const std::vector<ZZ_pEX> expected_pi0 = EncodeC0Extension(
+      proof.extension.msg0_coeffs, params, extension_modulus);
+  if (expected_pi0 != proof.extension.pi0_full) {
+    return false;
+  }
 
   const long n_last = CodewordLengthAtLevel(params, params.d - 1);
+  const long n_d = CodewordLengthAtLevel(params, params.d);
   for (long q = 0; q < num_queries; ++q) {
     const long mu =
         transcript.ChallengeIndex("mu/" + std::to_string(q), n_last);
@@ -679,22 +1241,78 @@ bool VerifyEvalWithExtensionChallenges(
 
     const BaseFoldPCSQueryProof &qp =
         proof.query_proofs[static_cast<std::size_t>(q)];
+    const BaseFoldPCSQueryProofExtension &qp_ext =
+        proof.extension.query_proofs[static_cast<std::size_t>(q)];
     if (static_cast<long>(qp.left.size()) != params.d)
       return false;
     if (static_cast<long>(qp.right.size()) != params.d)
       return false;
-    if (static_cast<long>(qp.folded.size()) != params.d)
+    if (static_cast<long>(qp_ext.left.size()) != params.d)
+      return false;
+    if (static_cast<long>(qp_ext.right.size()) != params.d)
+      return false;
+    if (static_cast<long>(qp_ext.folded.size()) != params.d)
       return false;
 
-    IOPPQueryMerkleOpenings open;
-    open.left = qp.left;
-    open.right = qp.right;
-    open.folded = qp.folded;
-    open.pi0_full = proof.pi0_full;
+    const long top_i = params.d - 1;
+    const long mu_top = plan.mu_by_level[static_cast<std::size_t>(top_i)];
+    const long n_top = CodewordLengthAtLevel(params, top_i);
 
-    if (!VerifyQueryFromMerkleOpenings(plan, challenges, open, proof.commitments,
-                                       params)) {
+    const MerkleOpening &left_top = qp.left[static_cast<std::size_t>(top_i)];
+    const MerkleOpening &right_top = qp.right[static_cast<std::size_t>(top_i)];
+    if (left_top.index != mu_top || right_top.index != mu_top + n_top) {
       return false;
+    }
+    if (!MerkleVerifyOpening(commitment_C, n_d, left_top) ||
+        !MerkleVerifyOpening(commitment_C, n_d, right_top)) {
+      return false;
+    }
+
+    if (qp_ext.left[static_cast<std::size_t>(top_i)] !=
+            LiftBaseToExtension(left_top.value) ||
+        qp_ext.right[static_cast<std::size_t>(top_i)] !=
+            LiftBaseToExtension(right_top.value)) {
+      return false;
+    }
+
+    for (long i = params.d; i-- > 0;) {
+      const long mu_i = plan.mu_by_level[static_cast<std::size_t>(i)];
+      const long n_i = CodewordLengthAtLevel(params, i);
+      if (mu_i < 0 || mu_i >= n_i) {
+        return false;
+      }
+
+      const FieldElement &t = params.diag_T[static_cast<std::size_t>(i)][mu_i];
+      const FieldElement x1 = t;
+      const FieldElement x2 = params.zeta * t;
+      const ZZ_pEX expected_folded = EvalLineAtExtension(
+          r_by_level[static_cast<std::size_t>(i)], x1,
+          qp_ext.left[static_cast<std::size_t>(i)], x2,
+          qp_ext.right[static_cast<std::size_t>(i)], extension_modulus);
+
+      if (expected_folded != qp_ext.folded[static_cast<std::size_t>(i)]) {
+        return false;
+      }
+
+      if (i > 0) {
+        const long n_prev = CodewordLengthAtLevel(params, i - 1);
+        if (mu_i < n_prev) {
+          if (qp_ext.folded[static_cast<std::size_t>(i)] !=
+              qp_ext.left[static_cast<std::size_t>(i - 1)]) {
+            return false;
+          }
+        } else {
+          if (qp_ext.folded[static_cast<std::size_t>(i)] !=
+              qp_ext.right[static_cast<std::size_t>(i - 1)]) {
+            return false;
+          }
+        }
+      } else {
+        if (qp_ext.folded[0] !=
+            proof.extension.pi0_full[static_cast<std::size_t>(mu_i)]) {
+          return false;
+        }
+      }
     }
   }
 

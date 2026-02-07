@@ -20,6 +20,43 @@ struct BaseFoldPCSQueryProof {
   std::vector<MerkleOpening> folded;  // size == params.d
 };
 
+// Degree-2 univariate polynomial over the outer challenge extension ring.
+struct ExtensionQuadraticPoly {
+  NTL::ZZ_pEX a0;
+  NTL::ZZ_pEX a1;
+  NTL::ZZ_pEX a2;
+};
+
+// One query repetition's values along the extension-ring folding chain.
+struct BaseFoldPCSQueryProofExtension {
+  std::vector<NTL::ZZ_pEX> left;    // size == params.d
+  std::vector<NTL::ZZ_pEX> right;   // size == params.d
+  std::vector<NTL::ZZ_pEX> folded;  // size == params.d
+};
+
+// Additional proof payload used by the extension-challenge path.
+//
+// Commitment to π_d remains in the base ring (Merkle over ZZ_pE values), while
+// sumcheck/folding arithmetic below runs in the extension ring E(U).
+struct BaseFoldPCSExtensionProofData {
+  bool enabled = false;
+
+  // h_{i+1}(X) for i=0..d-1, represented in E(U).
+  std::vector<ExtensionQuadraticPoly> h_by_level;
+
+  // r_i for i=0..d-1, represented in E(U).
+  std::vector<NTL::ZZ_pEX> r_by_level;
+
+  // Monomial coefficients of f(·, r_suffix) on the first κ variables.
+  std::vector<NTL::ZZ_pEX> msg0_coeffs;
+
+  // Full π_0 in E(U), derived from extension-ring folding.
+  std::vector<NTL::ZZ_pEX> pi0_full;
+
+  // Query values in E(U).
+  std::vector<BaseFoldPCSQueryProofExtension> query_proofs;
+};
+
 // Non-interactive BaseFold PCS evaluation proof (Protocol 4 + Merkle+FS).
 // Supports k0 = 2^κ (κ>=0) via the BaseFold paper's Remark 3 adaptation:
 // the IOPP recursion has depth params.d, while the committed multilinear
@@ -37,6 +74,10 @@ struct BaseFoldPCSEvalProof {
 
   // Openings for ℓ independent IOPP.query repetitions.
   std::vector<BaseFoldPCSQueryProof> query_proofs;
+
+  // Optional extension-ring payload used when
+  // BaseFoldPCSChallengeConfig::use_extension_challenges=true.
+  BaseFoldPCSExtensionProofData extension;
 };
 
 // Challenge-domain configuration for opening/eval.
@@ -47,8 +88,6 @@ struct BaseFoldPCSEvalProof {
 //
 // When `use_extension_challenges=true`, `challenge_extension_modulus` is
 // expected to define the outer extension E(U) over the current ZZ_pE context.
-// The first API version only exposes this configuration and a Prove/Verify
-// skeleton entrypoint.
 struct BaseFoldPCSChallengeConfig {
   bool use_extension_challenges = false;
   NTL::ZZ_pEX challenge_extension_modulus;
@@ -104,7 +143,9 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
 // - If `challenge_cfg.use_extension_challenges == false`, these forward to the
 //   legacy BaseFoldPCSProveEval/BaseFoldPCSProveEvalUnchecked/VerifyEval.
 // - If `challenge_cfg.use_extension_challenges == true`, they run the first
-//   extension-challenge skeleton path (to be completed in follow-up patches).
+//   extension arithmetic path: challenges are sampled in E(U), and sumcheck /
+//   folding checks run in E(U), while the committed codeword π_d stays in the
+//   base ring.
 BaseFoldPCSEvalProof BaseFoldPCSProveEvalWithChallengeConfig(
     const NTL::vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
     const FieldElement &claimed_y, long num_queries,
