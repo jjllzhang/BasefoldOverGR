@@ -1,6 +1,7 @@
 #include <NTL/ZZ.h>
 #include <NTL/ZZ_p.h>
 #include <NTL/ZZ_pE.h>
+#include <NTL/ZZ_pEX.h>
 #include <NTL/ZZ_pX.h>
 
 #include <algorithm>
@@ -26,6 +27,7 @@ using NTL::to_ZZ;
 using NTL::vec_ZZ_pE;
 using NTL::ZZ;
 using NTL::ZZ_pE;
+using NTL::ZZ_pEX;
 using NTL::ZZ_pEPush;
 using NTL::ZZ_pPush;
 using NTL::ZZ_pX;
@@ -38,6 +40,10 @@ struct ContextSpec {
   long prime_p = 0;  // optional: the prime p (only used by unit checks)
   std::vector<long> F_coeffs;     // extension modulus polynomial coefficients
   std::vector<long> zeta_coeffs;  // ζ element coefficients
+  // Coefficients for challenge extension modulus E(U), represented as
+  // "a0;a1;...;ad", where each ai is a ZZ_pE element written "c0,c1,...".
+  // Empty means "use default E(U) = U^2 + U + zeta".
+  std::vector<std::vector<long>> challenge_ext_coeffs;
 };
 
 struct Stats {
@@ -121,6 +127,28 @@ std::vector<long> ParseCoeffList(const std::string &s) {
   return out;
 }
 
+std::vector<std::vector<long>> ParseNestedCoeffList(const std::string &s) {
+  std::vector<std::vector<long>> out;
+  std::size_t pos = 0;
+  while (pos < s.size()) {
+    const std::size_t semi = s.find(';', pos);
+    const std::size_t end = (semi == std::string::npos) ? s.size() : semi;
+    std::string token = s.substr(pos, end - pos);
+
+    const std::size_t first = token.find_first_not_of(" \t");
+    const std::size_t last = token.find_last_not_of(" \t");
+    if (first == std::string::npos)
+      LogicError("ParseNestedCoeffList: empty coefficient block");
+    token = token.substr(first, last - first + 1);
+
+    out.push_back(ParseCoeffList(token));
+    pos = (semi == std::string::npos) ? s.size() : (semi + 1);
+  }
+  if (out.empty())
+    LogicError("ParseNestedCoeffList: empty list");
+  return out;
+}
+
 ZZ_pX BuildZZpX(const std::vector<long> &coeffs) {
   ZZ_pX poly;
   NTL::clear(poly);
@@ -129,6 +157,29 @@ ZZ_pX BuildZZpX(const std::vector<long> &coeffs) {
       SetCoeff(poly, static_cast<long>(i), coeffs[i]);
     }
   }
+  return poly;
+}
+
+ZZ_pE BuildZZpE(const std::vector<long> &coeffs) {
+  const ZZ_pX poly = BuildZZpX(coeffs);
+  ZZ_pE out;
+  conv(out, poly);
+  return out;
+}
+
+ZZ_pEX BuildZZpEX(const std::vector<std::vector<long>> &coeffs) {
+  if (coeffs.empty()) {
+    LogicError("BuildZZpEX: empty coefficient list");
+  }
+  ZZ_pEX poly;
+  NTL::clear(poly);
+  for (std::size_t i = 0; i < coeffs.size(); ++i) {
+    const ZZ_pE c = BuildZZpE(coeffs[i]);
+    if (c != 0) {
+      NTL::SetCoeff(poly, static_cast<long>(i), c);
+    }
+  }
+  poly.normalize();
   return poly;
 }
 
@@ -349,6 +400,7 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
                              const ZZ_pE &y,
                              long num_queries,
                              const basefold::FoldableCodeParams &params,
+                             const basefold::BaseFoldPCSChallengeConfig *challenge_cfg,
                              bool checked_prover,
                              bool enable_profile,
                              int warmup, int reps) {
@@ -375,11 +427,25 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
         basefold::ProfileGuard guard(&prover_prof);
         basefold::ScopedTimer timer(&prover_prof.pcs_prove_ns,
                                     &prover_prof.pcs_prove_calls);
+        if (challenge_cfg != nullptr) {
+          return checked_prover
+                     ? basefold::BaseFoldPCSProveEvalWithChallengeConfig(
+                           f_coeffs, z, y, num_queries, params, *challenge_cfg)
+                     : basefold::BaseFoldPCSProveEvalWithChallengeConfigUnchecked(
+                           f_coeffs, z, y, num_queries, params, *challenge_cfg);
+        }
         return checked_prover
                    ? basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries,
                                                    params)
                    : basefold::BaseFoldPCSProveEvalUnchecked(
                          f_coeffs, z, y, num_queries, params);
+      }
+      if (challenge_cfg != nullptr) {
+        return checked_prover
+                   ? basefold::BaseFoldPCSProveEvalWithChallengeConfig(
+                         f_coeffs, z, y, num_queries, params, *challenge_cfg)
+                   : basefold::BaseFoldPCSProveEvalWithChallengeConfigUnchecked(
+                         f_coeffs, z, y, num_queries, params, *challenge_cfg);
       }
       return checked_prover
                  ? basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries,
@@ -396,9 +462,17 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
     bool ok = false;
     if (enable_profile && iter >= 0) {
       basefold::ProfileGuard guard(&verifier_prof);
-      ok = basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params);
+      ok = (challenge_cfg != nullptr)
+               ? basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+                     C, z, y, num_queries, proof, params, *challenge_cfg)
+               : basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof,
+                                                 params);
     } else {
-      ok = basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params);
+      ok = (challenge_cfg != nullptr)
+               ? basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+                     C, z, y, num_queries, proof, params, *challenge_cfg)
+               : basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof,
+                                                 params);
     }
     const auto t3 = std::chrono::steady_clock::now();
 
@@ -430,7 +504,8 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
 void PrintResult(const std::string &label, long mod, long c, long d,
                  long k0,
                  long num_queries, int warmup, int reps,
-                 const BenchResult &r) {
+                 const BenchResult &r, bool use_extension_challenges,
+                 long challenge_degree) {
   const long pow2_d = Pow2Checked(d);
   if (k0 > std::numeric_limits<long>::max() / pow2_d) {
     LogicError("PrintResult: overflow in k_d");
@@ -444,7 +519,14 @@ void PrintResult(const std::string &label, long mod, long c, long d,
   std::cout << "\n[" << label << "] c=" << c << " k0=" << k0 << " d=" << d
             << "  mod=" << mod << "  k_d=" << k_d << "  n_d=" << n_d
             << "  queries=" << num_queries << "  warmup=" << warmup
-            << " reps=" << reps << "\n";
+            << " reps=" << reps;
+  if (use_extension_challenges) {
+    std::cout << "  ext_challenges=on"
+              << "  ext_deg=" << challenge_degree;
+  } else {
+    std::cout << "  ext_challenges=off";
+  }
+  std::cout << "\n";
   std::cout << std::fixed << std::setprecision(3);
   std::cout << "  prover   mean " << r.prover.mean_ms << " ms  (min "
             << r.prover.min_ms << ", max " << r.prover.max_ms << ")\n";
@@ -501,6 +583,8 @@ void PrintHelp() {
       << "Usage:\n"
       << "  bench_pcs_eval [--mode field|ring|both] [--c <int>] [--k0 <int>] [--d <int>]\n"
       << "               [--queries <int>] [--checked] [--profile] [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
+      << "               [--use-extension-challenges]\n"
+      << "               [--field-challenge-ext <a0;a1;...>] [--ring-challenge-ext <a0;a1;...>]\n"
       << "               [--auto-zeta teich]\n"
       << "               [--field-mod <int>] [--field-F <a0,a1,...>] [--field-zeta <b0,b1,...>]\n"
       << "               [--ring-mod <int>]  [--ring-p <int>] [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
@@ -508,6 +592,12 @@ void PrintHelp() {
       << "  By default, prover uses BaseFoldPCSProveEvalUnchecked (skips validation and claimed_y check).\n\n"
       << "  With --auto-zeta teich, zeta is derived as a Teichmuller generator from (p,k,F);\n"
       << "  then --field-zeta/--ring-zeta are ignored.\n\n"
+      << "  With --use-extension-challenges, prove/verify uses the extension-challenge\n"
+      << "  path in BaseFoldPCSChallengeConfig.\n"
+      << "  --field-challenge-ext / --ring-challenge-ext use ';' to separate ZZ_pE\n"
+      << "  coefficients and ',' for each ZZ_pE coefficient polynomial.\n"
+      << "  Example: '0,1;1;1' means E(U)=x + U + U^2.\n\n"
+      << "  If --*-challenge-ext is omitted, default is E(U)=zeta + U + U^2.\n\n"
       << "  PCS Eval supports k0 = 2^κ. The multilinear point dimension is (d + κ).\n\n"
       << "Examples:\n"
       << "  # GF(2^2) with F(x)=x^2+x+1 and zeta=x\n"
@@ -515,11 +605,15 @@ void PrintHelp() {
       << "  # GR(4,2) with the same extension polynomial and zeta=x\n"
       << "  bench_pcs_eval --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4\n"
       << "  # Auto zeta from Teichmuller subgroup generator\n"
-      << "  bench_pcs_eval --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --auto-zeta teich --d 16 --queries 4\n";
+      << "  bench_pcs_eval --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --auto-zeta teich --d 16 --queries 4\n"
+      << "  # Extension-challenge path (quote ';' argument)\n"
+      << "  bench_pcs_eval --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --use-extension-challenges --field-challenge-ext '0,1;1;1' --d 16 --queries 4\n"
+      << "  bench_pcs_eval --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --use-extension-challenges --ring-challenge-ext '0,1;1;1' --d 16 --queries 4\n";
 }
 
 void RunOneContext(const ContextSpec &spec, long c, long k0, long d,
                    long num_queries,
+                   bool use_extension_challenges,
                    bool checked_prover, bool enable_profile, int warmup,
                    int reps, bool auto_zeta_teich,
                    std::uint64_t seed) {
@@ -564,10 +658,30 @@ void RunOneContext(const ContextSpec &spec, long c, long k0, long d,
       MakeDeterministicPoint(point_dim, seed ^ 0xdeadbeefULL);
   const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
 
-  const BenchResult r =
-      RunEvalBenchmark(f_coeffs, z, y, num_queries, params, checked_prover,
-                       enable_profile, warmup, reps);
-  PrintResult(spec.label, spec.mod, c, d, k0, num_queries, warmup, reps, r);
+  basefold::BaseFoldPCSChallengeConfig challenge_cfg;
+  long challenge_degree = 0;
+  const basefold::BaseFoldPCSChallengeConfig *challenge_cfg_ptr = nullptr;
+  if (use_extension_challenges) {
+    ZZ_pEX challenge_modulus;
+    if (spec.challenge_ext_coeffs.empty()) {
+      NTL::clear(challenge_modulus);
+      NTL::SetCoeff(challenge_modulus, 0, zeta);
+      NTL::SetCoeff(challenge_modulus, 1, ZZ_pE(1));
+      NTL::SetCoeff(challenge_modulus, 2, ZZ_pE(1));
+    } else {
+      challenge_modulus = BuildZZpEX(spec.challenge_ext_coeffs);
+    }
+    challenge_cfg.use_extension_challenges = true;
+    challenge_cfg.challenge_extension_modulus = challenge_modulus;
+    challenge_degree = NTL::deg(challenge_modulus);
+    challenge_cfg_ptr = &challenge_cfg;
+  }
+
+  const BenchResult r = RunEvalBenchmark(f_coeffs, z, y, num_queries, params,
+                                         challenge_cfg_ptr, checked_prover,
+                                         enable_profile, warmup, reps);
+  PrintResult(spec.label, spec.mod, c, d, k0, num_queries, warmup, reps, r,
+              use_extension_challenges, challenge_degree);
 }
 
 }  // namespace
@@ -577,6 +691,7 @@ int main(int argc, char **argv) {
   long c = 2;
   long k0 = 1;
   long num_queries = 4;
+  bool use_extension_challenges = false;
   bool checked_prover = false;
   bool enable_profile = false;
   int warmup = 1;
@@ -648,6 +763,8 @@ int main(int argc, char **argv) {
       }
     } else if (arg == "--checked") {
       checked_prover = true;
+    } else if (arg == "--use-extension-challenges") {
+      use_extension_challenges = true;
     } else if (arg == "--profile") {
       enable_profile = true;
     } else if (arg == "--warmup") {
@@ -679,6 +796,9 @@ int main(int argc, char **argv) {
       field.F_coeffs = ParseCoeffList(NeedValue("--field-F"));
     } else if (arg == "--field-zeta") {
       field.zeta_coeffs = ParseCoeffList(NeedValue("--field-zeta"));
+    } else if (arg == "--field-challenge-ext") {
+      field.challenge_ext_coeffs =
+          ParseNestedCoeffList(NeedValue("--field-challenge-ext"));
     } else if (arg == "--ring-mod") {
       if (!ParseLong(NeedValue("--ring-mod"), ring.mod) || ring.mod <= 1) {
         std::cerr << "Invalid --ring-mod\n";
@@ -693,6 +813,9 @@ int main(int argc, char **argv) {
       ring.F_coeffs = ParseCoeffList(NeedValue("--ring-F"));
     } else if (arg == "--ring-zeta") {
       ring.zeta_coeffs = ParseCoeffList(NeedValue("--ring-zeta"));
+    } else if (arg == "--ring-challenge-ext") {
+      ring.challenge_ext_coeffs =
+          ParseNestedCoeffList(NeedValue("--ring-challenge-ext"));
     } else if (arg == "--help" || arg == "-h") {
       PrintHelp();
       return 0;
@@ -708,10 +831,12 @@ int main(int argc, char **argv) {
       return 2;
     }
     if (do_field)
-      RunOneContext(field, c, k0, d, num_queries, checked_prover, enable_profile,
+      RunOneContext(field, c, k0, d, num_queries, use_extension_challenges,
+                    checked_prover, enable_profile,
                     warmup, reps, auto_zeta_teich, seed);
     if (do_ring)
-      RunOneContext(ring, c, k0, d, num_queries, checked_prover, enable_profile,
+      RunOneContext(ring, c, k0, d, num_queries, use_extension_challenges,
+                    checked_prover, enable_profile,
                     warmup, reps, auto_zeta_teich, seed);
   } catch (const std::exception &e) {
     std::cerr << "Unhandled std::exception: " << e.what() << "\n";

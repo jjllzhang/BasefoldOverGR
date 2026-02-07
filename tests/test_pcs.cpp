@@ -23,6 +23,7 @@ using NTL::to_ZZ;
 using NTL::vec_ZZ_pE;
 using NTL::ZZ;
 using NTL::ZZ_pE;
+using NTL::ZZ_pEX;
 using NTL::ZZ_pEPush;
 using NTL::ZZ_pPush;
 using NTL::ZZ_pX;
@@ -345,6 +346,194 @@ void TestPCS_EvalProof_GR42_k0_2() {
   CHECK(!basefold::BaseFoldPCSVerifyEval(C, z, y_bad, num_queries, proof, params));
 }
 
+void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
+  testutil::PrintInfo("PCS: challenge-config path verifies over GF(2^2)");
+
+  const ZZ p = to_ZZ(2);
+  ZZ_pPush p_push(p);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush e_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::FoldableCodeParams params = BuildParamsGF4_k0_1(p, alpha);
+
+  vec_ZZ_pE f_coeffs;
+  f_coeffs.SetLength(basefold::MessageLength(params));
+  f_coeffs[0] = testutil::ConstZZpE(0);
+  f_coeffs[1] = testutil::ConstZZpE(1);
+  f_coeffs[2] = alpha;
+  f_coeffs[3] = alpha + testutil::ConstZZpE(1);
+
+  const std::vector<ZZ_pE> z = {alpha, alpha + testutil::ConstZZpE(1)};
+  const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
+  const basefold::MerkleRoot C = basefold::BaseFoldPCSCommit(f_coeffs, params);
+
+  basefold::BaseFoldPCSChallengeConfig cfg;
+  cfg.use_extension_challenges = true;
+  ZZ_pEX E;
+  SetCoeff(E, 0, alpha);
+  SetCoeff(E, 1, testutil::ConstZZpE(1));
+  SetCoeff(E, 2, testutil::ConstZZpE(1));
+  cfg.challenge_extension_modulus = E;
+
+  const long num_queries = 3;
+  const basefold::BaseFoldPCSEvalProof proof =
+      basefold::BaseFoldPCSProveEvalWithChallengeConfig(f_coeffs, z, y,
+                                                        num_queries, params, cfg);
+
+  CHECK(proof.extension.enabled);
+  CHECK(static_cast<long>(proof.extension.r_by_level.size()) == params.d);
+  CHECK(static_cast<long>(proof.extension.roots_by_level.size()) == params.d);
+
+  CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      C, z, y, num_queries, proof, params, cfg));
+
+  CHECK(!basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params));
+
+  basefold::BaseFoldPCSEvalProof proof_ext_tampered = proof;
+  ZZ_pE coeff1 = NTL::coeff(
+      proof_ext_tampered.extension.query_proofs[0].folded[0].value, 1);
+  coeff1 += testutil::ConstZZpE(1);
+  NTL::SetCoeff(proof_ext_tampered.extension.query_proofs[0].folded[0].value, 1,
+                coeff1);
+  CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      C, z, y, num_queries, proof_ext_tampered, params, cfg));
+
+  basefold::BaseFoldPCSEvalProof proof_root_tampered = proof;
+  proof_root_tampered.extension.roots_by_level[0][0] ^= static_cast<basefold::Byte>(0x01);
+  CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      C, z, y, num_queries, proof_root_tampered, params, cfg));
+
+  basefold::BaseFoldPCSEvalProof proof_r_tampered = proof;
+  ZZ_pE r0_coeff0 = NTL::coeff(proof_r_tampered.extension.r_by_level[0], 0);
+  r0_coeff0 += testutil::ConstZZpE(1);
+  NTL::SetCoeff(proof_r_tampered.extension.r_by_level[0], 0, r0_coeff0);
+  CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      C, z, y, num_queries, proof_r_tampered, params, cfg));
+
+  basefold::BaseFoldPCSEvalProof proof_h_tampered = proof;
+  ZZ_pE h0_a0_coeff0 =
+      NTL::coeff(proof_h_tampered.extension.h_by_level[0].a0, 0);
+  h0_a0_coeff0 += testutil::ConstZZpE(1);
+  NTL::SetCoeff(proof_h_tampered.extension.h_by_level[0].a0, 0, h0_a0_coeff0);
+  CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      C, z, y, num_queries, proof_h_tampered, params, cfg));
+
+  basefold::BaseFoldPCSEvalProof proof_msg0_tampered = proof;
+  ZZ_pE msg0_coeff0 = NTL::coeff(proof_msg0_tampered.extension.msg0_coeffs[0], 0);
+  msg0_coeff0 += testutil::ConstZZpE(1);
+  NTL::SetCoeff(proof_msg0_tampered.extension.msg0_coeffs[0], 0, msg0_coeff0);
+  CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      C, z, y, num_queries, proof_msg0_tampered, params, cfg));
+
+  basefold::BaseFoldPCSChallengeConfig cfg_bad = cfg;
+  ZZ_pEX E_bad;
+  SetCoeff(E_bad, 0, alpha + testutil::ConstZZpE(1));
+  SetCoeff(E_bad, 1, testutil::ConstZZpE(1));
+  SetCoeff(E_bad, 2, testutil::ConstZZpE(1));
+  cfg_bad.challenge_extension_modulus = E_bad;
+  CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      C, z, y, num_queries, proof, params, cfg_bad));
+
+}
+
+void TestPCS_EvalProof_ExtChallengeConfig_GR42() {
+  testutil::PrintInfo("PCS: challenge-config path verifies over GR(4,2)");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ mod = ZZ(4);
+  ZZ_pPush mod_push(mod);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush e_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::FoldableCodeParams params = BuildParamsGR42(p, alpha);
+
+  vec_ZZ_pE f_coeffs;
+  f_coeffs.SetLength(basefold::MessageLength(params));
+  f_coeffs[0] = testutil::ConstZZpE(0);
+  f_coeffs[1] = testutil::ConstZZpE(1);
+  f_coeffs[2] = alpha;
+  f_coeffs[3] = testutil::ConstZZpE(2);
+
+  const std::vector<ZZ_pE> z = {alpha + testutil::ConstZZpE(1),
+                                testutil::ConstZZpE(3)};
+  const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
+  const basefold::MerkleRoot C = basefold::BaseFoldPCSCommit(f_coeffs, params);
+
+  basefold::BaseFoldPCSChallengeConfig cfg;
+  cfg.use_extension_challenges = true;
+  ZZ_pEX E;
+  SetCoeff(E, 0, alpha);
+  SetCoeff(E, 1, testutil::ConstZZpE(1));
+  SetCoeff(E, 2, testutil::ConstZZpE(1));
+  cfg.challenge_extension_modulus = E;
+
+  const long num_queries = 4;
+  const basefold::BaseFoldPCSEvalProof proof =
+      basefold::BaseFoldPCSProveEvalWithChallengeConfig(
+          f_coeffs, z, y, num_queries, params, cfg);
+
+  CHECK(proof.extension.enabled);
+  CHECK(static_cast<long>(proof.extension.roots_by_level.size()) == params.d);
+  CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      C, z, y, num_queries, proof, params, cfg));
+
+  basefold::BaseFoldPCSEvalProof proof_open_tampered = proof;
+  ZZ_pE coeff1 = NTL::coeff(
+      proof_open_tampered.extension.query_proofs[0].folded[0].value, 1);
+  coeff1 += testutil::ConstZZpE(1);
+  NTL::SetCoeff(
+      proof_open_tampered.extension.query_proofs[0].folded[0].value, 1, coeff1);
+  CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      C, z, y, num_queries, proof_open_tampered, params, cfg));
+
+  basefold::BaseFoldPCSEvalProof proof_root_tampered = proof;
+  proof_root_tampered.extension.roots_by_level[0][0] ^=
+      static_cast<basefold::Byte>(0x01);
+  CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      C, z, y, num_queries, proof_root_tampered, params, cfg));
+
+  basefold::BaseFoldPCSEvalProof proof_r_tampered = proof;
+  ZZ_pE r0_coeff0 = NTL::coeff(proof_r_tampered.extension.r_by_level[0], 0);
+  r0_coeff0 += testutil::ConstZZpE(1);
+  NTL::SetCoeff(proof_r_tampered.extension.r_by_level[0], 0, r0_coeff0);
+  CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      C, z, y, num_queries, proof_r_tampered, params, cfg));
+
+  basefold::BaseFoldPCSEvalProof proof_h_tampered = proof;
+  ZZ_pE h0_a0_coeff0 =
+      NTL::coeff(proof_h_tampered.extension.h_by_level[0].a0, 0);
+  h0_a0_coeff0 += testutil::ConstZZpE(1);
+  NTL::SetCoeff(proof_h_tampered.extension.h_by_level[0].a0, 0, h0_a0_coeff0);
+  CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      C, z, y, num_queries, proof_h_tampered, params, cfg));
+
+  basefold::BaseFoldPCSEvalProof proof_msg0_tampered = proof;
+  ZZ_pE msg0_coeff0 = NTL::coeff(proof_msg0_tampered.extension.msg0_coeffs[0], 0);
+  msg0_coeff0 += testutil::ConstZZpE(1);
+  NTL::SetCoeff(proof_msg0_tampered.extension.msg0_coeffs[0], 0, msg0_coeff0);
+  CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      C, z, y, num_queries, proof_msg0_tampered, params, cfg));
+
+}
+
 }  // namespace
 
 int main() {
@@ -353,6 +542,8 @@ int main() {
     RUN_TEST(TestPCS_EvalProof_GF4_k0_2);
     RUN_TEST(TestPCS_EvalProof_GR42);
     RUN_TEST(TestPCS_EvalProof_GR42_k0_2);
+    RUN_TEST(TestPCS_EvalProof_ExtChallengeConfig_GF4);
+    RUN_TEST(TestPCS_EvalProof_ExtChallengeConfig_GR42);
   } catch (const exception &e) {
     cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;
