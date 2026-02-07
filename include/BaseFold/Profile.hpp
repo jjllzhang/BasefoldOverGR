@@ -73,6 +73,33 @@ struct Profile {
 
   std::uint64_t inv_fallback_ns = 0;
   std::uint64_t inv_fallback_calls = 0;
+
+  std::uint64_t ext_sumcheck_init_ns = 0;
+  std::uint64_t ext_sumcheck_init_calls = 0;
+
+  std::uint64_t ext_sumcheck_current_poly_ns = 0;
+  std::uint64_t ext_sumcheck_current_poly_calls = 0;
+
+  std::uint64_t ext_sumcheck_receive_challenge_ns = 0;
+  std::uint64_t ext_sumcheck_receive_challenge_calls = 0;
+
+  std::uint64_t ext_prover_commit_round_ns = 0;
+  std::uint64_t ext_prover_commit_round_calls = 0;
+
+  std::uint64_t ext_merkle_tree_build_ns = 0;
+  std::uint64_t ext_merkle_tree_build_calls = 0;
+
+  std::uint64_t ext_merkle_tree_open_ns = 0;
+  std::uint64_t ext_merkle_tree_open_calls = 0;
+
+  std::uint64_t ext_verify_query_merkle_ns = 0;
+  std::uint64_t ext_verify_query_merkle_calls = 0;
+
+  std::uint64_t ext_merkle_verify_opening_ns = 0;
+  std::uint64_t ext_merkle_verify_opening_calls = 0;
+
+  std::uint64_t ext_eval_line_at_ns = 0;
+  std::uint64_t ext_eval_line_at_calls = 0;
 };
 
 extern thread_local Profile *g_active_profile;
@@ -145,6 +172,20 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
     const double merkle_open_ms = NsToMs(p.merkle_tree_open_ns);
     const double absorb_ms = NsToMs(p.transcript_absorb_ns);
     const double challenge_ms = NsToMs(p.transcript_challenge_ns);
+    const double ext_sumcheck_init_ms = NsToMs(p.ext_sumcheck_init_ns);
+    const double ext_sumcheck_poly_ms = NsToMs(p.ext_sumcheck_current_poly_ns);
+    const double ext_sumcheck_recv_ms =
+        NsToMs(p.ext_sumcheck_receive_challenge_ns);
+    const double ext_sumcheck_total_ms =
+        ext_sumcheck_init_ms + ext_sumcheck_poly_ms + ext_sumcheck_recv_ms;
+    const double ext_commit_ms = NsToMs(p.ext_prover_commit_round_ns);
+    const double ext_merkle_build_ms = NsToMs(p.ext_merkle_tree_build_ns);
+    const double ext_merkle_open_ms = NsToMs(p.ext_merkle_tree_open_ns);
+    const bool has_ext_prover_breakdown =
+        (p.ext_sumcheck_init_calls + p.ext_sumcheck_current_poly_calls +
+         p.ext_sumcheck_receive_challenge_calls +
+         p.ext_prover_commit_round_calls + p.ext_merkle_tree_build_calls +
+         p.ext_merkle_tree_open_calls) > 0;
 
     const std::uint64_t accounted_ns = p.encode_foldable_unchecked_ns +
                                       p.sumcheck_init_ns +
@@ -153,6 +194,12 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
                                       p.prover_commit_round_ns +
                                       p.merkle_tree_build_ns +
                                       p.merkle_tree_open_ns +
+                                      p.ext_sumcheck_init_ns +
+                                      p.ext_sumcheck_current_poly_ns +
+                                      p.ext_sumcheck_receive_challenge_ns +
+                                      p.ext_prover_commit_round_ns +
+                                      p.ext_merkle_tree_build_ns +
+                                      p.ext_merkle_tree_open_ns +
                                       p.transcript_absorb_ns +
                                       p.transcript_challenge_ns;
     const double other_ms =
@@ -181,6 +228,21 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
        << "  (calls " << p.transcript_absorb_calls << ")\n";
     os << "    Transcript challenge:        " << challenge_ms << " ms"
        << "  (calls " << p.transcript_challenge_calls << ")\n";
+    if (has_ext_prover_breakdown) {
+      os << "    ExtensionSumcheck total:     " << ext_sumcheck_total_ms << " ms\n";
+      os << "      init:                      " << ext_sumcheck_init_ms << " ms"
+         << "  (calls " << p.ext_sumcheck_init_calls << ")\n";
+      os << "      CurrentPolynomial:         " << ext_sumcheck_poly_ms << " ms"
+         << "  (calls " << p.ext_sumcheck_current_poly_calls << ")\n";
+      os << "      ReceiveChallenge:          " << ext_sumcheck_recv_ms << " ms"
+         << "  (calls " << p.ext_sumcheck_receive_challenge_calls << ")\n";
+      os << "    ExtensionCommitRound:        " << ext_commit_ms << " ms"
+         << "  (calls " << p.ext_prover_commit_round_calls << ")\n";
+      os << "    ExtensionMerkleTree::Build:  " << ext_merkle_build_ms << " ms"
+         << "  (calls " << p.ext_merkle_tree_build_calls << ")\n";
+      os << "    ExtensionMerkleTree::Open:   " << ext_merkle_open_ms << " ms"
+         << "  (calls " << p.ext_merkle_tree_open_calls << ")\n";
+    }
     os << "    Other (total - above):       " << other_ms << " ms\n";
   }
 
@@ -193,17 +255,29 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
     const double inv_ms = NsToMs(p.try_invert_unit_ns);
     const double is_unit_ms = NsToMs(p.is_unit_ns);
     const double inv_fallback_ms = NsToMs(p.inv_fallback_ns);
+    const double ext_query_ms = NsToMs(p.ext_verify_query_merkle_ns);
+    const double ext_merkle_open_ms = NsToMs(p.ext_merkle_verify_opening_ns);
+    const double ext_eval_line_ms = NsToMs(p.ext_eval_line_at_ns);
+    const bool has_ext_verifier_breakdown =
+        (p.ext_verify_query_merkle_calls + p.ext_merkle_verify_opening_calls +
+         p.ext_eval_line_at_calls) > 0;
 
     const std::uint64_t query_accounted_ns = p.merkle_verify_opening_ns +
                                             p.merkle_commit_oracle_ns +
                                             p.eval_line_at_ns;
+    const std::uint64_t ext_query_accounted_ns =
+        p.ext_merkle_verify_opening_ns + p.ext_eval_line_at_ns;
+    const std::uint64_t total_query_ns =
+        p.verify_query_merkle_ns + p.ext_verify_query_merkle_ns;
+    const std::uint64_t total_query_accounted_ns =
+        query_accounted_ns + ext_query_accounted_ns;
     const double query_other_ms =
-        (p.verify_query_merkle_ns > query_accounted_ns)
-            ? NsToMs(p.verify_query_merkle_ns - query_accounted_ns)
+        (total_query_ns > total_query_accounted_ns)
+            ? NsToMs(total_query_ns - total_query_accounted_ns)
             : 0.0;
     const double outside_query_ms =
-        (p.pcs_verify_ns > p.verify_query_merkle_ns)
-            ? NsToMs(p.pcs_verify_ns - p.verify_query_merkle_ns)
+        (p.pcs_verify_ns > total_query_ns)
+            ? NsToMs(p.pcs_verify_ns - total_query_ns)
             : 0.0;
 
     os << "  [profile-verifier]\n";
@@ -224,6 +298,14 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
        << "  (calls " << p.is_unit_calls << ")\n";
     os << "      Inv fallback (subset):     " << inv_fallback_ms << " ms"
        << "  (calls " << p.inv_fallback_calls << ")\n";
+    if (has_ext_verifier_breakdown) {
+      os << "    ExtensionVerifyQuery:        " << ext_query_ms << " ms"
+         << "  (calls " << p.ext_verify_query_merkle_calls << ")\n";
+      os << "    ExtensionMerkleVerify:       " << ext_merkle_open_ms << " ms"
+         << "  (calls " << p.ext_merkle_verify_opening_calls << ")\n";
+      os << "    EvalLineAtExtension:         " << ext_eval_line_ms << " ms"
+         << "  (calls " << p.ext_eval_line_at_calls << ")\n";
+    }
     os << "    Inside queries other:        " << query_other_ms << " ms\n";
     os << "    Outside queries:             " << outside_query_ms << " ms\n";
   }

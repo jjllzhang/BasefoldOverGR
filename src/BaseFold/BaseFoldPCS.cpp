@@ -590,8 +590,14 @@ FieldElement ProjectExtensionToBaseConstant(const ZZ_pEX &x) {
 }
 
 void ReduceExtensionElementInPlace(ZZ_pEX &x, const ZZ_pEX &extension_modulus) {
-  NTL::rem(x, x, extension_modulus);
-  x.normalize();
+  const long extension_degree = NTL::deg(extension_modulus);
+  if (extension_degree <= 0) {
+    LogicError("ReduceExtensionElementInPlace: invalid extension degree");
+  }
+  if (NTL::deg(x) >= extension_degree) {
+    NTL::rem(x, x, extension_modulus);
+    x.normalize();
+  }
 }
 
 ZZ_pEX ExtensionZero() {
@@ -602,44 +608,97 @@ ZZ_pEX ExtensionZero() {
 
 ZZ_pEX ExtensionOne() { return LiftBaseToExtension(BaseRingOne()); }
 
+ZZ_pEX MulExtensionByBaseConstant(const ZZ_pEX &a, const FieldElement &scalar) {
+  ZZ_pEX out;
+  if (NTL::deg(a) < 0 || scalar == 0) {
+    NTL::clear(out);
+    return out;
+  }
+  NTL::mul(out, a, scalar);
+  out.normalize();
+  return out;
+}
+
+ZZ_pEX SubBaseConstantFromExtension(const ZZ_pEX &a, const FieldElement &c) {
+  ZZ_pEX out = a;
+  NTL::SetCoeff(out, 0, coeff(out, 0) - c);
+  out.normalize();
+  return out;
+}
+
 ZZ_pEX AddExtension(const ZZ_pEX &a, const ZZ_pEX &b,
                     const ZZ_pEX &extension_modulus) {
   ZZ_pEX out = a + b;
-  ReduceExtensionElementInPlace(out, extension_modulus);
+  const long extension_degree = NTL::deg(extension_modulus);
+  if (extension_degree <= 0) {
+    LogicError("AddExtension: invalid extension degree");
+  }
+  if (NTL::deg(out) >= extension_degree) {
+    NTL::rem(out, out, extension_modulus);
+    out.normalize();
+  }
   return out;
 }
 
 ZZ_pEX SubExtension(const ZZ_pEX &a, const ZZ_pEX &b,
                     const ZZ_pEX &extension_modulus) {
   ZZ_pEX out = a - b;
-  ReduceExtensionElementInPlace(out, extension_modulus);
+  const long extension_degree = NTL::deg(extension_modulus);
+  if (extension_degree <= 0) {
+    LogicError("SubExtension: invalid extension degree");
+  }
+  if (NTL::deg(out) >= extension_degree) {
+    NTL::rem(out, out, extension_modulus);
+    out.normalize();
+  }
   return out;
 }
 
 ZZ_pEX MulExtension(const ZZ_pEX &a, const ZZ_pEX &b,
                     const ZZ_pEX &extension_modulus) {
-  ZZ_pEX out = a * b;
-  ReduceExtensionElementInPlace(out, extension_modulus);
+  const long extension_degree = NTL::deg(extension_modulus);
+  if (extension_degree <= 0) {
+    LogicError("MulExtension: invalid extension degree");
+  }
+
+  const long deg_a = NTL::deg(a);
+  const long deg_b = NTL::deg(b);
+
+  ZZ_pEX out;
+  if (deg_a <= 0) {
+    out = MulExtensionByBaseConstant(b, coeff(a, 0));
+  } else if (deg_b <= 0) {
+    out = MulExtensionByBaseConstant(a, coeff(b, 0));
+  } else {
+    out = a * b;
+  }
+
+  if (NTL::deg(out) >= extension_degree) {
+    NTL::rem(out, out, extension_modulus);
+    out.normalize();
+  }
   return out;
 }
 
 ZZ_pEX EqFactorExtension(const ZZ_pEX &z_i, const ZZ_pEX &x_i,
                          const ZZ_pEX &extension_modulus) {
+  // Eq(z, x) = 1 - z - x + 2*z*x, which saves one extension multiplication.
   const ZZ_pEX one = ExtensionOne();
   const ZZ_pEX zx = MulExtension(z_i, x_i, extension_modulus);
-  const ZZ_pEX left = SubExtension(one, z_i, extension_modulus);
-  const ZZ_pEX right = SubExtension(one, x_i, extension_modulus);
-  const ZZ_pEX tail = MulExtension(left, right, extension_modulus);
-  return AddExtension(zx, tail, extension_modulus);
+  const ZZ_pEX two_zx = AddExtension(zx, zx, extension_modulus);
+  const ZZ_pEX linear =
+      SubExtension(SubExtension(one, z_i, extension_modulus), x_i,
+                   extension_modulus);
+  return AddExtension(linear, two_zx, extension_modulus);
 }
 
 ZZ_pEX EvalExtensionQuadraticPoly(const ExtensionQuadraticPoly &p,
                                   const ZZ_pEX &x,
                                   const ZZ_pEX &extension_modulus) {
-  const ZZ_pEX x2 = MulExtension(x, x, extension_modulus);
-  const ZZ_pEX t1 = MulExtension(p.a1, x, extension_modulus);
-  const ZZ_pEX t2 = MulExtension(p.a2, x2, extension_modulus);
-  return AddExtension(AddExtension(p.a0, t1, extension_modulus), t2,
+  // Horner form: a0 + x*(a1 + a2*x), one fewer multiplication than x^2 path.
+  const ZZ_pEX t = AddExtension(p.a1, MulExtension(p.a2, x, extension_modulus),
+                                extension_modulus);
+  return AddExtension(p.a0, MulExtension(t, x, extension_modulus),
                       extension_modulus);
 }
 
@@ -739,23 +798,68 @@ bool TryInvertBaseUnit(FieldElement &inv_out, const FieldElement &a) {
   return a * inv_out == one;
 }
 
+bool BatchInvertBaseUnits(std::vector<FieldElement> &inverses,
+                          const std::vector<FieldElement> &values) {
+  const long n = static_cast<long>(values.size());
+  inverses.resize(static_cast<std::size_t>(n));
+  if (n == 0) {
+    return true;
+  }
+
+  std::vector<FieldElement> prefix;
+  prefix.resize(static_cast<std::size_t>(n + 1));
+  prefix[0] = BaseRingOne();
+
+  for (long i = 0; i < n; ++i) {
+    const FieldElement &v = values[static_cast<std::size_t>(i)];
+    if (v == 0) {
+      return false;
+    }
+    prefix[static_cast<std::size_t>(i + 1)] =
+        prefix[static_cast<std::size_t>(i)] * v;
+  }
+
+  FieldElement inv_total;
+  if (!TryInvertBaseUnit(inv_total, prefix[static_cast<std::size_t>(n)])) {
+    return false;
+  }
+
+  FieldElement suffix = inv_total;
+  for (long i = n; i-- > 0;) {
+    inverses[static_cast<std::size_t>(i)] =
+        suffix * prefix[static_cast<std::size_t>(i)];
+    suffix *= values[static_cast<std::size_t>(i)];
+  }
+  return true;
+}
+
+ZZ_pEX EvalLineAtExtensionWithInvDenom(const ZZ_pEX &x, const FieldElement &x1,
+                                       const ZZ_pEX &y1, const ZZ_pEX &y2,
+                                       const FieldElement &inv_denom,
+                                       const ZZ_pEX &extension_modulus) {
+  const ZZ_pEX delta_y = SubExtension(y2, y1, extension_modulus);
+  const ZZ_pEX slope = MulExtensionByBaseConstant(delta_y, inv_denom);
+  const ZZ_pEX delta_x = SubBaseConstantFromExtension(x, x1);
+  const ZZ_pEX correction = MulExtension(slope, delta_x, extension_modulus);
+  return AddExtension(y1, correction, extension_modulus);
+}
+
 ZZ_pEX EvalLineAtExtension(const ZZ_pEX &x, const FieldElement &x1,
                            const ZZ_pEX &y1, const FieldElement &x2,
                            const ZZ_pEX &y2,
                            const ZZ_pEX &extension_modulus) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->ext_eval_line_at_ns : nullptr,
+                    prof ? &prof->ext_eval_line_at_calls : nullptr);
+
   const FieldElement denom = x2 - x1;
   FieldElement inv_denom;
   if (!TryInvertBaseUnit(inv_denom, denom)) {
     LogicError("EvalLineAtExtension: denominator is not invertible");
   }
 
-  const ZZ_pEX inv_denom_ext = LiftBaseToExtension(inv_denom);
-  const ZZ_pEX delta_y = SubExtension(y2, y1, extension_modulus);
-  const ZZ_pEX slope = MulExtension(delta_y, inv_denom_ext, extension_modulus);
-  const ZZ_pEX x1_ext = LiftBaseToExtension(x1);
-  const ZZ_pEX delta_x = SubExtension(x, x1_ext, extension_modulus);
-  const ZZ_pEX correction = MulExtension(slope, delta_x, extension_modulus);
-  return AddExtension(y1, correction, extension_modulus);
+  return EvalLineAtExtensionWithInvDenom(x, x1, y1, y2, inv_denom,
+                                         extension_modulus);
 }
 
 std::vector<ZZ_pEX> LiftOracleToExtension(const Oracle &oracle) {
@@ -862,6 +966,10 @@ class ExtensionSumcheckProver {
                           const std::vector<FieldElement> &z,
                           const ZZ_pEX &extension_modulus)
       : extension_modulus_(extension_modulus) {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->ext_sumcheck_init_ns : nullptr,
+                      prof ? &prof->ext_sumcheck_init_calls : nullptr);
+
     const long n = f_coeffs.length();
     if (!IsPowerOfTwoLong(n)) {
       LogicError("ExtensionSumcheckProver: f_coeffs length must be 2^d");
@@ -906,7 +1014,7 @@ class ExtensionSumcheckProver {
         std::vector<ZZ_pEX> &cur =
             prefix_eq_by_vars_[static_cast<std::size_t>(t)];
         for (long mask = 0; mask < old; ++mask) {
-          const ZZ_pEX base = prev[static_cast<std::size_t>(mask)];
+          const ZZ_pEX &base = prev[static_cast<std::size_t>(mask)];
           cur[static_cast<std::size_t>(mask)] =
               MulExtension(base, factor0, extension_modulus_);
           cur[static_cast<std::size_t>(mask + old)] =
@@ -919,6 +1027,10 @@ class ExtensionSumcheckProver {
   }
 
   ExtensionQuadraticPoly CurrentPolynomial() const {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->ext_sumcheck_current_poly_ns : nullptr,
+                      prof ? &prof->ext_sumcheck_current_poly_calls : nullptr);
+
     if (cur_k_ <= 0) {
       LogicError("ExtensionSumcheckProver::CurrentPolynomial: no variables");
     }
@@ -939,12 +1051,11 @@ class ExtensionSumcheckProver {
           "ExtensionSumcheckProver::CurrentPolynomial: prefix size mismatch");
     }
 
-    const ZZ_pEX one = ExtensionOne();
-    const ZZ_pEX z_k = z_[static_cast<std::size_t>(k - 1)];
-    const ZZ_pEX factor0 = SubExtension(one, z_k, extension_modulus_);
-    const ZZ_pEX factor1 = z_k;
-    const ZZ_pEX delta_factor =
-        SubExtension(factor1, factor0, extension_modulus_);
+    const FieldElement one_base = BaseRingOne();
+    const FieldElement z_k_base =
+        ProjectExtensionToBaseConstant(z_[static_cast<std::size_t>(k - 1)]);
+    const FieldElement factor0_base = one_base - z_k_base;
+    const FieldElement delta_factor_base = z_k_base - factor0_base;
 
     ExtensionQuadraticPoly out;
     out.a0 = ExtensionZero();
@@ -952,16 +1063,18 @@ class ExtensionSumcheckProver {
     out.a2 = ExtensionZero();
 
     for (long mask = 0; mask < half; ++mask) {
+      const ZZ_pEX &prefix_mask = prefix[static_cast<std::size_t>(mask)];
+      const FieldElement prefix_mask_base =
+          ProjectExtensionToBaseConstant(prefix_mask);
       const ZZ_pEX common =
-          MulExtension(prefix[static_cast<std::size_t>(mask)], suffix_eq_prod_,
-                       extension_modulus_);
+          MulExtensionByBaseConstant(suffix_eq_prod_, prefix_mask_base);
 
-      const ZZ_pEX eq0 = MulExtension(common, factor0, extension_modulus_);
+      const ZZ_pEX eq0 = MulExtensionByBaseConstant(common, factor0_base);
       const ZZ_pEX delta_eq =
-          MulExtension(common, delta_factor, extension_modulus_);
+          MulExtensionByBaseConstant(common, delta_factor_base);
 
-      const ZZ_pEX f0 = f_eval_table_[static_cast<std::size_t>(mask)];
-      const ZZ_pEX f1 = f_eval_table_[static_cast<std::size_t>(mask + half)];
+      const ZZ_pEX &f0 = f_eval_table_[static_cast<std::size_t>(mask)];
+      const ZZ_pEX &f1 = f_eval_table_[static_cast<std::size_t>(mask + half)];
       const ZZ_pEX delta_f = SubExtension(f1, f0, extension_modulus_);
 
       out.a0 = AddExtension(
@@ -983,6 +1096,11 @@ class ExtensionSumcheckProver {
   }
 
   void ReceiveChallenge(const ZZ_pEX &r_kminus1) {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->ext_sumcheck_receive_challenge_ns : nullptr,
+                      prof ? &prof->ext_sumcheck_receive_challenge_calls
+                               : nullptr);
+
     if (cur_k_ <= 0) {
       LogicError("ExtensionSumcheckProver::ReceiveChallenge: no variables");
     }
@@ -1001,8 +1119,8 @@ class ExtensionSumcheckProver {
 
     const long half = n / 2;
     for (long i = 0; i < half; ++i) {
-      const ZZ_pEX f0 = f_eval_table_[static_cast<std::size_t>(i)];
-      const ZZ_pEX f1 = f_eval_table_[static_cast<std::size_t>(i + half)];
+      const ZZ_pEX &f0 = f_eval_table_[static_cast<std::size_t>(i)];
+      const ZZ_pEX &f1 = f_eval_table_[static_cast<std::size_t>(i + half)];
       const ZZ_pEX delta_f = SubExtension(f1, f0, extension_modulus_);
       f_eval_table_[static_cast<std::size_t>(i)] =
           AddExtension(f0, MulExtension(delta_f, r_kminus1, extension_modulus_),
@@ -1068,19 +1186,51 @@ void ProverCommitRoundExtensionNoValidate(
     std::vector<ZZ_pEX> &pi_i, const std::vector<ZZ_pEX> &pi_ip1,
     const ZZ_pEX &alpha_i, long level_i, const FoldableCodeParams &params,
     const ZZ_pEX &extension_modulus) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->ext_prover_commit_round_ns : nullptr,
+                    prof ? &prof->ext_prover_commit_round_calls : nullptr);
+
   const long n_i = CodewordLengthAtLevelNoValidate(params, level_i);
   if (static_cast<long>(pi_ip1.size()) != 2 * n_i) {
     LogicError("ProverCommitRoundExtensionNoValidate: pi_ip1 has wrong length");
   }
+  const Oracle &diag = params.diag_T[static_cast<std::size_t>(level_i)];
+  if (diag.length() != n_i) {
+    LogicError("ProverCommitRoundExtensionNoValidate: diag_T length mismatch");
+  }
   pi_i.resize(static_cast<std::size_t>(n_i));
 
+  const FieldElement one = BaseRingOne();
+  const FieldElement zeta_minus_one = params.zeta - one;
+  if (zeta_minus_one == 0) {
+    LogicError("ProverCommitRoundExtensionNoValidate: zeta must not be 1");
+  }
+
+  std::vector<FieldElement> denoms;
+  denoms.resize(static_cast<std::size_t>(n_i));
   for (long j = 0; j < n_i; ++j) {
-    const FieldElement &t = params.diag_T[static_cast<std::size_t>(level_i)][j];
-    const FieldElement x1 = t;
-    const FieldElement x2 = params.zeta * t;
-    pi_i[static_cast<std::size_t>(j)] = EvalLineAtExtension(
-        alpha_i, x1, pi_ip1[static_cast<std::size_t>(j)], x2,
-        pi_ip1[static_cast<std::size_t>(j + n_i)], extension_modulus);
+    const FieldElement &t = diag[static_cast<std::size_t>(j)];
+    denoms[static_cast<std::size_t>(j)] = zeta_minus_one * t;
+  }
+
+  std::vector<FieldElement> inv_denoms;
+  if (!BatchInvertBaseUnits(inv_denoms, denoms)) {
+    inv_denoms.resize(static_cast<std::size_t>(n_i));
+    for (long j = 0; j < n_i; ++j) {
+      if (!TryInvertBaseUnit(inv_denoms[static_cast<std::size_t>(j)],
+                             denoms[static_cast<std::size_t>(j)])) {
+        LogicError(
+            "ProverCommitRoundExtensionNoValidate: denominator is not invertible");
+      }
+    }
+  }
+
+  for (long j = 0; j < n_i; ++j) {
+    const FieldElement &x1 = diag[static_cast<std::size_t>(j)];
+    pi_i[static_cast<std::size_t>(j)] = EvalLineAtExtensionWithInvDenom(
+        alpha_i, x1, pi_ip1[static_cast<std::size_t>(j)],
+        pi_ip1[static_cast<std::size_t>(j + n_i)],
+        inv_denoms[static_cast<std::size_t>(j)], extension_modulus);
   }
 }
 
@@ -1154,6 +1304,10 @@ class ExtensionMerkleTree {
 
   static ExtensionMerkleTree Build(const std::vector<ZZ_pEX> &oracle,
                                    const ZZ_pEX &extension_modulus) {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->ext_merkle_tree_build_ns : nullptr,
+                      prof ? &prof->ext_merkle_tree_build_calls : nullptr);
+
     if (oracle.empty()) {
       LogicError("ExtensionMerkleTree::Build: oracle must be non-empty");
     }
@@ -1198,6 +1352,10 @@ class ExtensionMerkleTree {
   MerkleRoot Root() const { return HashExtensionRootWithCount(leaf_count_, raw_root_); }
 
   ExtensionMerkleOpening Open(const std::vector<ZZ_pEX> &oracle, long index) const {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->ext_merkle_tree_open_ns : nullptr,
+                      prof ? &prof->ext_merkle_tree_open_calls : nullptr);
+
     if (leaf_count_ <= 0) {
       LogicError("ExtensionMerkleTree::Open: empty tree");
     }
@@ -1233,6 +1391,10 @@ class ExtensionMerkleTree {
 bool VerifyExtensionMerkleOpening(const MerkleRoot &root, long leaf_count,
                                   const ExtensionMerkleOpening &opening,
                                   const ZZ_pEX &extension_modulus) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->ext_merkle_verify_opening_ns : nullptr,
+                    prof ? &prof->ext_merkle_verify_opening_calls : nullptr);
+
   if (leaf_count <= 0) {
     return false;
   }
@@ -1433,6 +1595,10 @@ bool VerifyEvalWithExtensionChallenges(
     const FieldElement &claimed_y, long num_queries,
     const BaseFoldPCSEvalProof &proof, const FoldableCodeParams &params,
     const BaseFoldPCSChallengeConfig &challenge_cfg) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->pcs_verify_ns : nullptr,
+                    prof ? &prof->pcs_verify_calls : nullptr);
+
   if (params.d == 0) {
     return BaseFoldPCSVerifyEval(commitment_C, z, claimed_y, num_queries, proof,
                                  params);
@@ -1574,6 +1740,10 @@ bool VerifyEvalWithExtensionChallenges(
   const long n_last = CodewordLengthAtLevel(params, params.d - 1);
   const long n_d = CodewordLengthAtLevel(params, params.d);
   for (long q = 0; q < num_queries; ++q) {
+    ScopedTimer query_timer(prof ? &prof->ext_verify_query_merkle_ns : nullptr,
+                            prof ? &prof->ext_verify_query_merkle_calls
+                                     : nullptr);
+
     const long mu =
         transcript.ChallengeIndex("mu/" + std::to_string(q), n_last);
     const IOPPQueryPlan plan = MakeQueryPlan(mu, params);
