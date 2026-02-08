@@ -22,6 +22,7 @@ SEED="${SEED:-0}"
 RUN_PROOF_SIZE="${RUN_PROOF_SIZE:-1}"
 CONTINUE_ON_ERROR="${CONTINUE_ON_ERROR:-1}"
 CMD_TIMEOUT_SEC="${CMD_TIMEOUT_SEC:-0}"
+CONTEXTS="${CONTEXTS:-all}"  # all or comma list: field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162
 
 FIELD255_MOD="${FIELD255_MOD:-57896044618658097711785492504343953926634992332820282019728792003956564819949}"  # 2^255 - 19
 FIELD255_F="${FIELD255_F:-1,1}"       # x + 1
@@ -44,6 +45,12 @@ RING2P2_P="${RING2P2_P:-2}"
 RING2P2_F="${RING2P2_F:-$RING_F_162_DEFAULT}"
 RING2P2_ZETA="${RING2P2_ZETA:-0,1}"  # x
 
+ENABLE_FIELD255=0
+ENABLE_RING2P16_162=0
+ENABLE_F2_256=0
+ENABLE_RING2P2_162=0
+SELECTED_CONTEXT_COUNT=0
+
 if (( D_MIN < 0 || D_MAX < D_MIN )); then
   echo "Invalid dimension range: D_MIN=$D_MIN D_MAX=$D_MAX" >&2
   exit 2
@@ -54,6 +61,45 @@ if [[ "$RUN_PROOF_SIZE" != "0" && "$RUN_PROOF_SIZE" != "1" ]]; then
 fi
 if [[ "$CONTINUE_ON_ERROR" != "0" && "$CONTINUE_ON_ERROR" != "1" ]]; then
   echo "CONTINUE_ON_ERROR must be 0 or 1" >&2
+  exit 2
+fi
+
+if [[ "$CONTEXTS" == "all" ]]; then
+  ENABLE_FIELD255=1
+  ENABLE_RING2P16_162=1
+  ENABLE_F2_256=1
+  ENABLE_RING2P2_162=1
+else
+  IFS=',' read -r -a context_tokens <<< "$CONTEXTS"
+  for raw_token in "${context_tokens[@]}"; do
+    token="${raw_token//[[:space:]]/}"
+    case "$token" in
+      field-255)
+        ENABLE_FIELD255=1
+        ;;
+      ring-gr-2p16-162)
+        ENABLE_RING2P16_162=1
+        ;;
+      field-f2p256)
+        ENABLE_F2_256=1
+        ;;
+      ring-gr-2p2-162)
+        ENABLE_RING2P2_162=1
+        ;;
+      "")
+        ;;
+      *)
+        echo "Unknown context in CONTEXTS: $token" >&2
+        echo "Valid: field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162,all" >&2
+        exit 2
+        ;;
+    esac
+  done
+fi
+
+SELECTED_CONTEXT_COUNT=$((ENABLE_FIELD255 + ENABLE_RING2P16_162 + ENABLE_F2_256 + ENABLE_RING2P2_162))
+if (( SELECTED_CONTEXT_COUNT == 0 )); then
+  echo "No context selected. Set CONTEXTS=all or provide at least one valid context id." >&2
   exit 2
 fi
 
@@ -282,31 +328,39 @@ cmake --build "$BUILD_DIR" \
   --target bench_pcs_commit bench_pcs_eval bench_pcs_proof_size calc_iopp_params \
   --parallel
 
-echo "[3/4] Run sweep: d in [$D_MIN, $D_MAX], contexts = 4"
+echo "[3/4] Run sweep: d in [$D_MIN, $D_MAX], selected contexts = $SELECTED_CONTEXT_COUNT"
 for d in $(seq "$D_MIN" "$D_MAX"); do
   echo "[d=$d]"
-  run_one_context_d \
-    "field-255" "Field-255" "field" "$d" \
-    --field-mod "$FIELD255_MOD" \
-    --field-F "$FIELD255_F" \
-    --field-zeta "$FIELD255_ZETA"
-  run_one_context_d \
-    "ring-gr-2p16-162" "GR(2^16,162)" "ring" "$d" \
-    --ring-mod "$RING2P16_MOD" \
-    --ring-p "$RING2P16_P" \
-    --ring-F "$RING2P16_F" \
-    --ring-zeta "$RING2P16_ZETA"
-  run_one_context_d \
-    "field-f2p256" "F_2^256" "field" "$d" \
-    --field-mod "$F2_256_MOD" \
-    --field-F "$F2_256_F" \
-    --field-zeta "$F2_256_ZETA"
-  run_one_context_d \
-    "ring-gr-2p2-162" "GR(2^2,162)" "ring" "$d" \
-    --ring-mod "$RING2P2_MOD" \
-    --ring-p "$RING2P2_P" \
-    --ring-F "$RING2P2_F" \
-    --ring-zeta "$RING2P2_ZETA"
+  if (( ENABLE_FIELD255 )); then
+    run_one_context_d \
+      "field-255" "Field-255" "field" "$d" \
+      --field-mod "$FIELD255_MOD" \
+      --field-F "$FIELD255_F" \
+      --field-zeta "$FIELD255_ZETA"
+  fi
+  if (( ENABLE_RING2P16_162 )); then
+    run_one_context_d \
+      "ring-gr-2p16-162" "GR(2^16,162)" "ring" "$d" \
+      --ring-mod "$RING2P16_MOD" \
+      --ring-p "$RING2P16_P" \
+      --ring-F "$RING2P16_F" \
+      --ring-zeta "$RING2P16_ZETA"
+  fi
+  if (( ENABLE_F2_256 )); then
+    run_one_context_d \
+      "field-f2p256" "F_2^256" "field" "$d" \
+      --field-mod "$F2_256_MOD" \
+      --field-F "$F2_256_F" \
+      --field-zeta "$F2_256_ZETA"
+  fi
+  if (( ENABLE_RING2P2_162 )); then
+    run_one_context_d \
+      "ring-gr-2p2-162" "GR(2^2,162)" "ring" "$d" \
+      --ring-mod "$RING2P2_MOD" \
+      --ring-p "$RING2P2_P" \
+      --ring-F "$RING2P2_F" \
+      --ring-zeta "$RING2P2_ZETA"
+  fi
 done
 
 echo "[4/4] Build markdown summary"
@@ -317,6 +371,7 @@ echo "[4/4] Build markdown summary"
   echo "- build_dir: $BUILD_DIR"
   echo "- output_dir: $OUT_DIR"
   echo "- d_range: [$D_MIN, $D_MAX] (poly_dim = 2^d)"
+  echo "- contexts: $CONTEXTS"
   echo "- run_proof_size: $RUN_PROOF_SIZE"
   echo "- continue_on_error: $CONTINUE_ON_ERROR"
   echo "- cmd_timeout_sec: $CMD_TIMEOUT_SEC"

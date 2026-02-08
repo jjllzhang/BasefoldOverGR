@@ -73,6 +73,9 @@ scripts/run_release_c4_lambda128.sh
 
 - 常用环境变量：
   - `D_MIN` / `D_MAX`：维度区间（默认 `3..29`）
+  - `CONTEXTS`：选择上下文，默认 `all`
+    - 可选值：`field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162`
+    - 示例：`CONTEXTS=field-255` 或 `CONTEXTS=field-255,ring-gr-2p16-162`
   - `RUN_PROOF_SIZE`：`1` 或 `0`（默认 `1`）
   - `CMD_TIMEOUT_SEC`：单条 bench 超时秒数（默认 `0`，即不超时）
   - `CONTINUE_ON_ERROR`：遇到某个点失败后是否继续（默认 `1`）
