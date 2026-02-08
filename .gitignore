@@ -4,6 +4,9 @@ build-release/
 cmake-build-*/
 out/
 
+# Results
+results/
+
 # CMake
 CMakeFiles/
 CMakeCache.txt
