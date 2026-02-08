@@ -23,6 +23,7 @@ RUN_PROOF_SIZE="${RUN_PROOF_SIZE:-1}"
 CONTINUE_ON_ERROR="${CONTINUE_ON_ERROR:-1}"
 CMD_TIMEOUT_SEC="${CMD_TIMEOUT_SEC:-0}"
 CONTEXTS="${CONTEXTS:-all}"  # all or comma list: field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162
+BENCH_THREADS="${BENCH_THREADS:-0}"  # 0 means keep runtime defaults
 
 FIELD255_MOD="${FIELD255_MOD:-57896044618658097711785492504343953926634992332820282019728792003956564819949}"  # 2^255 - 19
 FIELD255_F="${FIELD255_F:-1,1}"       # x + 1
@@ -62,6 +63,16 @@ fi
 if [[ "$CONTINUE_ON_ERROR" != "0" && "$CONTINUE_ON_ERROR" != "1" ]]; then
   echo "CONTINUE_ON_ERROR must be 0 or 1" >&2
   exit 2
+fi
+if ! [[ "$BENCH_THREADS" =~ ^[0-9]+$ ]]; then
+  echo "BENCH_THREADS must be a non-negative integer" >&2
+  exit 2
+fi
+
+if (( BENCH_THREADS > 0 )); then
+  export OMP_NUM_THREADS="$BENCH_THREADS"
+  export BASEFOLD_MERKLE_MAX_THREADS="${BASEFOLD_MERKLE_MAX_THREADS:-$BENCH_THREADS}"
+  export BASEFOLD_VERIFY_QUERY_MAX_THREADS="${BASEFOLD_VERIFY_QUERY_MAX_THREADS:-$BENCH_THREADS}"
 fi
 
 if [[ "$CONTEXTS" == "all" ]]; then
@@ -328,7 +339,7 @@ cmake --build "$BUILD_DIR" \
   --target bench_pcs_commit bench_pcs_eval bench_pcs_proof_size calc_iopp_params \
   --parallel
 
-echo "[3/4] Run sweep: d in [$D_MIN, $D_MAX], selected contexts = $SELECTED_CONTEXT_COUNT"
+echo "[3/4] Run sweep: d in [$D_MIN, $D_MAX], selected contexts = $SELECTED_CONTEXT_COUNT (contexts serial, each bench may use threads)"
 for d in $(seq "$D_MIN" "$D_MAX"); do
   echo "[d=$d]"
   if (( ENABLE_FIELD255 )); then
@@ -372,6 +383,7 @@ echo "[4/4] Build markdown summary"
   echo "- output_dir: $OUT_DIR"
   echo "- d_range: [$D_MIN, $D_MAX] (poly_dim = 2^d)"
   echo "- contexts: $CONTEXTS"
+  echo "- bench_threads: $BENCH_THREADS (0 means runtime default)"
   echo "- run_proof_size: $RUN_PROOF_SIZE"
   echo "- continue_on_error: $CONTINUE_ON_ERROR"
   echo "- cmd_timeout_sec: $CMD_TIMEOUT_SEC"

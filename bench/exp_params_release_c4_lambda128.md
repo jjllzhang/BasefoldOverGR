@@ -76,10 +76,16 @@ scripts/run_release_c4_lambda128.sh
   - `CONTEXTS`：选择上下文，默认 `all`
     - 可选值：`field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162`
     - 示例：`CONTEXTS=field-255` 或 `CONTEXTS=field-255,ring-gr-2p16-162`
+  - `BENCH_THREADS`：单个 bench 进程内部线程数（默认 `0`，即运行时默认）
+    - 当 `BENCH_THREADS>0` 时，脚本会设置 `OMP_NUM_THREADS`，并把
+      `BASEFOLD_MERKLE_MAX_THREADS`、`BASEFOLD_VERIFY_QUERY_MAX_THREADS`
+      设为同值（若你未手动设置）。
   - `RUN_PROOF_SIZE`：`1` 或 `0`（默认 `1`）
   - `CMD_TIMEOUT_SEC`：单条 bench 超时秒数（默认 `0`，即不超时）
   - `CONTINUE_ON_ERROR`：遇到某个点失败后是否继续（默认 `1`）
   - `COMMIT_REPS` / `EVAL_REPS` / `SEED`
+
+说明：脚本按 `d` 串行推进；同一 `d` 下各 context 也串行执行，不会并行抢同一批 CPU 核。并行度主要来自单个 bench 进程内部线程。
 
 ## 5) 输出
 
