@@ -251,6 +251,7 @@ run_one_context_d() {
         "${bench_args[@]}" \
         --c "$C" --k0 "$K0" --d "$d" \
         --queries "$queries" \
+        --formula \
         --seed "$SEED"; then
       status="proof_failed"
       error="$(first_error_line "$proof_log")"
