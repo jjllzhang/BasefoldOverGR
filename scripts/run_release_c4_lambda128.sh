@@ -22,8 +22,14 @@ SEED="${SEED:-0}"
 RUN_PROOF_SIZE="${RUN_PROOF_SIZE:-1}"
 CONTINUE_ON_ERROR="${CONTINUE_ON_ERROR:-1}"
 CMD_TIMEOUT_SEC="${CMD_TIMEOUT_SEC:-0}"
-CONTEXTS="${CONTEXTS:-all}"  # all or comma list: field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162
-BENCH_THREADS="${BENCH_THREADS:-0}"  # 0 means keep runtime defaults
+CONTEXTS="${CONTEXTS:-all}"  # all or comma list, see valid ids in parsing block
+BENCH_THREADS="${BENCH_THREADS:-8}"  # set 0 to keep runtime defaults
+CHALLENGE_FIELD_EXT_DEG2="${CHALLENGE_FIELD_EXT_DEG2:-0,1;1;1}"  # E(U)=zeta+U+U^2
+CHALLENGE_RING_EXT_DEG2="${CHALLENGE_RING_EXT_DEG2:-0,1;1;1}"    # E(U)=zeta+U+U^2
+CHALLENGE_RING_EXT_DEG3="${CHALLENGE_RING_EXT_DEG3:-1;1;0;1}"    # E(U)=1+U+U^3
+EXT128_BETA_TRACE1_DEFAULT='1,0,0,1,1,1,1,1,0,0,0,0,1,0,0,1,1,0,0,0,0,1,1,0,0,0,1,1,1,0,1,1,0,0,0,0,0,1,1,0,0,1,0,1,0,0,1,0,1,1,0,1,0,1,0,0,0,0,0,0,0,1,1,0,1,0,0,0,0,1,1,1,1,1,1,0,1,0,1,1,0,1,0,0,0,1,1,0,1,1,0,0,1,0,0,0,1,0,1,0,0,0,1,0,0,0,0,1,1,1,0,1,1,0,1,0,1,1,0,0,0,0,1,0,0,1,1,1'
+CHALLENGE_F2_128_EXT_DEG2="${CHALLENGE_F2_128_EXT_DEG2:-$EXT128_BETA_TRACE1_DEFAULT;1;1}"  # E(U)=U^2+U+beta, Tr(beta)=1
+CHALLENGE_GR_128_EXT_DEG2="${CHALLENGE_GR_128_EXT_DEG2:-$EXT128_BETA_TRACE1_DEFAULT;1;1}"  # lift of the same Artin-Schreier form
 
 FIELD255_MOD="${FIELD255_MOD:-57896044618658097711785492504343953926634992332820282019728792003956564819949}"  # 2^255 - 19
 FIELD255_F="${FIELD255_F:-1,1}"       # x + 1
@@ -33,6 +39,20 @@ F2_256_MOD="${F2_256_MOD:-2}"
 F2_256_F_DEFAULT='1,0,1,0,0,1,0,0,1,0,1,0,0,1,1,0,1,0,1,1,0,0,1,0,1,0,0,0,0,0,1,0,1,1,0,0,0,0,0,1,1,1,0,1,1,0,1,0,0,1,0,0,1,0,0,0,0,0,0,0,1,0,1,1,1,0,1,0,1,1,1,0,0,1,1,0,1,0,1,0,1,0,1,0,0,0,0,0,0,0,1,1,0,1,1,0,1,0,1,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,1,0,1,0,0,0,1,0,1,1,0,1,1,0,1,1,0,1,0,1,1,0,0,1,0,0,0,0,1,1,0,0,0,0,1,0,0,1,0,1,0,0,0,0,0,1,1,1,0,1,1,0,1,1,0,1,1,0,0,0,0,1,0,0,0,0,1,1,0,0,1,1,0,0,1,1,1,0,1,0,0,0,1,1,1,0,1,1,0,0,1,0,1,1,0,1,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,1,0,0,0,1,1,1,1,0,0,0,0,0,1,1,1,0,1,1,0,1,1,1,0,1,1,0,0,1,0,1'
 F2_256_F="${F2_256_F:-$F2_256_F_DEFAULT}"
 F2_256_ZETA="${F2_256_ZETA:-0,1}"  # x
+
+FIELD128_MOD="${FIELD128_MOD:-326594724262804054738278293730872375507}"  # 128-bit prime
+FIELD128_F="${FIELD128_F:-1,1}"  # x + 1
+FIELD128_ZETA="${FIELD128_ZETA:-0,1}"  # x
+
+RING_F_64_DEFAULT='1,1,1,0,0,1,1,1,0,1,1,1,1,0,1,1,0,0,1,0,1,0,0,0,1,0,1,0,0,0,0,0,1,1,0,1,0,0,0,0,0,0,0,1,0,0,1,1,1,0,1,0,1,0,0,1,1,0,0,0,0,0,1,0,1'
+# x^128 + x^7 + x^2 + x + 1 (AES-GCM polynomial), also used as its 2-adic lift.
+RING_F_128_DEFAULT='1,1,1,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1'
+RING_F_64="${RING_F_64:-$RING_F_64_DEFAULT}"
+RING_F_128="${RING_F_128:-$RING_F_128_DEFAULT}"
+
+F2_128_MOD="${F2_128_MOD:-2}"
+F2_128_F="${F2_128_F:-$RING_F_128_DEFAULT}"
+F2_128_ZETA="${F2_128_ZETA:-0,1}"  # x
 
 RING_F_162_DEFAULT='1,1,0,0,1,1,1,1,0,0,0,1,0,0,1,0,1,1,1,0,0,0,0,0,0,1,1,1,1,0,0,0,1,1,1,0,0,0,1,1,0,0,1,1,1,0,0,0,0,1,1,1,1,0,1,1,0,1,0,0,0,0,1,1,1,0,1,1,1,0,0,1,0,1,1,0,0,1,0,0,1,0,1,0,0,1,1,1,0,1,1,0,1,0,1,1,1,0,1,1,0,1,1,0,0,1,1,1,0,1,0,1,1,0,1,0,0,0,1,1,1,1,0,1,0,1,1,0,0,0,1,1,0,0,0,0,0,1,1,1,1,0,0,1,0,1,1,0,0,1,1,1,1,0,0,1,1,1,1,0,1,1,1'
 
@@ -50,6 +70,12 @@ ENABLE_FIELD255=0
 ENABLE_RING2P16_162=0
 ENABLE_F2_256=0
 ENABLE_RING2P2_162=0
+ENABLE_FIELD128_EXT=0
+ENABLE_F2_128_EXT=0
+ENABLE_RING2P16_64_EXT=0
+ENABLE_RING2P16_128_EXT=0
+ENABLE_RING2P2_64_EXT=0
+ENABLE_RING2P2_128_EXT=0
 SELECTED_CONTEXT_COUNT=0
 
 if (( D_MIN < 0 || D_MAX < D_MIN )); then
@@ -80,6 +106,12 @@ if [[ "$CONTEXTS" == "all" ]]; then
   ENABLE_RING2P16_162=1
   ENABLE_F2_256=1
   ENABLE_RING2P2_162=1
+  ENABLE_FIELD128_EXT=1
+  ENABLE_F2_128_EXT=1
+  ENABLE_RING2P16_64_EXT=1
+  ENABLE_RING2P16_128_EXT=1
+  ENABLE_RING2P2_64_EXT=1
+  ENABLE_RING2P2_128_EXT=1
 else
   IFS=',' read -r -a context_tokens <<< "$CONTEXTS"
   for raw_token in "${context_tokens[@]}"; do
@@ -97,18 +129,36 @@ else
       ring-gr-2p2-162)
         ENABLE_RING2P2_162=1
         ;;
+      field-prime64|field-prime128-ext)
+        ENABLE_FIELD128_EXT=1
+        ;;
+      field-f2p64-ext|field-f2p128-ext)
+        ENABLE_F2_128_EXT=1
+        ;;
+      ring-gr-2p16-64-ext)
+        ENABLE_RING2P16_64_EXT=1
+        ;;
+      ring-gr-2p16-128-ext)
+        ENABLE_RING2P16_128_EXT=1
+        ;;
+      ring-gr-2p2-64-ext)
+        ENABLE_RING2P2_64_EXT=1
+        ;;
+      ring-gr-2p2-128-ext)
+        ENABLE_RING2P2_128_EXT=1
+        ;;
       "")
         ;;
       *)
         echo "Unknown context in CONTEXTS: $token" >&2
-        echo "Valid: field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162,all" >&2
+        echo "Valid: field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162,field-prime128-ext,field-f2p128-ext,ring-gr-2p16-64-ext,ring-gr-2p16-128-ext,ring-gr-2p2-64-ext,ring-gr-2p2-128-ext,all" >&2
         exit 2
         ;;
     esac
   done
 fi
 
-SELECTED_CONTEXT_COUNT=$((ENABLE_FIELD255 + ENABLE_RING2P16_162 + ENABLE_F2_256 + ENABLE_RING2P2_162))
+SELECTED_CONTEXT_COUNT=$((ENABLE_FIELD255 + ENABLE_RING2P16_162 + ENABLE_F2_256 + ENABLE_RING2P2_162 + ENABLE_FIELD128_EXT + ENABLE_F2_128_EXT + ENABLE_RING2P16_64_EXT + ENABLE_RING2P16_128_EXT + ENABLE_RING2P2_64_EXT + ENABLE_RING2P2_128_EXT))
 if (( SELECTED_CONTEXT_COUNT == 0 )); then
   echo "No context selected. Set CONTEXTS=all or provide at least one valid context id." >&2
   exit 2
@@ -208,6 +258,7 @@ run_one_context_d() {
   local calc_p=""
   local calc_r=""
   local calc_m="1"
+  local -a eval_extra_args=()
 
   case "$context_id" in
     field-255)
@@ -225,6 +276,42 @@ run_one_context_d() {
     ring-gr-2p2-162)
       calc_p="2"
       calc_r="162"
+      ;;
+    field-prime128-ext)
+      calc_p="$FIELD128_MOD"
+      calc_r="1"
+      calc_m="2"
+      eval_extra_args+=(--use-extension-challenges --field-challenge-ext "$CHALLENGE_FIELD_EXT_DEG2")
+      ;;
+    field-f2p128-ext)
+      calc_p="2"
+      calc_r="128"
+      calc_m="2"
+      eval_extra_args+=(--use-extension-challenges --field-challenge-ext "$CHALLENGE_F2_128_EXT_DEG2")
+      ;;
+    ring-gr-2p16-64-ext)
+      calc_p="2"
+      calc_r="64"
+      calc_m="3"
+      eval_extra_args+=(--use-extension-challenges --ring-challenge-ext "$CHALLENGE_RING_EXT_DEG3")
+      ;;
+    ring-gr-2p16-128-ext)
+      calc_p="2"
+      calc_r="128"
+      calc_m="2"
+      eval_extra_args+=(--use-extension-challenges --ring-challenge-ext "$CHALLENGE_GR_128_EXT_DEG2")
+      ;;
+    ring-gr-2p2-64-ext)
+      calc_p="2"
+      calc_r="64"
+      calc_m="3"
+      eval_extra_args+=(--use-extension-challenges --ring-challenge-ext "$CHALLENGE_RING_EXT_DEG3")
+      ;;
+    ring-gr-2p2-128-ext)
+      calc_p="2"
+      calc_r="128"
+      calc_m="2"
+      eval_extra_args+=(--use-extension-challenges --ring-challenge-ext "$CHALLENGE_GR_128_EXT_DEG2")
       ;;
     *)
       status="context_config_error"
@@ -282,6 +369,7 @@ run_one_context_d() {
     if ! run_and_log "$eval_log" \
         "$BUILD_DIR/bench_pcs_eval" \
         --mode "$mode" \
+        "${eval_extra_args[@]}" \
         "${bench_args[@]}" \
         --c "$C" --k0 "$K0" --d "$d" \
         --queries "$queries" \
@@ -372,6 +460,52 @@ for d in $(seq "$D_MIN" "$D_MAX"); do
       --ring-F "$RING2P2_F" \
       --ring-zeta "$RING2P2_ZETA"
   fi
+  if (( ENABLE_FIELD128_EXT )); then
+    run_one_context_d \
+      "field-prime128-ext" "Field-Prime128 (ext-challenge)" "field" "$d" \
+      --field-mod "$FIELD128_MOD" \
+      --field-F "$FIELD128_F" \
+      --field-zeta "$FIELD128_ZETA"
+  fi
+  if (( ENABLE_F2_128_EXT )); then
+    run_one_context_d \
+      "field-f2p128-ext" "F_2^128 (ext-challenge)" "field" "$d" \
+      --field-mod "$F2_128_MOD" \
+      --field-F "$F2_128_F" \
+      --field-zeta "$F2_128_ZETA"
+  fi
+  if (( ENABLE_RING2P16_64_EXT )); then
+    run_one_context_d \
+      "ring-gr-2p16-64-ext" "GR(2^16,64) (ext-challenge)" "ring" "$d" \
+      --ring-mod "$RING2P16_MOD" \
+      --ring-p "$RING2P16_P" \
+      --ring-F "$RING_F_64" \
+      --ring-zeta "$RING2P16_ZETA"
+  fi
+  if (( ENABLE_RING2P16_128_EXT )); then
+    run_one_context_d \
+      "ring-gr-2p16-128-ext" "GR(2^16,128) (ext-challenge)" "ring" "$d" \
+      --ring-mod "$RING2P16_MOD" \
+      --ring-p "$RING2P16_P" \
+      --ring-F "$RING_F_128" \
+      --ring-zeta "$RING2P16_ZETA"
+  fi
+  if (( ENABLE_RING2P2_64_EXT )); then
+    run_one_context_d \
+      "ring-gr-2p2-64-ext" "GR(2^2,64) (ext-challenge)" "ring" "$d" \
+      --ring-mod "$RING2P2_MOD" \
+      --ring-p "$RING2P2_P" \
+      --ring-F "$RING_F_64" \
+      --ring-zeta "$RING2P2_ZETA"
+  fi
+  if (( ENABLE_RING2P2_128_EXT )); then
+    run_one_context_d \
+      "ring-gr-2p2-128-ext" "GR(2^2,128) (ext-challenge)" "ring" "$d" \
+      --ring-mod "$RING2P2_MOD" \
+      --ring-p "$RING2P2_P" \
+      --ring-F "$RING_F_128" \
+      --ring-zeta "$RING2P2_ZETA"
+  fi
 done
 
 echo "[4/4] Build markdown summary"
@@ -383,7 +517,7 @@ echo "[4/4] Build markdown summary"
   echo "- output_dir: $OUT_DIR"
   echo "- d_range: [$D_MIN, $D_MAX] (poly_dim = 2^d)"
   echo "- contexts: $CONTEXTS"
-  echo "- bench_threads: $BENCH_THREADS (0 means runtime default)"
+  echo "- bench_threads: $BENCH_THREADS (set 0 to use runtime default)"
   echo "- run_proof_size: $RUN_PROOF_SIZE"
   echo "- continue_on_error: $CONTINUE_ON_ERROR"
   echo "- cmd_timeout_sec: $CMD_TIMEOUT_SEC"

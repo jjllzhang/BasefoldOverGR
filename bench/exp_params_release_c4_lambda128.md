@@ -13,9 +13,9 @@
   - `commit time`：`bench_pcs_commit` 的 `encode-only mean`
   - `prover time`：`bench_pcs_eval` 的 `prover mean`
   - `verifier time`：`bench_pcs_eval` 的 `verifier mean`
-  - `proof size`：`bench_pcs_proof_size` 的真实 proof size
+  - `proof size`：`bench_pcs_proof_size --formula` 的估算值（非真实 prover 产物序列化）
 
-## 2) 实验上下文（共 4 组）
+## 2) 实验上下文（默认 `all` 共 10 组）
 
 - `Field-255`
   - `--mode field`
@@ -47,6 +47,33 @@
   - `--ring-zeta = 0,1`
   - `calc_iopp_params` 使用 `q = 2^162`
 
+- `128-bit prime`（`field-prime128-ext`）
+  - `--mode field`
+  - `--field-mod = 326594724262804054738278293730872375507`
+  - `--field-F = 1,1`
+  - `--field-zeta = 0,1`
+  - 使用扩域挑战（`--use-extension-challenges` + 二次扩展挑战多项式）
+  - `calc_iopp_params` 使用 `q = p^(r*m) = p^(1*2) = p^2`
+
+- `F_2^128`（`field-f2p128-ext`）
+  - `--mode field`
+  - `--field-mod = 2`
+  - `--field-F = x^128 + x^7 + x^2 + x + 1`（AES-GCM 常用不可约多项式）
+  - `--field-zeta = 0,1`
+  - 使用扩域挑战（`--use-extension-challenges` + 二次 Artin-Schreier 多项式 `U^2 + U + beta`，`Tr(beta)=1`）
+  - `calc_iopp_params` 使用 `q = 2^(128*2) = 2^256`
+
+- `GR(2^16,64)`（`ring-gr-2p16-64-ext`）
+- `GR(2^16,128)`（`ring-gr-2p16-128-ext`）
+- `GR(2^2,64)`（`ring-gr-2p2-64-ext`）
+- `GR(2^2,128)`（`ring-gr-2p2-128-ext`）
+  - `GR(*,128)` 的 `--ring-F` 使用上述 128 次多项式在 `Z/(2^k)` 上的 Hensel 提升（脚本中即同系数 0/1 表示）
+  - `GR(*,64)` 使用三次扩环挑战（默认 `E(U)=1+U+U^3`）
+  - `GR(*,128)` 使用二次 Artin-Schreier 扩环挑战（`U^2 + U + gamma`，`gamma mod 2 = beta` 且 `Tr(beta)=1`）
+  - `calc_iopp_params` 的 `q`（按 `q=p^(r*m)`，且 ring 侧取 `p=2`）：
+    - `ring-gr-2p16-64-ext` / `ring-gr-2p2-64-ext`：`q = 2^(64*3) = 2^192`
+    - `ring-gr-2p16-128-ext` / `ring-gr-2p2-128-ext`：`q = 2^(128*2) = 2^256`
+
 ## 3) queries（每个 d、每个上下文单独推导）
 
 脚本对每个 `(context, d)` 都会调用：
@@ -54,7 +81,7 @@
 ```bash
 ./build-release/calc_iopp_params \
   --d <d> --c 4 --k0 1 --lambda 128 \
-  --p <context-specific-p> --r <context-specific-r> --m 1 \
+  --p <context-specific-p> --r <context-specific-r> --m <context-specific-m> \
   --auto-gamma
 ```
 
@@ -62,6 +89,11 @@
 
 - `gamma`
 - `l_min_for_PCS`（作为该点的 `queries`）
+
+说明：
+
+- `calc_iopp_params` 统一使用 `q = p^(r*m)`。
+- 对 ring context，脚本传入的是 `p=2`（残差域视角），因此这里的 `q` 不是环总基数 `(2^k)^(r*m)`，而是 `2^(r*m)`。
 
 ## 4) 运行方式
 
@@ -74,13 +106,17 @@ scripts/run_release_c4_lambda128.sh
 - 常用环境变量：
   - `D_MIN` / `D_MAX`：维度区间（默认 `3..29`）
   - `CONTEXTS`：选择上下文，默认 `all`
-    - 可选值：`field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162`
-    - 示例：`CONTEXTS=field-255` 或 `CONTEXTS=field-255,ring-gr-2p16-162`
-  - `BENCH_THREADS`：单个 bench 进程内部线程数（默认 `0`，即运行时默认）
-    - 当 `BENCH_THREADS>0` 时，脚本会设置 `OMP_NUM_THREADS`，并把
+    - 可选值：`field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162,field-prime128-ext,field-f2p128-ext,ring-gr-2p16-64-ext,ring-gr-2p16-128-ext,ring-gr-2p2-64-ext,ring-gr-2p2-128-ext`
+    - 示例：`CONTEXTS=field-prime128-ext` 或 `CONTEXTS=field-f2p128-ext,ring-gr-2p16-64-ext`
+    - 兼容别名：`field-prime64 -> field-prime128-ext`，`field-f2p64-ext -> field-f2p128-ext`
+  - `BENCH_THREADS`：单个 bench 进程内部线程数（默认 `8`）
+    - 默认情况下脚本会设置 `OMP_NUM_THREADS=8`，并把
       `BASEFOLD_MERKLE_MAX_THREADS`、`BASEFOLD_VERIFY_QUERY_MAX_THREADS`
       设为同值（若你未手动设置）。
+    - 若希望完全使用运行时默认线程策略，可显式设置 `BENCH_THREADS=0`。
   - `RUN_PROOF_SIZE`：`1` 或 `0`（默认 `1`）
+    - 当前脚本在该步骤固定使用 `bench_pcs_proof_size --formula`（估算模式）。
+    - 当前脚本未向 `bench_pcs_proof_size` 透传扩展挑战参数（`--use-extension-challenges` 与 `--*-challenge-ext`）。
   - `CMD_TIMEOUT_SEC`：单条 bench 超时秒数（默认 `0`，即不超时）
   - `CONTINUE_ON_ERROR`：遇到某个点失败后是否继续（默认 `1`）
   - `COMMIT_REPS` / `EVAL_REPS` / `SEED`
