@@ -390,8 +390,12 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
                                                         num_queries, params, cfg);
 
   CHECK(proof.extension.enabled);
-  CHECK(static_cast<long>(proof.extension.r_by_level.size()) == params.d);
+  CHECK(proof.extension.r_by_level.empty());
   CHECK(static_cast<long>(proof.extension.roots_by_level.size()) == params.d);
+  CHECK(static_cast<long>(proof.query_proofs.size()) == num_queries);
+  CHECK(proof.query_proofs[0].left.size() == 1U);
+  CHECK(proof.query_proofs[0].right.size() == 1U);
+  CHECK(proof.query_proofs[0].folded.empty());
 
   CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
       C, z, y, num_queries, proof, params, cfg));
@@ -411,13 +415,6 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
   proof_root_tampered.extension.roots_by_level[0][0] ^= static_cast<basefold::Byte>(0x01);
   CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
       C, z, y, num_queries, proof_root_tampered, params, cfg));
-
-  basefold::BaseFoldPCSEvalProof proof_r_tampered = proof;
-  ZZ_pE r0_coeff0 = NTL::coeff(proof_r_tampered.extension.r_by_level[0], 0);
-  r0_coeff0 += testutil::ConstZZpE(1);
-  NTL::SetCoeff(proof_r_tampered.extension.r_by_level[0], 0, r0_coeff0);
-  CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
-      C, z, y, num_queries, proof_r_tampered, params, cfg));
 
   basefold::BaseFoldPCSEvalProof proof_h_tampered = proof;
   ZZ_pE h0_a0_coeff0 =
@@ -491,7 +488,12 @@ void TestPCS_EvalProof_ExtChallengeConfig_GR42() {
           f_coeffs, z, y, num_queries, params, cfg);
 
   CHECK(proof.extension.enabled);
+  CHECK(proof.extension.r_by_level.empty());
   CHECK(static_cast<long>(proof.extension.roots_by_level.size()) == params.d);
+  CHECK(static_cast<long>(proof.query_proofs.size()) == num_queries);
+  CHECK(proof.query_proofs[0].left.size() == 1U);
+  CHECK(proof.query_proofs[0].right.size() == 1U);
+  CHECK(proof.query_proofs[0].folded.empty());
   CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
       C, z, y, num_queries, proof, params, cfg));
 
@@ -509,13 +511,6 @@ void TestPCS_EvalProof_ExtChallengeConfig_GR42() {
       static_cast<basefold::Byte>(0x01);
   CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
       C, z, y, num_queries, proof_root_tampered, params, cfg));
-
-  basefold::BaseFoldPCSEvalProof proof_r_tampered = proof;
-  ZZ_pE r0_coeff0 = NTL::coeff(proof_r_tampered.extension.r_by_level[0], 0);
-  r0_coeff0 += testutil::ConstZZpE(1);
-  NTL::SetCoeff(proof_r_tampered.extension.r_by_level[0], 0, r0_coeff0);
-  CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
-      C, z, y, num_queries, proof_r_tampered, params, cfg));
 
   basefold::BaseFoldPCSEvalProof proof_h_tampered = proof;
   ZZ_pE h0_a0_coeff0 =

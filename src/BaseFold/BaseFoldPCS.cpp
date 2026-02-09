@@ -1668,25 +1668,22 @@ BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesUnchecked(
 
   BaseFoldPCSEvalProof proof;
   proof.extension.enabled = true;
-  proof.commitments.roots_by_level.resize(static_cast<std::size_t>(params.d + 1));
-  for (long i = 0; i < params.d; ++i) {
-    proof.commitments.roots_by_level[static_cast<std::size_t>(i)].fill(0);
-  }
+  proof.commitments.roots_by_level.clear();
   proof.extension.roots_by_level.resize(static_cast<std::size_t>(params.d));
 
   Oracle pi_d_base;
   EncodeFoldableUnchecked(pi_d_base, f_coeffs, params);
   const MerkleTree merkle_d = MerkleTree::Build(pi_d_base);
   const MerkleRoot root_d = merkle_d.Root();
-  proof.commitments.roots_by_level[static_cast<std::size_t>(params.d)] = root_d;
+  proof.commitments.roots_by_level.push_back(root_d);
 
   Sha256Transcript transcript;
   AbsorbPublicInput(transcript, root_d, z, claimed_y);
   AbsorbChallengeConfig(transcript, challenge_cfg);
 
   proof.extension.h_by_level.resize(static_cast<std::size_t>(params.d));
-  proof.extension.r_by_level.resize(static_cast<std::size_t>(params.d));
-  proof.h_by_level.resize(static_cast<std::size_t>(params.d));
+  std::vector<ZZ_pEX> r_by_level;
+  r_by_level.resize(static_cast<std::size_t>(params.d));
 
   std::vector<std::vector<ZZ_pEX>> ext_oracles;
   ext_oracles.resize(static_cast<std::size_t>(params.d + 1));
@@ -1703,7 +1700,7 @@ BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesUnchecked(
   for (long i = params.d; i-- > 0;) {
     const ZZ_pEX r_i_ext = SampleExtensionChallenge(
         transcript, "r/" + std::to_string(i), extension_modulus);
-    proof.extension.r_by_level[static_cast<std::size_t>(i)] = r_i_ext;
+    r_by_level[static_cast<std::size_t>(i)] = r_i_ext;
 
     ProverCommitRoundExtensionNoValidate(
         ext_oracles[static_cast<std::size_t>(i)],
@@ -1724,33 +1721,15 @@ BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesUnchecked(
     }
   }
 
-  for (long i = 0; i < params.d; ++i) {
-    const ExtensionQuadraticPoly &h_ext =
-        proof.extension.h_by_level[static_cast<std::size_t>(i)];
-    proof.h_by_level[static_cast<std::size_t>(i)].a0 =
-        ProjectExtensionToBaseConstant(h_ext.a0);
-    proof.h_by_level[static_cast<std::size_t>(i)].a1 =
-        ProjectExtensionToBaseConstant(h_ext.a1);
-    proof.h_by_level[static_cast<std::size_t>(i)].a2 =
-        ProjectExtensionToBaseConstant(h_ext.a2);
-  }
-
   proof.extension.pi0_full = ext_oracles[0];
 
   const long kappa = Log2ExactPowerOfTwoLong(params.k0);
   proof.extension.msg0_coeffs = Msg0CoeffsAtSuffixChallenges(
-      f_coeffs, kappa, proof.extension.r_by_level, extension_modulus);
+      f_coeffs, kappa, r_by_level, extension_modulus);
   const std::vector<ZZ_pEX> expected_pi0 = EncodeC0Extension(
       proof.extension.msg0_coeffs, params, extension_modulus);
   if (expected_pi0 != proof.extension.pi0_full) {
     LogicError("ProveEvalWithExtensionChallengesUnchecked: internal pi0 mismatch");
-  }
-
-  proof.pi0_full.SetLength(
-      static_cast<long>(proof.extension.pi0_full.size()));
-  for (long i = 0; i < proof.pi0_full.length(); ++i) {
-    proof.pi0_full[i] = ProjectExtensionToBaseConstant(
-        proof.extension.pi0_full[static_cast<std::size_t>(i)]);
   }
 
   proof.query_proofs.resize(static_cast<std::size_t>(num_queries));
@@ -1763,9 +1742,9 @@ BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesUnchecked(
     const IOPPQueryPlan plan = MakeQueryPlanNoValidate(mu, params);
 
     BaseFoldPCSQueryProof qp;
-    qp.left.resize(static_cast<std::size_t>(params.d));
-    qp.right.resize(static_cast<std::size_t>(params.d));
-    qp.folded.resize(static_cast<std::size_t>(params.d));
+    qp.left.resize(1);
+    qp.right.resize(1);
+    qp.folded.clear();
 
     BaseFoldPCSQueryProofExtension qp_ext;
     qp_ext.left.resize(static_cast<std::size_t>(params.d));
@@ -1796,25 +1775,13 @@ BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesUnchecked(
             ext_merkle_trees[static_cast<std::size_t>(i + 1)].Open(
                 ext_oracles[static_cast<std::size_t>(i + 1)], mu_i + n_i);
       }
-
-      qp.left[static_cast<std::size_t>(i)].index = mu_i;
-      qp.left[static_cast<std::size_t>(i)].value =
-          ProjectExtensionToBaseConstant(
-              qp_ext.left[static_cast<std::size_t>(i)].value);
-      qp.right[static_cast<std::size_t>(i)].index = mu_i + n_i;
-      qp.right[static_cast<std::size_t>(i)].value = ProjectExtensionToBaseConstant(
-          qp_ext.right[static_cast<std::size_t>(i)].value);
-      qp.folded[static_cast<std::size_t>(i)].index = mu_i;
-      qp.folded[static_cast<std::size_t>(i)].value = ProjectExtensionToBaseConstant(
-          qp_ext.folded[static_cast<std::size_t>(i)].value);
     }
 
     const long top_i = params.d - 1;
     const long mu_top = plan.mu_by_level[static_cast<std::size_t>(top_i)];
     const long n_top = CodewordLengthAtLevelNoValidate(params, top_i);
-    qp.left[static_cast<std::size_t>(top_i)] = merkle_d.Open(pi_d_base, mu_top);
-    qp.right[static_cast<std::size_t>(top_i)] =
-        merkle_d.Open(pi_d_base, mu_top + n_top);
+    qp.left[0] = merkle_d.Open(pi_d_base, mu_top);
+    qp.right[0] = merkle_d.Open(pi_d_base, mu_top + n_top);
 
     proof.query_proofs[static_cast<std::size_t>(q)] = std::move(qp);
     proof.extension.query_proofs[static_cast<std::size_t>(q)] = std::move(qp_ext);
@@ -1849,15 +1816,14 @@ bool VerifyEvalWithExtensionChallenges(
     return false;
   if (num_queries < 0)
     return false;
-  if (static_cast<long>(proof.commitments.roots_by_level.size()) != params.d + 1)
-    return false;
   if (!proof.extension.enabled)
     return false;
   if (static_cast<long>(proof.extension.roots_by_level.size()) != params.d)
     return false;
   if (static_cast<long>(proof.extension.h_by_level.size()) != params.d)
     return false;
-  if (static_cast<long>(proof.extension.r_by_level.size()) != params.d)
+  if (static_cast<long>(proof.extension.r_by_level.size()) != 0 &&
+      static_cast<long>(proof.extension.r_by_level.size()) != params.d)
     return false;
   if (static_cast<long>(proof.extension.msg0_coeffs.size()) != params.k0)
     return false;
@@ -1869,8 +1835,17 @@ bool VerifyEvalWithExtensionChallenges(
   if (static_cast<long>(proof.query_proofs.size()) != num_queries)
     return false;
 
-  if (proof.commitments.roots_by_level[static_cast<std::size_t>(params.d)] !=
-      commitment_C) {
+  const std::size_t base_root_count = proof.commitments.roots_by_level.size();
+  if (base_root_count == 1U) {
+    if (proof.commitments.roots_by_level[0] != commitment_C) {
+      return false;
+    }
+  } else if (base_root_count == static_cast<std::size_t>(params.d + 1)) {
+    if (proof.commitments.roots_by_level[static_cast<std::size_t>(params.d)] !=
+        commitment_C) {
+      return false;
+    }
+  } else if (base_root_count != 0U) {
     return false;
   }
 
@@ -1885,12 +1860,15 @@ bool VerifyEvalWithExtensionChallenges(
 
   std::vector<ZZ_pEX> r_by_level;
   r_by_level.resize(static_cast<std::size_t>(params.d));
+  const bool has_explicit_r =
+      (static_cast<long>(proof.extension.r_by_level.size()) == params.d);
 
   for (long i = params.d; i-- > 0;) {
     const ZZ_pEX r_i = SampleExtensionChallenge(
         transcript, "r/" + std::to_string(i), extension_modulus);
     r_by_level[static_cast<std::size_t>(i)] = r_i;
-    if (proof.extension.r_by_level[static_cast<std::size_t>(i)] != r_i) {
+    if (has_explicit_r &&
+        proof.extension.r_by_level[static_cast<std::size_t>(i)] != r_i) {
       return false;
     }
     transcript.AbsorbDigest(
@@ -1991,8 +1969,16 @@ bool VerifyEvalWithExtensionChallenges(
         proof.query_proofs[static_cast<std::size_t>(q)];
     const BaseFoldPCSQueryProofExtension &qp_ext =
         proof.extension.query_proofs[static_cast<std::size_t>(q)];
-    if (static_cast<long>(qp.left.size()) != params.d) return false;
-    if (static_cast<long>(qp.right.size()) != params.d) return false;
+    if (qp.left.size() != qp.right.size()) return false;
+    const bool qp_full =
+        (static_cast<long>(qp.left.size()) == params.d);
+    const bool qp_compact = (qp.left.size() == 1U);
+    if (!qp_full && !qp_compact) return false;
+    if (qp_full) {
+      if (static_cast<long>(qp.folded.size()) != params.d) return false;
+    } else {
+      if (!qp.folded.empty()) return false;
+    }
     if (static_cast<long>(qp_ext.left.size()) != params.d) return false;
     if (static_cast<long>(qp_ext.right.size()) != params.d) return false;
     if (static_cast<long>(qp_ext.folded.size()) != params.d) return false;
@@ -2000,9 +1986,10 @@ bool VerifyEvalWithExtensionChallenges(
     const long top_i = params.d - 1;
     const long mu_top = plan.mu_by_level[static_cast<std::size_t>(top_i)];
     const long n_top = CodewordLengthAtLevel(params, top_i);
+    const std::size_t top_slot = qp_full ? static_cast<std::size_t>(top_i) : 0U;
 
-    const MerkleOpening &left_top = qp.left[static_cast<std::size_t>(top_i)];
-    const MerkleOpening &right_top = qp.right[static_cast<std::size_t>(top_i)];
+    const MerkleOpening &left_top = qp.left[top_slot];
+    const MerkleOpening &right_top = qp.right[top_slot];
     if (left_top.index != mu_top || right_top.index != mu_top + n_top) {
       return false;
     }

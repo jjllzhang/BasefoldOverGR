@@ -148,6 +148,7 @@
   - 新增配置化入口（保持旧接口不变）：`BaseFoldPCSProveEvalWithChallengeConfig` / `BaseFoldPCSProveEvalWithChallengeConfigUnchecked` / `BaseFoldPCSVerifyEvalWithChallengeConfig`
     - 当 `use_extension_challenges=false` 时，行为与旧接口一致；
     - 当 `use_extension_challenges=true` 时，Fiat–Shamir challenge 在 `ZZ_pE` 的外层扩环上采样，并把扩环参数绑定到 transcript；sumcheck / folding 在扩环内执行，并对扩环中间层 `π_0..π_{d-1}` 做可验证 Merkle 承诺，同时顶层 commitment（`π_d` 的 Merkle root）仍保持在原环上。
+    - 扩环 challenge 路径的 proof payload 已做去冗余压缩：不再重复携带 base 侧 `h_i / pi0_full`，`query_proofs` 只保留顶层 base opening；`extension.r_by_level` 允许省略（由 transcript 重采样恢复）。
     - `challenge_extension_modulus` 现在会校验代数条件：在域模式要求不可约；在环模式要求模 `p` 约化后不可约（basic irreducible）。
   - 支持 `k0=2^κ` 的情况（BaseFold 论文 Remark 3）：IOPP depth 为 `d`，多项式点维度为 `d+κ`；`κ=0` 时退化为 `Basefold_over_GR.pdf` 的 Protocol 4（`k0==1`）。
 
@@ -178,15 +179,27 @@
 - PCS eval proof size 估算：
   - 不带 `--formula`：生成一次 **真实 proof** 并输出估算的 proof size（KB）；默认使用 `BaseFoldPCSProveEval`（包含参数/长度检查与 `claimed_y==f(z)` 校验）。
   - 带 `--formula`：完全不运行 prover，仅根据输入参数用公式给出近似/上界估算。
+  - 可加 `--use-extension-challenges` 切到扩域/扩环 challenge 路径：
+    - 非公式模式会调用 `BaseFoldPCSProveEvalWithChallengeConfig`，统计真实扩域/扩环 proof payload；
+    - 公式模式会按当前紧凑化后的 `BaseFoldPCSEvalProof` 字段布局计入 payload（base 顶层 commitment/root 与顶层 openings + extension `roots/h/msg0/pi0/query openings`；`r_i` 默认不单独携带）。
+  - 可选 `--field-challenge-ext` / `--ring-challenge-ext` 指定 challenge 扩域模多项式 `E(U)`，格式为 `a0;a1;...;ad`（每个 `ai` 是一个 `ZZ_pE` 元素，写作 `c0,c1,...`）；若不指定，默认 `E(U)=zeta + U + U^2`。
+  - 可选 `--field-challenge-degree <m>` / `--ring-challenge-degree <m>` 仅指定扩张次数，自动构造默认多项式 `E(U)=zeta + U + U^m`（`m=1` 时为 `E(U)=zeta+U`）。
+  - `--*-challenge-ext` 与 `--*-challenge-degree` 互斥。
   - 可选 `--k0 <int>`（默认 `1`，要求 2 的幂）；此时多项式点维度为 `d+log2(k0)`，消息长度为 `k_d = k0*2^d`。
   - 可选 `--auto-zeta teich` 自动从 `(p,k,F)` 推导 Teichmüller 子群生成元作为 `zeta`（启用后忽略 `--field-zeta/--ring-zeta`）。
 
 ### `bench/bench_pcs_communication.cpp`
 
 - PCS prover/verifier 通信量估算（仅公式，不运行 prover）：
-  - `P -> V`：按当前 `BaseFoldPCSEvalProof` 的 payload 拆分（roots、sumcheck、`pi0_full`、query openings）。
+  - Base challenge 路径：`P -> V` 按当前 `BaseFoldPCSEvalProof` payload 拆分（roots、sumcheck、`pi0_full`、query openings）。
+  - 扩域/扩环 challenge 路径（`--use-extension-challenges`）：
+    - `P -> V` 估算按当前紧凑 payload：base 顶层 root + 顶层 base openings + extension `roots/h/msg0/pi0/query openings`；
+    - 默认不单独计入 extension `r_i`（按 transcript 重算）。
   - `V -> P`：给出交互式等价口径（`d` 个 challenge `r_i` + `queries` 个索引 `mu`）。
   - 同时输出当前 Fiat–Shamir 非交互路径总通信量（`V -> P = 0`）。
+  - 可选 `--field-challenge-ext` / `--ring-challenge-ext` 指定 challenge 扩域模 `E(U)`（省略时默认 `E(U)=zeta + U + U^2`）。
+  - 可选 `--field-challenge-degree <m>` / `--ring-challenge-degree <m>` 仅指定扩张次数，自动构造默认多项式 `E(U)=zeta + U + U^m`（`m=1` 时为 `E(U)=zeta+U`）。
+  - `--*-challenge-ext` 与 `--*-challenge-degree` 互斥。
   - 可选 `--k0 <int>`（默认 `1`，要求 2 的幂）。
 
 ## 依赖
@@ -294,6 +307,8 @@ RING_ZETA=0,1
 # E(U) = (0 + 3*x) + U + U^2  => '0,3;1;1'
 ./build/bench_pcs_eval --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --use-extension-challenges --field-challenge-ext '0,3;1;1' --d 10 --queries 2 --reps 1 --warmup 0
 ./build/bench_pcs_eval --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --use-extension-challenges --ring-challenge-ext '0,3;1;1' --d 10 --queries 2 --reps 1 --warmup 0
+./build/bench_pcs_proof_size --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --use-extension-challenges --field-challenge-ext '0,3;1;1' --d 10 --queries 2 --formula
+./build/bench_pcs_proof_size --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --use-extension-challenges --ring-challenge-ext '0,3;1;1' --d 10 --queries 2 --formula
 ```
 
 ### Merkle Build 并行阈值调优
@@ -408,7 +423,14 @@ cat "$csv"
 
 可使用 `bench/bench_pcs_communication.cpp` 仅根据输入参数估算 PCS 双向通信量：
 
-- `P -> V`：proof payload（roots、sumcheck、`pi0_full`、Merkle openings）。
+- Base challenge 路径：
+  - `P -> V`：proof payload（roots、sumcheck、`pi0_full`、Merkle openings）。
+- 扩域/扩环 challenge 路径（`--use-extension-challenges`）：
+  - `P -> V`：按紧凑 payload 估算（base 顶层 root/openings + extension `roots/h/msg0/pi0/query openings`）。
+  - 默认不单独计入 extension `r_i`（按 transcript 重算）。
+- challenge 扩域可用两种方式指定：
+  - `--field/ring-challenge-ext`：显式给 `E(U)` 多项式系数。
+  - `--field/ring-challenge-degree m`：仅给扩张次数，自动构造默认 `E(U)=zeta + U + U^m`（`m=1` 时为 `zeta+U`）。
 - `V -> P`：交互式等价挑战（`r_i` 与 `mu`）。
 - 同时给出当前 Fiat–Shamir 路径通信量（`V -> P = 0`）。
 
@@ -417,4 +439,6 @@ cat "$csv"
 ```bash
 ./build/bench_pcs_communication --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --d 10 --queries 2
 ./build/bench_pcs_communication --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --d 10 --queries 2
+./build/bench_pcs_communication --mode field --field-mod 2 --field-F 1,1,1 --use-extension-challenges --field-challenge-ext '0,1;1;1' --d 10 --queries 2
+./build/bench_pcs_communication --mode field --field-mod 2 --field-F 1,1,1 --use-extension-challenges --field-challenge-degree 4 --d 10 --queries 2
 ```

@@ -494,8 +494,12 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
     }();
     const auto t1 = std::chrono::steady_clock::now();
 
-    const basefold::MerkleRoot &C =
-        proof.commitments.roots_by_level[static_cast<std::size_t>(params.d)];
+    basefold::MerkleRoot C{};
+    if (!proof.commitments.roots_by_level.empty()) {
+      C = proof.commitments.roots_by_level.back();
+    } else {
+      C = basefold::BaseFoldPCSCommit(f_coeffs, params);
+    }
 
     const auto t2 = std::chrono::steady_clock::now();
     bool ok = false;

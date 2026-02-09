@@ -15,9 +15,14 @@ namespace basefold {
 
 // A single IOPP.query repetition's Merkle openings (without duplicating π0).
 struct BaseFoldPCSQueryProof {
-  std::vector<MerkleOpening> left;    // size == params.d
-  std::vector<MerkleOpening> right;   // size == params.d
-  std::vector<MerkleOpening> folded;  // size == params.d
+  // Base-challenge path: left/right/folded each have size == params.d.
+  //
+  // Extension-challenge path (compact payload): this is used only for top-level
+  // base openings into commitment C=MerkleRoot(π_d), so left/right have size 1
+  // and folded is empty.
+  std::vector<MerkleOpening> left;
+  std::vector<MerkleOpening> right;
+  std::vector<MerkleOpening> folded;
 };
 
 // Degree-2 univariate polynomial over the outer challenge extension ring.
@@ -55,7 +60,8 @@ struct BaseFoldPCSExtensionProofData {
   // h_{i+1}(X) for i=0..d-1, represented in E(U).
   std::vector<ExtensionQuadraticPoly> h_by_level;
 
-  // r_i for i=0..d-1, represented in E(U).
+  // Optional explicit r_i for i=0..d-1, represented in E(U).
+  // Verifier can recompute these from transcript; compact proofs may omit them.
   std::vector<NTL::ZZ_pEX> r_by_level;
 
   // Monomial coefficients of f(·, r_suffix) on the first κ variables.
@@ -73,17 +79,23 @@ struct BaseFoldPCSExtensionProofData {
 // the IOPP recursion has depth params.d, while the committed multilinear
 // polynomial has dimension (params.d + κ).
 struct BaseFoldPCSEvalProof {
-  // Merkle roots for π_0..π_d.
+  // Base commitment roots.
+  // Base-challenge path stores roots for π_0..π_d.
+  // Extension-challenge compact path may store only root(π_d) (or none).
   IOPPMerkleCommitments commitments;
 
-  // Sumcheck messages h_{i+1}(X) stored by level i (0<=i<d).
-  // In particular, h_by_level.back() is h_d.
+  // Base sumcheck messages.
+  // Base-challenge path: size == d.
+  // Extension-challenge compact path: may be empty (use extension.h_by_level).
   std::vector<QuadraticPoly> h_by_level;
 
-  // Full π_0 (length n0 = c*k0).
+  // Base π_0 payload.
+  // Base-challenge path: length n0 = c*k0.
+  // Extension-challenge compact path: may be empty.
   Oracle pi0_full;
 
-  // Openings for ℓ independent IOPP.query repetitions.
+  // Base openings for ℓ independent IOPP.query repetitions.
+  // See BaseFoldPCSQueryProof comment for compact extension-challenge layout.
   std::vector<BaseFoldPCSQueryProof> query_proofs;
 
   // Optional extension-ring payload used when

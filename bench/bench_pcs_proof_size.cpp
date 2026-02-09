@@ -1,6 +1,7 @@
 #include <NTL/ZZ.h>
 #include <NTL/ZZ_p.h>
 #include <NTL/ZZ_pE.h>
+#include <NTL/ZZ_pEX.h>
 #include <NTL/ZZ_pX.h>
 
 #include <cctype>
@@ -26,6 +27,7 @@ using NTL::vec_ZZ_pE;
 using NTL::ZZ;
 using NTL::ZZ_p;
 using NTL::ZZ_pE;
+using NTL::ZZ_pEX;
 using NTL::ZZ_pEPush;
 using NTL::ZZ_pPush;
 using NTL::ZZ_pX;
@@ -38,6 +40,11 @@ struct ContextSpec {
   ZZ prime_p = ZZ(0);  // optional: the prime p (only used by unit checks)
   std::vector<ZZ> F_coeffs;     // extension modulus polynomial coefficients
   std::vector<ZZ> zeta_coeffs;  // ζ element coefficients
+  // Coefficients for challenge extension modulus E(U), represented as
+  // "a0;a1;...;ad", where each ai is a ZZ_pE element written "c0,c1,...".
+  // Empty means "use default E(U)"; degree is 2 unless challenge_ext_degree is set.
+  std::vector<std::vector<ZZ>> challenge_ext_coeffs;
+  long challenge_ext_degree = 0;  // optional default degree for E(U)
 };
 
 long Pow2Checked(long e) {
@@ -109,6 +116,28 @@ std::vector<ZZ> ParseCoeffList(const std::string &s) {
   return out;
 }
 
+std::vector<std::vector<ZZ>> ParseNestedCoeffList(const std::string &s) {
+  std::vector<std::vector<ZZ>> out;
+  std::size_t pos = 0;
+  while (pos < s.size()) {
+    const std::size_t semi = s.find(';', pos);
+    const std::size_t end = (semi == std::string::npos) ? s.size() : semi;
+    std::string token = s.substr(pos, end - pos);
+
+    const std::size_t first = token.find_first_not_of(" \t");
+    const std::size_t last = token.find_last_not_of(" \t");
+    if (first == std::string::npos)
+      LogicError("ParseNestedCoeffList: empty coefficient block");
+    token = token.substr(first, last - first + 1);
+
+    out.push_back(ParseCoeffList(token));
+    pos = (semi == std::string::npos) ? s.size() : (semi + 1);
+  }
+  if (out.empty())
+    LogicError("ParseNestedCoeffList: empty list");
+  return out;
+}
+
 ZZ_pX BuildZZpX(const std::vector<ZZ> &coeffs) {
   ZZ_pX poly;
   NTL::clear(poly);
@@ -117,6 +146,29 @@ ZZ_pX BuildZZpX(const std::vector<ZZ> &coeffs) {
       SetCoeff(poly, static_cast<long>(i), conv<ZZ_p>(coeffs[i]));
     }
   }
+  return poly;
+}
+
+ZZ_pE BuildZZpE(const std::vector<ZZ> &coeffs) {
+  const ZZ_pX poly = BuildZZpX(coeffs);
+  ZZ_pE out;
+  conv(out, poly);
+  return out;
+}
+
+ZZ_pEX BuildZZpEX(const std::vector<std::vector<ZZ>> &coeffs) {
+  if (coeffs.empty()) {
+    LogicError("BuildZZpEX: empty coefficient list");
+  }
+  ZZ_pEX poly;
+  NTL::clear(poly);
+  for (std::size_t i = 0; i < coeffs.size(); ++i) {
+    const ZZ_pE c = BuildZZpE(coeffs[i]);
+    if (c != 0) {
+      NTL::SetCoeff(poly, static_cast<long>(i), c);
+    }
+  }
+  poly.normalize();
   return poly;
 }
 
@@ -172,17 +224,6 @@ void ValidateMonic(const std::vector<ZZ> &coeffs, const ZZ &mod,
   }
 }
 
-long PolyDegree(const std::vector<ZZ> &coeffs, const ZZ &mod) {
-  if (coeffs.empty())
-    LogicError("PolyDegree: empty polynomial");
-  long last = static_cast<long>(coeffs.size()) - 1;
-  while (last > 0 &&
-         NormalizeMod(coeffs[static_cast<std::size_t>(last)], mod) == 0) {
-    --last;
-  }
-  return last;
-}
-
 std::uint64_t FixedCoeffByteWidth(const ZZ &mod) {
   if (mod <= 1)
     LogicError("FixedCoeffByteWidth: mod must be > 1");
@@ -196,6 +237,21 @@ std::uint64_t FixedFieldElementBytes(const ZZ &mod, long ext_degree) {
   const std::uint64_t coeff_bytes = FixedCoeffByteWidth(mod);
   return 8ULL +
          static_cast<std::uint64_t>(ext_degree) * (8ULL + coeff_bytes);
+}
+
+std::uint64_t FixedExtensionElementBytes(std::uint64_t field_elem_bytes,
+                                         long challenge_ext_degree) {
+  if (challenge_ext_degree <= 0) {
+    LogicError("FixedExtensionElementBytes: challenge_ext_degree must be > 0");
+  }
+  unsigned __int128 total = 0;
+  total += 8ULL;  // coeff count
+  total += static_cast<unsigned __int128>(challenge_ext_degree) *
+           (8ULL + field_elem_bytes);
+  if (total > std::numeric_limits<std::uint64_t>::max()) {
+    LogicError("FixedExtensionElementBytes: overflow");
+  }
+  return static_cast<std::uint64_t>(total);
 }
 
 std::size_t MerkleHeight(std::uint64_t leaf_count) {
@@ -224,6 +280,15 @@ std::uint64_t MerkleOpeningBytes(std::uint64_t leaf_count,
 
   if (total > std::numeric_limits<std::uint64_t>::max())
     LogicError("MerkleOpeningBytes: overflow");
+  return static_cast<std::uint64_t>(total);
+}
+
+std::uint64_t OpeningBytesWithoutAuth(std::uint64_t elem_bytes) {
+  unsigned __int128 total = 0;
+  total += 8ULL;
+  total += elem_bytes;
+  if (total > std::numeric_limits<std::uint64_t>::max())
+    LogicError("OpeningBytesWithoutAuth: overflow");
   return static_cast<std::uint64_t>(total);
 }
 
@@ -276,6 +341,98 @@ std::uint64_t EstimateEvalProofSizeFormulaBytes(const ZZ &mod, long c, long d,
 
   if (total > std::numeric_limits<std::uint64_t>::max())
     LogicError("EstimateEvalProofSizeFormulaBytes: overflow");
+  return static_cast<std::uint64_t>(total);
+}
+
+std::uint64_t EstimateEvalProofSizeFormulaBytesExtensionChallenges(
+    const ZZ &mod, long c, long d, long k0, long num_queries,
+    long base_ext_degree, long challenge_ext_degree) {
+  static constexpr std::uint64_t kHashBytes = 32;
+  if (c <= 0)
+    LogicError(
+        "EstimateEvalProofSizeFormulaBytesExtensionChallenges: c must be > 0");
+  if (d < 0)
+    LogicError(
+        "EstimateEvalProofSizeFormulaBytesExtensionChallenges: d must be >= 0");
+  if (k0 <= 0)
+    LogicError(
+        "EstimateEvalProofSizeFormulaBytesExtensionChallenges: k0 must be > 0");
+  if (!IsPowerOfTwoLong(k0))
+    LogicError("EstimateEvalProofSizeFormulaBytesExtensionChallenges: k0 must "
+               "be a power of two");
+  if (num_queries < 0)
+    LogicError("EstimateEvalProofSizeFormulaBytesExtensionChallenges: queries "
+               "must be >= 0");
+  if (base_ext_degree <= 0)
+    LogicError("EstimateEvalProofSizeFormulaBytesExtensionChallenges: "
+               "base_ext_degree must be > 0");
+  if (challenge_ext_degree <= 0)
+    LogicError("EstimateEvalProofSizeFormulaBytesExtensionChallenges: "
+               "challenge_ext_degree must be > 0");
+  if (d == 0) {
+    return EstimateEvalProofSizeFormulaBytes(mod, c, d, k0, num_queries,
+                                             base_ext_degree);
+  }
+
+  const std::uint64_t fe_bytes = FixedFieldElementBytes(mod, base_ext_degree);
+  const std::uint64_t ext_fe_bytes =
+      FixedExtensionElementBytes(fe_bytes, challenge_ext_degree);
+
+  unsigned __int128 total = 0;
+  const std::uint64_t n0 =
+      static_cast<std::uint64_t>(c) * static_cast<std::uint64_t>(k0);
+
+  std::vector<std::uint64_t> n_by_level;
+  n_by_level.resize(static_cast<std::size_t>(d + 1));
+  std::uint64_t leaf_count = n0;
+  for (long level = 0; level <= d; ++level) {
+    n_by_level[static_cast<std::size_t>(level)] = leaf_count;
+    if (level < d) {
+      if (leaf_count > std::numeric_limits<std::uint64_t>::max() / 2ULL) {
+        LogicError(
+            "EstimateEvalProofSizeFormulaBytesExtensionChallenges: overflow in "
+            "n_i");
+      }
+      leaf_count *= 2ULL;
+    }
+  }
+
+  // Compact extension proof keeps only top base commitment root and per-query
+  // top-level base openings against π_d.
+  total += kHashBytes;
+  total += static_cast<unsigned __int128>(num_queries) * 2ULL *
+           MerkleOpeningBytes(n_by_level[static_cast<std::size_t>(d)],
+                              fe_bytes);
+
+  total += 1ULL;                                           // extension.enabled
+  total += static_cast<unsigned __int128>(d) * kHashBytes;  // extension roots
+  total += static_cast<unsigned __int128>(d) * 3ULL *
+           ext_fe_bytes;  // extension h_i
+  total += static_cast<unsigned __int128>(k0) *
+           ext_fe_bytes;  // msg0_coeffs
+  total += static_cast<unsigned __int128>(n0) *
+           ext_fe_bytes;  // extension pi0_full
+
+  unsigned __int128 per_query_ext = 0;
+  const std::uint64_t ext_open_no_auth = OpeningBytesWithoutAuth(ext_fe_bytes);
+  for (long i = 0; i < d; ++i) {
+    const std::uint64_t n_i = n_by_level[static_cast<std::size_t>(i)];
+    per_query_ext += MerkleOpeningBytes(n_i, ext_fe_bytes);  // folded[i]
+
+    if (i < d - 1) {
+      const std::uint64_t n_ip1 = n_by_level[static_cast<std::size_t>(i + 1)];
+      per_query_ext += 2ULL *
+                       static_cast<unsigned __int128>(
+                           MerkleOpeningBytes(n_ip1, ext_fe_bytes));
+    } else {
+      per_query_ext += 2ULL *
+                       static_cast<unsigned __int128>(ext_open_no_auth);
+    }
+  }
+  total += static_cast<unsigned __int128>(num_queries) * per_query_ext;
+
+  if (total > std::numeric_limits<std::uint64_t>::max())
+    LogicError("EstimateEvalProofSizeFormulaBytesExtensionChallenges: overflow");
   return static_cast<std::uint64_t>(total);
 }
 
@@ -373,6 +530,31 @@ basefold::FoldableCodeParams BuildParams_k0_pow2(long c, long k0, long d,
   }
 
   return params;
+}
+
+ZZ_pEX BuildChallengeExtensionModulus(const ContextSpec &spec,
+                                      const ZZ_pE &zeta) {
+  auto BuildDefault = [&](long degree) -> ZZ_pEX {
+    if (degree <= 0) {
+      LogicError("BuildChallengeExtensionModulus: degree must be > 0");
+    }
+    ZZ_pEX challenge_modulus;
+    NTL::clear(challenge_modulus);
+    NTL::SetCoeff(challenge_modulus, 0, zeta);
+    if (degree > 1) {
+      NTL::SetCoeff(challenge_modulus, 1, ZZ_pE(1));
+    }
+    NTL::SetCoeff(challenge_modulus, degree, ZZ_pE(1));
+    return challenge_modulus;
+  };
+
+  if (!spec.challenge_ext_coeffs.empty()) {
+    return BuildZZpEX(spec.challenge_ext_coeffs);
+  }
+  if (spec.challenge_ext_degree > 0) {
+    return BuildDefault(spec.challenge_ext_degree);
+  }
+  return BuildDefault(2);
 }
 
 std::uint64_t SplitMix64(std::uint64_t x) {
@@ -485,16 +667,30 @@ void PrintHelp() {
       << "bench_pcs_proof_size (estimate eval proof size)\n\n"
       << "Usage:\n"
       << "  bench_pcs_proof_size [--mode field|ring|both] [--c <int>] [--k0 <int>] [--d <int>]\n"
-      << "                     [--queries <int>] [--seed <u64>] [--formula] [--auto-zeta teich]\n"
+      << "                     [--queries <int>] [--seed <u64>] [--formula]\n"
+      << "                     [--use-extension-challenges]\n"
+      << "                     [--field-challenge-ext <a0;a1;...>] [--ring-challenge-ext <a0;a1;...>]\n"
+      << "                     [--field-challenge-degree <int>] [--ring-challenge-degree <int>]\n"
+      << "                     [--auto-zeta teich]\n"
       << "                     [--field-mod <decimal-int>] [--field-F <a0,a1,...>] [--field-zeta <b0,b1,...>]\n"
       << "                     [--ring-mod <decimal-int>]  [--ring-p <decimal-int>] [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
       << "Notes:\n"
       << "  KB is KiB (1024 bytes).\n"
-      << "  By default, prover uses BaseFoldPCSProveEval (includes parameter/length checks and claimed_y == f(z)).\n\n"
+      << "  By default, prover uses BaseFoldPCSProveEval (includes parameter/length checks and claimed_y == f(z)).\n"
+      << "  With --use-extension-challenges, prover switches to BaseFoldPCSProveEvalWithChallengeConfig.\n\n"
       << "  With --auto-zeta teich, zeta is derived as a Teichmuller generator from (p,k,F);\n"
       << "  then --field-zeta/--ring-zeta are ignored.\n\n"
       << "  With --formula, it does NOT run the prover. It estimates proof size from (c,d,queries)\n"
-      << "  assuming fixed-size field elements and sha256-based Merkle hashing.\n\n"
+      << "  assuming fixed-size serialization and sha256-based Merkle hashing.\n"
+      << "  For extension-challenge mode, the formula includes both base payload and extension payload\n"
+      << "  currently carried by BaseFoldPCSEvalProof.\n\n"
+      << "  --field-challenge-ext / --ring-challenge-ext use ';' to separate ZZ_pE\n"
+      << "  coefficients and ',' for each ZZ_pE coefficient polynomial.\n"
+      << "  Example: '0,1;1;1' means E(U)=x + U + U^2.\n\n"
+      << "  --field-challenge-degree / --ring-challenge-degree set only the degree m,\n"
+      << "  and auto-build default E(U)=zeta + U + U^m (m=1 uses E(U)=zeta + U).\n\n"
+      << "  If both --*-challenge-ext and --*-challenge-degree are provided, it's an error.\n\n"
+      << "  If --*-challenge-ext is omitted, default is E(U)=zeta + U + U^2.\n\n"
       << "  PCS Eval supports k0 = 2^κ. The multilinear point dimension is (d + κ).\n\n"
       << "Examples:\n"
       << "  # GF(2^2) with F(x)=x^2+x+1 and zeta=x\n"
@@ -502,12 +698,16 @@ void PrintHelp() {
       << "  # GR(4,2) with the same extension polynomial and zeta=x\n"
       << "  bench_pcs_proof_size --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4\n"
       << "  # Auto zeta from Teichmuller subgroup generator\n"
-      << "  bench_pcs_proof_size --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --auto-zeta teich --d 16 --queries 4\n";
+      << "  bench_pcs_proof_size --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --auto-zeta teich --d 16 --queries 4\n"
+      << "  # Extension-challenge formula estimate\n"
+      << "  bench_pcs_proof_size --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --use-extension-challenges --field-challenge-ext '0,1;1;1' --d 16 --queries 4 --formula\n"
+      << "  # Extension-challenge with degree-only default modulus\n"
+      << "  bench_pcs_proof_size --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --use-extension-challenges --field-challenge-degree 4 --d 16 --queries 4 --formula\n";
 }
 
 void RunOneContext(const ContextSpec &spec, long c, long k0, long d,
-                   long num_queries, bool formula_only, bool auto_zeta_teich,
-                   std::uint64_t seed) {
+                   long num_queries, bool use_extension_challenges,
+                   bool formula_only, bool auto_zeta_teich, std::uint64_t seed) {
   if (spec.mod <= 1) LogicError("RunOneContext: modulus must be > 1");
   if (c <= 0) LogicError("RunOneContext: c must be > 0");
   if (k0 <= 0) LogicError("RunOneContext: k0 must be > 0");
@@ -515,27 +715,12 @@ void RunOneContext(const ContextSpec &spec, long c, long k0, long d,
   if (d < 0) LogicError("RunOneContext: d must be >= 0");
   if (num_queries < 0) LogicError("RunOneContext: queries must be >= 0");
 
-  if (formula_only) {
-    ValidateMonic(spec.F_coeffs, spec.mod, "F");
-    const long r = PolyDegree(spec.F_coeffs, spec.mod);
-
-    const std::uint64_t bytes =
-        EstimateEvalProofSizeFormulaBytes(spec.mod, c, d, k0, num_queries, r);
-    const double kb = static_cast<double>(bytes) / 1024.0;
-
-    std::cout << "\n[" << spec.label << "] c=" << c << " k0=" << k0 << " d=" << d
-              << "  mod=" << spec.mod << "  queries=" << num_queries
-              << "  (formula)\n";
-    std::cout << std::fixed << std::setprecision(3);
-    std::cout << "  proof size  " << kb << " KB  (" << bytes << " B)\n";
-    return;
-  }
-
   const ZZ modulus = spec.mod;
   ZZ_pPush mod_push(modulus);
 
   ValidateMonic(spec.F_coeffs, spec.mod, "F");
   const ZZ_pX F = BuildZZpX(spec.F_coeffs);
+  const long base_ext_degree = NTL::deg(F);
   ZZ_pEPush e_push(F);
 
   ZZ_pE zeta;
@@ -548,6 +733,44 @@ void RunOneContext(const ContextSpec &spec, long c, long k0, long d,
   } else {
     const ZZ_pX zpoly = BuildZZpX(spec.zeta_coeffs);
     conv(zeta, zpoly);
+  }
+
+  basefold::BaseFoldPCSChallengeConfig challenge_cfg;
+  long challenge_degree = 0;
+  const basefold::BaseFoldPCSChallengeConfig *challenge_cfg_ptr = nullptr;
+  if (use_extension_challenges) {
+    challenge_cfg.use_extension_challenges = true;
+    challenge_cfg.challenge_extension_modulus =
+        BuildChallengeExtensionModulus(spec, zeta);
+    challenge_degree = NTL::deg(challenge_cfg.challenge_extension_modulus);
+    if (challenge_degree <= 0) {
+      LogicError(
+          "RunOneContext: challenge extension modulus degree must be > 0");
+    }
+    challenge_cfg_ptr = &challenge_cfg;
+  }
+
+  if (formula_only) {
+    const std::uint64_t bytes =
+        use_extension_challenges
+            ? EstimateEvalProofSizeFormulaBytesExtensionChallenges(
+                  spec.mod, c, d, k0, num_queries, base_ext_degree,
+                  challenge_degree)
+            : EstimateEvalProofSizeFormulaBytes(spec.mod, c, d, k0, num_queries,
+                                                base_ext_degree);
+    const double kb = static_cast<double>(bytes) / 1024.0;
+
+    std::cout << "\n[" << spec.label << "] c=" << c << " k0=" << k0 << " d=" << d
+              << "  mod=" << spec.mod << "  queries=" << num_queries
+              << "  (formula)";
+    if (use_extension_challenges) {
+      std::cout << "  ext_challenges=on"
+                << "  ext_deg=" << challenge_degree;
+    }
+    std::cout << "\n";
+    std::cout << std::fixed << std::setprecision(3);
+    std::cout << "  proof size  " << kb << " KB  (" << bytes << " B)\n";
+    return;
   }
 
   const basefold::FoldableCodeParams params = (k0 == 1)
@@ -577,13 +800,21 @@ void RunOneContext(const ContextSpec &spec, long c, long k0, long d,
   const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
 
   const basefold::BaseFoldPCSEvalProof proof =
-      basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries, params);
+      (challenge_cfg_ptr != nullptr)
+          ? basefold::BaseFoldPCSProveEvalWithChallengeConfig(
+                f_coeffs, z, y, num_queries, params, *challenge_cfg_ptr)
+          : basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries, params);
 
   const std::uint64_t bytes = basefold::BaseFoldPCSEvalProofSizeBytes(proof);
   const double kb = static_cast<double>(bytes) / 1024.0;
 
   std::cout << "\n[" << spec.label << "] c=" << c << " k0=" << k0 << " d=" << d
-            << "  mod=" << spec.mod << "  queries=" << num_queries << "\n";
+            << "  mod=" << spec.mod << "  queries=" << num_queries;
+  if (use_extension_challenges) {
+    std::cout << "  ext_challenges=on"
+              << "  ext_deg=" << challenge_degree;
+  }
+  std::cout << "\n";
   std::cout << std::fixed << std::setprecision(3);
   std::cout << "  proof size  " << kb << " KB  (" << bytes << " B)\n";
 }
@@ -595,6 +826,7 @@ int main(int argc, char **argv) {
   long c = 2;
   long k0 = 1;
   long num_queries = 4;
+  bool use_extension_challenges = false;
   bool formula_only = false;
   std::uint64_t seed = 0;
   bool auto_zeta_teich = false;
@@ -663,6 +895,8 @@ int main(int argc, char **argv) {
       }
     } else if (arg == "--formula") {
       formula_only = true;
+    } else if (arg == "--use-extension-challenges") {
+      use_extension_challenges = true;
     } else if (arg == "--seed") {
       seed = ParseU64OrDie(NeedValue("--seed"), "--seed");
     } else if (arg == "--auto-zeta") {
@@ -682,6 +916,16 @@ int main(int argc, char **argv) {
       field.F_coeffs = ParseCoeffList(NeedValue("--field-F"));
     } else if (arg == "--field-zeta") {
       field.zeta_coeffs = ParseCoeffList(NeedValue("--field-zeta"));
+    } else if (arg == "--field-challenge-ext") {
+      field.challenge_ext_coeffs =
+          ParseNestedCoeffList(NeedValue("--field-challenge-ext"));
+    } else if (arg == "--field-challenge-degree") {
+      if (!ParseLong(NeedValue("--field-challenge-degree"),
+                     field.challenge_ext_degree) ||
+          field.challenge_ext_degree <= 0) {
+        std::cerr << "Invalid --field-challenge-degree\n";
+        return 2;
+      }
     } else if (arg == "--ring-mod") {
       if (!ParseZZ(NeedValue("--ring-mod"), ring.mod) || ring.mod <= 1) {
         std::cerr << "Invalid --ring-mod\n";
@@ -696,6 +940,16 @@ int main(int argc, char **argv) {
       ring.F_coeffs = ParseCoeffList(NeedValue("--ring-F"));
     } else if (arg == "--ring-zeta") {
       ring.zeta_coeffs = ParseCoeffList(NeedValue("--ring-zeta"));
+    } else if (arg == "--ring-challenge-ext") {
+      ring.challenge_ext_coeffs =
+          ParseNestedCoeffList(NeedValue("--ring-challenge-ext"));
+    } else if (arg == "--ring-challenge-degree") {
+      if (!ParseLong(NeedValue("--ring-challenge-degree"),
+                     ring.challenge_ext_degree) ||
+          ring.challenge_ext_degree <= 0) {
+        std::cerr << "Invalid --ring-challenge-degree\n";
+        return 2;
+      }
     } else if (arg == "--help" || arg == "-h") {
       PrintHelp();
       return 0;
@@ -706,15 +960,27 @@ int main(int argc, char **argv) {
   }
 
   try {
+    if (!field.challenge_ext_coeffs.empty() && field.challenge_ext_degree > 0) {
+      std::cerr << "Invalid options: --field-challenge-ext and "
+                   "--field-challenge-degree are mutually exclusive\n";
+      return 2;
+    }
+    if (!ring.challenge_ext_coeffs.empty() && ring.challenge_ext_degree > 0) {
+      std::cerr << "Invalid options: --ring-challenge-ext and "
+                   "--ring-challenge-degree are mutually exclusive\n";
+      return 2;
+    }
     if (!do_field && !do_ring) {
       std::cerr << "Nothing to do: --mode disabled both field and ring\n";
       return 2;
     }
     if (do_field)
-      RunOneContext(field, c, k0, d, num_queries, formula_only,
+      RunOneContext(field, c, k0, d, num_queries, use_extension_challenges,
+                    formula_only,
                     auto_zeta_teich, seed);
     if (do_ring)
-      RunOneContext(ring, c, k0, d, num_queries, formula_only,
+      RunOneContext(ring, c, k0, d, num_queries, use_extension_challenges,
+                    formula_only,
                     auto_zeta_teich, seed);
   } catch (const std::exception &e) {
     std::cerr << "Unhandled std::exception: " << e.what() << "\n";
