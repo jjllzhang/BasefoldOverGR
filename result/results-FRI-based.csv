@@ -1,0 +1,8 @@
+context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_ms,prover_mean_ms,verifier_mean_ms,proof_size_kb,proof_size_bytes,status,error
+fri-gr-2p16-162,FRI-based over GR(2^16;162),ring,6,64,,,128,,12,,569,84,150,153600,ok,-
+fri-gr-2p16-162,FRI-based over GR(2^16;162),ring,7,128,,,128,,9,,983,99,164,167936,ok,-
+fri-gr-2p16-162,FRI-based over GR(2^16;162),ring,8,256,,,128,,6,,2377,126,174,178176,ok,-
+fri-gr-2p16-162,FRI-based over GR(2^16;162),ring,9,512,,,128,,5,,5727,205,191,195584,ok,-
+fri-gr-2p16-162,FRI-based over GR(2^16;162),ring,10,1024,,,128,,3,,17229,297,198,202752,ok,-
+fri-gr-2p16-162,FRI-based over GR(2^16;162),ring,11,2048,,,128,,3,,49059,828,222,227328,ok,-
+fri-gr-2p16-162,FRI-based over GR(2^16;162),ring,12,4096,,,128,,2,,136278,1562,232,237568,ok,-

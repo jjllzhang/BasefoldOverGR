@@ -1,0 +1,6 @@
+context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_ms,prover_mean_ms,verifier_mean_ms,proof_size_kb,proof_size_bytes,status,error
+ligero-gr-2p16-162,Ligero-based over GR(2^16;162),ring,3,8,,,128,,149,,9089,447,422,432128,ok,-
+ligero-gr-2p16-162,Ligero-based over GR(2^16;162),ring,4,16,,,128,,173,,10553,519,490,501760,ok,-
+ligero-gr-2p16-162,Ligero-based over GR(2^16;162),ring,5,32,,,128,,247,,15067,741,700,716800,ok,-
+ligero-gr-2p16-162,Ligero-based over GR(2^16;162),ring,6,64,,,128,,194,,38412,970,831,850944,ok,-
+ligero-gr-2p16-162,Ligero-based over GR(2^16;162),ring,7,128,,,128,,329,,65142,1645,1410,1443840,ok,-
