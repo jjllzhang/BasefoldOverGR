@@ -15,12 +15,22 @@
 
 ```
 .
+├── CMakeLists.txt
+├── README.md
+├── LICENSE
+├── bench
+│   ├── bench_pcs_commit.cpp
+│   ├── bench_pcs_eval.cpp
+│   ├── bench_pcs_proof_size.cpp
+│   ├── bench_pcs_communication.cpp
+│   ├── calc_iopp_params.cpp
+│   └── exp_params_release_c4_lambda128.md
 ├── include
-│   └── GaloisRing
-│       ├── utils.hpp
-│       ├── Inverse.hpp
-│       ├── HenselLift.hpp
-│       └── PrimitiveElement.hpp
+│   ├── GaloisRing
+│   │   ├── utils.hpp
+│   │   ├── Inverse.hpp
+│   │   ├── HenselLift.hpp
+│   │   └── PrimitiveElement.hpp
 │   └── BaseFold
 │       ├── FoldableCode.hpp
 │       ├── IOPP.hpp
@@ -29,12 +39,14 @@
 │       ├── Profile.hpp
 │       ├── ProofSize.hpp
 │       └── BaseFoldPCS.hpp
+├── scripts
+│   └── run_release_c4_lambda128.sh
 ├── src
-│   └── GaloisRing
-│       ├── utils.cpp
-│       ├── Inverse.cpp
-│       ├── HenselLift.cpp
-│       └── PrimitiveElement.cpp
+│   ├── GaloisRing
+│   │   ├── utils.cpp
+│   │   ├── Inverse.cpp
+│   │   ├── HenselLift.cpp
+│   │   └── PrimitiveElement.cpp
 │   └── BaseFold
 │       ├── FoldableCode.cpp
 │       ├── IOPP.cpp
@@ -42,17 +54,14 @@
 │       ├── Sumcheck.cpp
 │       ├── ProofSize.cpp
 │       └── BaseFoldPCS.cpp
-├── bench
-│   ├── bench_pcs_commit.cpp
-│   ├── bench_pcs_eval.cpp
-│   ├── bench_pcs_proof_size.cpp
-│   └── bench_pcs_communication.cpp
-└── tests
-    ├── test_common.hpp
-    ├── test_galois_ring_basic.cpp
-    ├── test_foldable_codes.cpp
-    ├── test_iopp.cpp
-    └── test_pcs.cpp
+├── tests
+│   ├── test_common.hpp
+│   ├── test_galois_ring_basic.cpp
+│   ├── test_foldable_codes.cpp
+│   ├── test_iopp.cpp
+│   └── test_pcs.cpp
+└── results
+    └── release_c4_lambda128_sweep_<timestamp>/  # 运行脚本后生成
 ```
 
 ## 文件说明
@@ -235,12 +244,25 @@ cmake --build build-release
 构建后可运行：
 
 ```bash
-./build/bench_pcs_commit --help
-./build/bench_pcs_eval --help
-./build/bench_pcs_proof_size --help
-./build/bench_pcs_communication --help
-./build/calc_iopp_params --help
+./build-release/bench_pcs_commit --help
+./build-release/bench_pcs_eval --help
+./build-release/bench_pcs_proof_size --help
+./build-release/bench_pcs_communication --help
+./build-release/calc_iopp_params --help
 ```
+
+### 一键复现实验（`c=4`, `lambda=128`）
+
+仓库内置 sweep 脚本 `scripts/run_release_c4_lambda128.sh`，默认会在 12 组上下文上遍历 `d=3..29`，并输出到 `results/release_c4_lambda128_sweep_<timestamp>/`。
+
+```bash
+scripts/run_release_c4_lambda128.sh
+
+# 只跑单个 context + 较小维度区间
+CONTEXTS=field-prime128-ext D_MIN=10 D_MAX=20 scripts/run_release_c4_lambda128.sh
+```
+
+参数与上下文说明见 `bench/exp_params_release_c4_lambda128.md`。
 
 ### 参数选取工具（码距 + 推荐 query 次数）
 
@@ -257,19 +279,19 @@ cmake --build build-release
 
 ```bash
 # 直接给 q（示例：q = 2^192）
-./build/calc_iopp_params --d 20 --c 16 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --gamma 0.005
+./build-release/calc_iopp_params --d 20 --c 16 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --gamma 0.005
 
 # 按 q = p^(r*m) 给（示例：p=2, r=64, m=3 => q=2^192）
-./build/calc_iopp_params --d 20 --c 16 --lambda 128 --p 2 --r 64 --m 3 --gamma 0.005
+./build-release/calc_iopp_params --d 20 --c 16 --lambda 128 --p 2 --r 64 --m 3 --gamma 0.005
 
 # 查看每一层递推细节（ell_i, t_i）
-./build/calc_iopp_params --d 16 --c 16 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --gamma 0.00625 --show-levels
+./build-release/calc_iopp_params --d 16 --c 16 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --gamma 0.00625 --show-levels
 
 # 自动选 gamma（目标：l_min_for_PCS 最小）
-./build/calc_iopp_params --d 20 --c 16 --k0 1 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --auto-gamma
+./build-release/calc_iopp_params --d 20 --c 16 --k0 1 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --auto-gamma
 
 # 可选：限制搜索区间和精度
-./build/calc_iopp_params --d 20 --c 16 --k0 1 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --auto-gamma --gamma-min 1e-4 --gamma-max 0.05 --gamma-steps 8000
+./build-release/calc_iopp_params --d 20 --c 16 --k0 1 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --auto-gamma --gamma-min 1e-4 --gamma-max 0.05 --gamma-steps 8000
 ```
 
 示例（128-bit 可复现参数，一套常量覆盖四个 bench）：
@@ -291,24 +313,24 @@ RING_F=1,1,1
 RING_ZETA=0,1
 
 # ---------- Field profile (GF(p^2), p 为 128-bit；无变量版本，直接可运行) ----------
-./build/bench_pcs_commit --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --reps 3 --warmup 1
-./build/bench_pcs_eval --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --queries 2 --reps 2 --warmup 1
-./build/bench_pcs_proof_size --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --queries 2 --formula
-./build/bench_pcs_communication --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --d 10 --queries 2
+./build-release/bench_pcs_commit --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --reps 3 --warmup 1
+./build-release/bench_pcs_eval --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --queries 2 --reps 2 --warmup 1
+./build-release/bench_pcs_proof_size --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --queries 2 --formula
+./build-release/bench_pcs_communication --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --d 10 --queries 2
 
 # ---------- Ring profile (GR(p^2,2), p 为 64-bit, p^2 为 128-bit；无变量版本，直接可运行) ----------
-./build/bench_pcs_commit --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --reps 3 --warmup 1
-./build/bench_pcs_eval --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --queries 2 --reps 2 --warmup 1
-./build/bench_pcs_proof_size --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --queries 2 --formula
-./build/bench_pcs_communication --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --d 10 --queries 2
+./build-release/bench_pcs_commit --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --reps 3 --warmup 1
+./build-release/bench_pcs_eval --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --queries 2 --reps 2 --warmup 1
+./build-release/bench_pcs_proof_size --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --queries 2 --formula
+./build-release/bench_pcs_communication --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --d 10 --queries 2
 
 # ---------- extension-challenge 路径 ----------
 # 注意：challenge 多项式参数含 ';'，请使用引号
 # E(U) = (0 + 3*x) + U + U^2  => '0,3;1;1'
-./build/bench_pcs_eval --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --use-extension-challenges --field-challenge-ext '0,3;1;1' --d 10 --queries 2 --reps 1 --warmup 0
-./build/bench_pcs_eval --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --use-extension-challenges --ring-challenge-ext '0,3;1;1' --d 10 --queries 2 --reps 1 --warmup 0
-./build/bench_pcs_proof_size --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --use-extension-challenges --field-challenge-ext '0,3;1;1' --d 10 --queries 2 --formula
-./build/bench_pcs_proof_size --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --use-extension-challenges --ring-challenge-ext '0,3;1;1' --d 10 --queries 2 --formula
+./build-release/bench_pcs_eval --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --use-extension-challenges --field-challenge-ext '0,3;1;1' --d 10 --queries 2 --reps 1 --warmup 0
+./build-release/bench_pcs_eval --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --use-extension-challenges --ring-challenge-ext '0,3;1;1' --d 10 --queries 2 --reps 1 --warmup 0
+./build-release/bench_pcs_proof_size --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --use-extension-challenges --field-challenge-ext '0,3;1;1' --d 10 --queries 2 --formula
+./build-release/bench_pcs_proof_size --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --use-extension-challenges --ring-challenge-ext '0,3;1;1' --d 10 --queries 2 --formula
 ```
 
 ### Merkle Build 并行阈值调优
@@ -322,7 +344,7 @@ export BASEFOLD_MERKLE_PARALLEL_LEVEL_THRESHOLD=4096
 export BASEFOLD_MERKLE_MAX_THREADS=8
 
 # CLI（仅 bench_pcs_eval，优先级高于环境变量）
-./build/bench_pcs_eval ... --merkle-leafs-per-thread 32768 --merkle-level-threshold 4096 --merkle-max-threads 8
+./build-release/bench_pcs_eval ... --merkle-leafs-per-thread 32768 --merkle-level-threshold 4096 --merkle-max-threads 8
 ```
 
 自动 sweep（示例）：
@@ -331,7 +353,7 @@ export BASEFOLD_MERKLE_MAX_THREADS=8
 csv=/tmp/merkle_threshold_sweep.csv
 echo "threshold,prover_mean_ms,merkle_build_total_ms" > "$csv"
 for t in 256 512 1024 2048 4096 8192 16384 32768 65536; do
-  out=$(./build/bench_pcs_eval --mode field \
+  out=$(./build-release/bench_pcs_eval --mode field \
     --field-mod 326594724262804054738278293730872375507 \
     --field-F 1,0,1 --field-zeta 0,1 \
     --d 14 --queries 4 --warmup 1 --reps 2 --profile \
@@ -354,7 +376,7 @@ export BASEFOLD_VERIFY_QUERY_PARALLEL_THRESHOLD=2
 export BASEFOLD_VERIFY_QUERY_MAX_THREADS=8
 
 # CLI（优先级高于环境变量）
-./build/bench_pcs_eval ... \
+./build-release/bench_pcs_eval ... \
   --verifier-query-per-thread 1 \
   --verifier-query-threshold 2 \
   --verifier-query-max-threads 8
@@ -366,7 +388,7 @@ export BASEFOLD_VERIFY_QUERY_MAX_THREADS=8
 csv=/tmp/verifier_query_threads_sweep.csv
 echo "max_threads,verifier_mean_ms,prover_mean_ms" > "$csv"
 for t in 1 2 4 8 12 16 24 32; do
-  out=$(./build/bench_pcs_eval --mode field \
+  out=$(./build-release/bench_pcs_eval --mode field \
     --field-mod 326594724262804054738278293730872375507 \
     --field-F 1,0,0,0,1 --field-zeta 3 \
     --d 14 --queries 64 --warmup 1 --reps 3 \
@@ -437,8 +459,12 @@ cat "$csv"
 示例：
 
 ```bash
-./build/bench_pcs_communication --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --d 10 --queries 2
-./build/bench_pcs_communication --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --d 10 --queries 2
-./build/bench_pcs_communication --mode field --field-mod 2 --field-F 1,1,1 --use-extension-challenges --field-challenge-ext '0,1;1;1' --d 10 --queries 2
-./build/bench_pcs_communication --mode field --field-mod 2 --field-F 1,1,1 --use-extension-challenges --field-challenge-degree 4 --d 10 --queries 2
+./build-release/bench_pcs_communication --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --d 10 --queries 2
+./build-release/bench_pcs_communication --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --d 10 --queries 2
+./build-release/bench_pcs_communication --mode field --field-mod 2 --field-F 1,1,1 --use-extension-challenges --field-challenge-ext '0,1;1;1' --d 10 --queries 2
+./build-release/bench_pcs_communication --mode field --field-mod 2 --field-F 1,1,1 --use-extension-challenges --field-challenge-degree 4 --d 10 --queries 2
 ```
+
+## License
+
+本项目采用 MIT License，详见 `LICENSE`。
