@@ -25,11 +25,13 @@ CMD_TIMEOUT_SEC="${CMD_TIMEOUT_SEC:-0}"
 CONTEXTS="${CONTEXTS:-all}"  # all or comma list, see valid ids in parsing block
 BENCH_THREADS="${BENCH_THREADS:-8}"  # set 0 to keep runtime defaults
 CHALLENGE_FIELD_EXT_DEG2="${CHALLENGE_FIELD_EXT_DEG2:-0,1;1;1}"  # E(U)=zeta+U+U^2
+CHALLENGE_FIELD_EXT_DEG3="${CHALLENGE_FIELD_EXT_DEG3:-1;1;0;1}"  # E(U)=1+U+U^3
 CHALLENGE_RING_EXT_DEG2="${CHALLENGE_RING_EXT_DEG2:-0,1;1;1}"    # E(U)=zeta+U+U^2
 CHALLENGE_RING_EXT_DEG3="${CHALLENGE_RING_EXT_DEG3:-1;1;0;1}"    # E(U)=1+U+U^3
 EXT128_BETA_TRACE1_DEFAULT='1,0,0,1,1,1,1,1,0,0,0,0,1,0,0,1,1,0,0,0,0,1,1,0,0,0,1,1,1,0,1,1,0,0,0,0,0,1,1,0,0,1,0,1,0,0,1,0,1,1,0,1,0,1,0,0,0,0,0,0,0,1,1,0,1,0,0,0,0,1,1,1,1,1,1,0,1,0,1,1,0,1,0,0,0,1,1,0,1,1,0,0,1,0,0,0,1,0,1,0,0,0,1,0,0,0,0,1,1,1,0,1,1,0,1,0,1,1,0,0,0,0,1,0,0,1,1,1'
 CHALLENGE_F2_128_EXT_DEG2="${CHALLENGE_F2_128_EXT_DEG2:-$EXT128_BETA_TRACE1_DEFAULT;1;1}"  # E(U)=U^2+U+beta, Tr(beta)=1
 CHALLENGE_GR_128_EXT_DEG2="${CHALLENGE_GR_128_EXT_DEG2:-$EXT128_BETA_TRACE1_DEFAULT;1;1}"  # lift of the same Artin-Schreier form
+CHALLENGE_F2_64_EXT_DEG3="${CHALLENGE_F2_64_EXT_DEG3:-$CHALLENGE_FIELD_EXT_DEG3}"  # E(U)=1+U+U^3
 
 FIELD255_MOD="${FIELD255_MOD:-57896044618658097711785492504343953926634992332820282019728792003956564819949}"  # 2^255 - 19
 FIELD255_F="${FIELD255_F:-1,1}"       # x + 1
@@ -44,6 +46,10 @@ FIELD128_MOD="${FIELD128_MOD:-326594724262804054738278293730872375507}"  # 128-b
 FIELD128_F="${FIELD128_F:-1,1}"  # x + 1
 FIELD128_ZETA="${FIELD128_ZETA:-0,1}"  # x
 
+FIELD64_MOD="${FIELD64_MOD:-18446744073709551557}"  # 64-bit prime: 2^64 - 59
+FIELD64_F="${FIELD64_F:-1,1}"  # x + 1
+FIELD64_ZETA="${FIELD64_ZETA:-0,1}"  # x
+
 RING_F_64_DEFAULT='1,1,1,0,0,1,1,1,0,1,1,1,1,0,1,1,0,0,1,0,1,0,0,0,1,0,1,0,0,0,0,0,1,1,0,1,0,0,0,0,0,0,0,1,0,0,1,1,1,0,1,0,1,0,0,1,1,0,0,0,0,0,1,0,1'
 # x^128 + x^7 + x^2 + x + 1 (AES-GCM polynomial), also used as its 2-adic lift.
 RING_F_128_DEFAULT='1,1,1,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1'
@@ -53,6 +59,10 @@ RING_F_128="${RING_F_128:-$RING_F_128_DEFAULT}"
 F2_128_MOD="${F2_128_MOD:-2}"
 F2_128_F="${F2_128_F:-$RING_F_128_DEFAULT}"
 F2_128_ZETA="${F2_128_ZETA:-0,1}"  # x
+
+F2_64_MOD="${F2_64_MOD:-2}"
+F2_64_F="${F2_64_F:-$RING_F_64_DEFAULT}"
+F2_64_ZETA="${F2_64_ZETA:-0,1}"  # x
 
 RING_F_162_DEFAULT='1,1,0,0,1,1,1,1,0,0,0,1,0,0,1,0,1,1,1,0,0,0,0,0,0,1,1,1,1,0,0,0,1,1,1,0,0,0,1,1,0,0,1,1,1,0,0,0,0,1,1,1,1,0,1,1,0,1,0,0,0,0,1,1,1,0,1,1,1,0,0,1,0,1,1,0,0,1,0,0,1,0,1,0,0,1,1,1,0,1,1,0,1,0,1,1,1,0,1,1,0,1,1,0,0,1,1,1,0,1,0,1,1,0,1,0,0,0,1,1,1,1,0,1,0,1,1,0,0,0,1,1,0,0,0,0,0,1,1,1,1,0,0,1,0,1,1,0,0,1,1,1,1,0,0,1,1,1,1,0,1,1,1'
 
@@ -70,6 +80,8 @@ ENABLE_FIELD255=0
 ENABLE_RING2P16_162=0
 ENABLE_F2_256=0
 ENABLE_RING2P2_162=0
+ENABLE_FIELD64_EXT=0
+ENABLE_F2_64_EXT=0
 ENABLE_FIELD128_EXT=0
 ENABLE_F2_128_EXT=0
 ENABLE_RING2P16_64_EXT=0
@@ -106,6 +118,8 @@ if [[ "$CONTEXTS" == "all" ]]; then
   ENABLE_RING2P16_162=1
   ENABLE_F2_256=1
   ENABLE_RING2P2_162=1
+  ENABLE_FIELD64_EXT=1
+  ENABLE_F2_64_EXT=1
   ENABLE_FIELD128_EXT=1
   ENABLE_F2_128_EXT=1
   ENABLE_RING2P16_64_EXT=1
@@ -129,10 +143,16 @@ else
       ring-gr-2p2-162)
         ENABLE_RING2P2_162=1
         ;;
-      field-prime64|field-prime128-ext)
+      field-prime64|field-prime64-ext)
+        ENABLE_FIELD64_EXT=1
+        ;;
+      field-f2p64|field-f2p64-ext)
+        ENABLE_F2_64_EXT=1
+        ;;
+      field-prime128|field-prime128-ext)
         ENABLE_FIELD128_EXT=1
         ;;
-      field-f2p64-ext|field-f2p128-ext)
+      field-f2p128|field-f2p128-ext)
         ENABLE_F2_128_EXT=1
         ;;
       ring-gr-2p16-64-ext)
@@ -151,14 +171,14 @@ else
         ;;
       *)
         echo "Unknown context in CONTEXTS: $token" >&2
-        echo "Valid: field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162,field-prime128-ext,field-f2p128-ext,ring-gr-2p16-64-ext,ring-gr-2p16-128-ext,ring-gr-2p2-64-ext,ring-gr-2p2-128-ext,all" >&2
+        echo "Valid: field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162,field-prime64-ext,field-f2p64-ext,field-prime128-ext,field-f2p128-ext,ring-gr-2p16-64-ext,ring-gr-2p16-128-ext,ring-gr-2p2-64-ext,ring-gr-2p2-128-ext,all" >&2
         exit 2
         ;;
     esac
   done
 fi
 
-SELECTED_CONTEXT_COUNT=$((ENABLE_FIELD255 + ENABLE_RING2P16_162 + ENABLE_F2_256 + ENABLE_RING2P2_162 + ENABLE_FIELD128_EXT + ENABLE_F2_128_EXT + ENABLE_RING2P16_64_EXT + ENABLE_RING2P16_128_EXT + ENABLE_RING2P2_64_EXT + ENABLE_RING2P2_128_EXT))
+SELECTED_CONTEXT_COUNT=$((ENABLE_FIELD255 + ENABLE_RING2P16_162 + ENABLE_F2_256 + ENABLE_RING2P2_162 + ENABLE_FIELD64_EXT + ENABLE_F2_64_EXT + ENABLE_FIELD128_EXT + ENABLE_F2_128_EXT + ENABLE_RING2P16_64_EXT + ENABLE_RING2P16_128_EXT + ENABLE_RING2P2_64_EXT + ENABLE_RING2P2_128_EXT))
 if (( SELECTED_CONTEXT_COUNT == 0 )); then
   echo "No context selected. Set CONTEXTS=all or provide at least one valid context id." >&2
   exit 2
@@ -276,6 +296,18 @@ run_one_context_d() {
     ring-gr-2p2-162)
       calc_p="2"
       calc_r="162"
+      ;;
+    field-prime64-ext)
+      calc_p="$FIELD64_MOD"
+      calc_r="1"
+      calc_m="3"
+      eval_extra_args+=(--use-extension-challenges --field-challenge-ext "$CHALLENGE_FIELD_EXT_DEG3")
+      ;;
+    field-f2p64-ext)
+      calc_p="2"
+      calc_r="64"
+      calc_m="3"
+      eval_extra_args+=(--use-extension-challenges --field-challenge-ext "$CHALLENGE_F2_64_EXT_DEG3")
       ;;
     field-prime128-ext)
       calc_p="$FIELD128_MOD"
@@ -459,6 +491,20 @@ for d in $(seq "$D_MIN" "$D_MAX"); do
       --ring-p "$RING2P2_P" \
       --ring-F "$RING2P2_F" \
       --ring-zeta "$RING2P2_ZETA"
+  fi
+  if (( ENABLE_FIELD64_EXT )); then
+    run_one_context_d \
+      "field-prime64-ext" "Field-Prime64 (ext-challenge)" "field" "$d" \
+      --field-mod "$FIELD64_MOD" \
+      --field-F "$FIELD64_F" \
+      --field-zeta "$FIELD64_ZETA"
+  fi
+  if (( ENABLE_F2_64_EXT )); then
+    run_one_context_d \
+      "field-f2p64-ext" "F_2^64 (ext-challenge)" "field" "$d" \
+      --field-mod "$F2_64_MOD" \
+      --field-F "$F2_64_F" \
+      --field-zeta "$F2_64_ZETA"
   fi
   if (( ENABLE_FIELD128_EXT )); then
     run_one_context_d \

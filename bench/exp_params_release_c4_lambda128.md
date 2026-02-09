@@ -15,7 +15,7 @@
   - `verifier time`：`bench_pcs_eval` 的 `verifier mean`
   - `proof size`：`bench_pcs_proof_size --formula` 的估算值（非真实 prover 产物序列化）
 
-## 2) 实验上下文（默认 `all` 共 10 组）
+## 2) 实验上下文（默认 `all` 共 12 组）
 
 - `Field-255`
   - `--mode field`
@@ -46,6 +46,22 @@
   - `--ring-F = RING_F_162`
   - `--ring-zeta = 0,1`
   - `calc_iopp_params` 使用 `q = 2^162`
+
+- `64-bit prime`（`field-prime64-ext`）
+  - `--mode field`
+  - `--field-mod = 18446744073709551557`（`2^64 - 59`）
+  - `--field-F = 1,1`
+  - `--field-zeta = 0,1`
+  - 使用三次扩域挑战（`--use-extension-challenges` + `E(U)=1+U+U^3`）
+  - `calc_iopp_params` 使用 `q = p^(r*m) = p^(1*3) = p^3`
+
+- `F_2^64`（`field-f2p64-ext`）
+  - `--mode field`
+  - `--field-mod = 2`
+  - `--field-F = RING_F_64`（脚本内置 64 次模 2 不可约多项式）
+  - `--field-zeta = 0,1`
+  - 使用三次扩域挑战（`--use-extension-challenges` + 默认 `E(U)=1+U+U^3`）
+  - `calc_iopp_params` 使用 `q = 2^(64*3) = 2^192`
 
 - `128-bit prime`（`field-prime128-ext`）
   - `--mode field`
@@ -106,9 +122,9 @@ scripts/run_release_c4_lambda128.sh
 - 常用环境变量：
   - `D_MIN` / `D_MAX`：维度区间（默认 `3..29`）
   - `CONTEXTS`：选择上下文，默认 `all`
-    - 可选值：`field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162,field-prime128-ext,field-f2p128-ext,ring-gr-2p16-64-ext,ring-gr-2p16-128-ext,ring-gr-2p2-64-ext,ring-gr-2p2-128-ext`
+    - 可选值：`field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162,field-prime64-ext,field-f2p64-ext,field-prime128-ext,field-f2p128-ext,ring-gr-2p16-64-ext,ring-gr-2p16-128-ext,ring-gr-2p2-64-ext,ring-gr-2p2-128-ext`
     - 示例：`CONTEXTS=field-prime128-ext` 或 `CONTEXTS=field-f2p128-ext,ring-gr-2p16-64-ext`
-    - 兼容别名：`field-prime64 -> field-prime128-ext`，`field-f2p64-ext -> field-f2p128-ext`
+    - 兼容别名：`field-prime64 -> field-prime64-ext`，`field-f2p64 -> field-f2p64-ext`，`field-prime128 -> field-prime128-ext`，`field-f2p128 -> field-f2p128-ext`
   - `BENCH_THREADS`：单个 bench 进程内部线程数（默认 `8`）
     - 默认情况下脚本会设置 `OMP_NUM_THREADS=8`，并把
       `BASEFOLD_MERKLE_MAX_THREADS`、`BASEFOLD_VERIFY_QUERY_MAX_THREADS`
