@@ -33,3 +33,39 @@ Makefile
 .DS_Store
 *.swp
 *.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.Python
+.python-version
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python packaging/build
+dist/
+site/
+.eggs/
+*.egg
+*.egg-info/
+pip-wheel-metadata/
+
+# Python test/lint/type caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.hypothesis/
+
+# Python coverage
+.coverage
+.coverage.*
+htmlcov/
+
+# Python notebooks
+.ipynb_checkpoints/
