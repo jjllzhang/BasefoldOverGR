@@ -2,10 +2,19 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-release}"
 OUT_ROOT="${OUT_ROOT:-$ROOT_DIR/results}"
 TIMESTAMP="${TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}"
-OUT_DIR="${OUT_DIR:-$OUT_ROOT/release_c4_lambda128_sweep_${TIMESTAMP}}"
+RUN_ID="${RUN_ID:-${TIMESTAMP}_pid$$}"
+ISOLATE_BUILD_DIR="${ISOLATE_BUILD_DIR:-0}"  # set 1 to use build-release-<RUN_ID> per run
+DEFAULT_BUILD_DIR="${ROOT_DIR}/build-release"
+if [[ -n "${BUILD_DIR:-}" ]]; then
+  BUILD_DIR="$BUILD_DIR"
+elif [[ "$ISOLATE_BUILD_DIR" == "1" ]]; then
+  BUILD_DIR="${DEFAULT_BUILD_DIR}-${RUN_ID}"
+else
+  BUILD_DIR="$DEFAULT_BUILD_DIR"
+fi
+OUT_DIR="${OUT_DIR:-$OUT_ROOT/release_c4_lambda128_sweep_${RUN_ID}}"
 
 # Target profile: rate = 1/4 (c=4), security = 128 bits.
 C="${C:-4}"
@@ -24,6 +33,12 @@ CONTINUE_ON_ERROR="${CONTINUE_ON_ERROR:-1}"
 CMD_TIMEOUT_SEC="${CMD_TIMEOUT_SEC:-0}"
 CONTEXTS="${CONTEXTS:-all}"  # all or comma list, see valid ids in parsing block
 BENCH_THREADS="${BENCH_THREADS:-8}"  # set 0 to keep runtime defaults
+CPU_PIN_MODE="${CPU_PIN_MODE:-none}"  # none|manual|slot
+CPU_SET="${CPU_SET:-}"                # manual mode: e.g. 0-31 or 0,2,4-10
+RUN_SLOT="${RUN_SLOT:-0}"             # slot mode: 0-based slot index
+RUN_SLOTS_TOTAL="${RUN_SLOTS_TOTAL:-1}"  # slot mode: number of concurrent runs
+USE_SMT_IN_SLOT="${USE_SMT_IN_SLOT:-0}"  # slot mode: 0=one hw thread/core, 1=all hw threads
+PIN_BUILD="${PIN_BUILD:-0}"              # set 1 to also pin cmake configure/build
 CHALLENGE_FIELD_EXT_DEG2="${CHALLENGE_FIELD_EXT_DEG2:-0,1;1;1}"  # E(U)=zeta+U+U^2
 CHALLENGE_FIELD_EXT_DEG3="${CHALLENGE_FIELD_EXT_DEG3:-1;1;0;1}"  # E(U)=1+U+U^3
 CHALLENGE_RING_EXT_DEG2="${CHALLENGE_RING_EXT_DEG2:-0,1;1;1}"    # E(U)=zeta+U+U^2
@@ -89,9 +104,14 @@ ENABLE_RING2P16_128_EXT=0
 ENABLE_RING2P2_64_EXT=0
 ENABLE_RING2P2_128_EXT=0
 SELECTED_CONTEXT_COUNT=0
+EFFECTIVE_CPU_SET=""
 
 if (( D_MIN < 0 || D_MAX < D_MIN )); then
   echo "Invalid dimension range: D_MIN=$D_MIN D_MAX=$D_MAX" >&2
+  exit 2
+fi
+if [[ "$ISOLATE_BUILD_DIR" != "0" && "$ISOLATE_BUILD_DIR" != "1" ]]; then
+  echo "ISOLATE_BUILD_DIR must be 0 or 1" >&2
   exit 2
 fi
 if [[ "$RUN_PROOF_SIZE" != "0" && "$RUN_PROOF_SIZE" != "1" ]]; then
@@ -106,11 +126,115 @@ if ! [[ "$BENCH_THREADS" =~ ^[0-9]+$ ]]; then
   echo "BENCH_THREADS must be a non-negative integer" >&2
   exit 2
 fi
+if [[ "$CPU_PIN_MODE" != "none" && "$CPU_PIN_MODE" != "manual" && "$CPU_PIN_MODE" != "slot" ]]; then
+  echo "CPU_PIN_MODE must be one of: none, manual, slot" >&2
+  exit 2
+fi
+if ! [[ "$RUN_SLOT" =~ ^[0-9]+$ && "$RUN_SLOTS_TOTAL" =~ ^[0-9]+$ ]]; then
+  echo "RUN_SLOT and RUN_SLOTS_TOTAL must be non-negative integers" >&2
+  exit 2
+fi
+if (( RUN_SLOTS_TOTAL == 0 )); then
+  echo "RUN_SLOTS_TOTAL must be >= 1" >&2
+  exit 2
+fi
+if (( RUN_SLOT >= RUN_SLOTS_TOTAL )); then
+  echo "RUN_SLOT must satisfy RUN_SLOT < RUN_SLOTS_TOTAL" >&2
+  exit 2
+fi
+if [[ "$USE_SMT_IN_SLOT" != "0" && "$USE_SMT_IN_SLOT" != "1" ]]; then
+  echo "USE_SMT_IN_SLOT must be 0 or 1" >&2
+  exit 2
+fi
+if [[ "$PIN_BUILD" != "0" && "$PIN_BUILD" != "1" ]]; then
+  echo "PIN_BUILD must be 0 or 1" >&2
+  exit 2
+fi
+
+if [[ "$CPU_PIN_MODE" != "none" ]] && ! command -v taskset >/dev/null 2>&1; then
+  echo "CPU pinning requested but 'taskset' is not available" >&2
+  exit 2
+fi
+
+build_slot_cpuset() {
+  local slot="$1"
+  local total_slots="$2"
+  local use_smt="$3"
+  local -a cpu_ids
+  if (( use_smt == 1 )); then
+    if ! command -v nproc >/dev/null 2>&1; then
+      echo "slot pinning (USE_SMT_IN_SLOT=1) requires nproc" >&2
+      return 1
+    fi
+    mapfile -t cpu_ids < <(seq 0 $(( $(nproc --all) - 1 )))
+  else
+    if ! command -v lscpu >/dev/null 2>&1; then
+      echo "slot pinning (USE_SMT_IN_SLOT=0) requires lscpu" >&2
+      return 1
+    fi
+    mapfile -t cpu_ids < <(lscpu -p=CPU,CORE,SOCKET | awk -F',' '!/^#/ {key=$2 "-" $3; if (!(key in seen)) {seen[key]=1; print $1}}')
+  fi
+
+  local total_cpus="${#cpu_ids[@]}"
+  if (( total_cpus == 0 )); then
+    echo "Unable to derive CPU topology for slot pinning" >&2
+    return 1
+  fi
+
+  local base=$(( total_cpus / total_slots ))
+  local rem=$(( total_cpus % total_slots ))
+  local start=$(( slot * base + (slot < rem ? slot : rem) ))
+  local len="$base"
+  if (( slot < rem )); then
+    len=$((len + 1))
+  fi
+  if (( len == 0 )); then
+    echo "Slot $slot has no CPUs assigned. Reduce RUN_SLOTS_TOTAL." >&2
+    return 1
+  fi
+
+  local end=$(( start + len ))
+  local cpuset=""
+  local i
+  for (( i = start; i < end; i++ )); do
+    if [[ -n "$cpuset" ]]; then
+      cpuset+=","
+    fi
+    cpuset+="${cpu_ids[$i]}"
+  done
+  echo "$cpuset"
+}
+
+case "$CPU_PIN_MODE" in
+  none)
+    ;;
+  manual)
+    if [[ -z "$CPU_SET" ]]; then
+      echo "CPU_PIN_MODE=manual requires CPU_SET" >&2
+      exit 2
+    fi
+    EFFECTIVE_CPU_SET="$CPU_SET"
+    ;;
+  slot)
+    EFFECTIVE_CPU_SET="$(build_slot_cpuset "$RUN_SLOT" "$RUN_SLOTS_TOTAL" "$USE_SMT_IN_SLOT")"
+    ;;
+esac
+
+if [[ -n "$EFFECTIVE_CPU_SET" ]]; then
+  if ! taskset -c "$EFFECTIVE_CPU_SET" true >/dev/null 2>&1; then
+    echo "Invalid CPU set: $EFFECTIVE_CPU_SET" >&2
+    exit 2
+  fi
+fi
 
 if (( BENCH_THREADS > 0 )); then
   export OMP_NUM_THREADS="$BENCH_THREADS"
   export BASEFOLD_MERKLE_MAX_THREADS="${BASEFOLD_MERKLE_MAX_THREADS:-$BENCH_THREADS}"
   export BASEFOLD_VERIFY_QUERY_MAX_THREADS="${BASEFOLD_VERIFY_QUERY_MAX_THREADS:-$BENCH_THREADS}"
+fi
+if [[ -n "$EFFECTIVE_CPU_SET" ]]; then
+  export OMP_PROC_BIND="${OMP_PROC_BIND:-close}"
+  export OMP_PLACES="${OMP_PLACES:-cores}"
 fi
 
 if [[ "$CONTEXTS" == "all" ]]; then
@@ -199,12 +323,26 @@ run_and_log() {
   shift
   {
     printf '+'
+    if (( CMD_TIMEOUT_SEC > 0 )); then
+      printf ' %q %q' timeout "$CMD_TIMEOUT_SEC"
+    fi
+    if [[ -n "$EFFECTIVE_CPU_SET" ]]; then
+      printf ' %q %q %q' taskset -c "$EFFECTIVE_CPU_SET"
+    fi
     printf ' %q' "$@"
     printf '\n'
     if (( CMD_TIMEOUT_SEC > 0 )); then
-      timeout "$CMD_TIMEOUT_SEC" "$@"
+      if [[ -n "$EFFECTIVE_CPU_SET" ]]; then
+        timeout "$CMD_TIMEOUT_SEC" taskset -c "$EFFECTIVE_CPU_SET" "$@"
+      else
+        timeout "$CMD_TIMEOUT_SEC" "$@"
+      fi
     else
-      "$@"
+      if [[ -n "$EFFECTIVE_CPU_SET" ]]; then
+        taskset -c "$EFFECTIVE_CPU_SET" "$@"
+      else
+        "$@"
+      fi
     fi
   } >"$log_file" 2>&1
 }
@@ -452,12 +590,22 @@ run_one_context_d() {
 }
 
 echo "[1/4] Configure Release build in: $BUILD_DIR"
-cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
+if [[ -n "$EFFECTIVE_CPU_SET" && "$PIN_BUILD" == "1" ]]; then
+  taskset -c "$EFFECTIVE_CPU_SET" cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
+else
+  cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
+fi
 
 echo "[2/4] Build required benchmarks/tools"
-cmake --build "$BUILD_DIR" \
-  --target bench_pcs_commit bench_pcs_eval bench_pcs_proof_size calc_iopp_params \
-  --parallel
+if [[ -n "$EFFECTIVE_CPU_SET" && "$PIN_BUILD" == "1" ]]; then
+  taskset -c "$EFFECTIVE_CPU_SET" cmake --build "$BUILD_DIR" \
+    --target bench_pcs_commit bench_pcs_eval bench_pcs_proof_size calc_iopp_params \
+    --parallel
+else
+  cmake --build "$BUILD_DIR" \
+    --target bench_pcs_commit bench_pcs_eval bench_pcs_proof_size calc_iopp_params \
+    --parallel
+fi
 
 echo "[3/4] Run sweep: d in [$D_MIN, $D_MAX], selected contexts = $SELECTED_CONTEXT_COUNT (contexts serial, each bench may use threads)"
 for d in $(seq "$D_MIN" "$D_MAX"); do
@@ -559,11 +707,21 @@ echo "[4/4] Build markdown summary"
   echo "# Release Sweep Results: c=$C, lambda=$LAMBDA"
   echo ""
   echo "- run_at_utc: $RUN_AT_UTC"
+  echo "- run_id: $RUN_ID"
   echo "- build_dir: $BUILD_DIR"
+  echo "- isolate_build_dir: $ISOLATE_BUILD_DIR"
   echo "- output_dir: $OUT_DIR"
   echo "- d_range: [$D_MIN, $D_MAX] (poly_dim = 2^d)"
   echo "- contexts: $CONTEXTS"
   echo "- bench_threads: $BENCH_THREADS (set 0 to use runtime default)"
+  echo "- cpu_pin_mode: $CPU_PIN_MODE"
+  if [[ -n "$EFFECTIVE_CPU_SET" ]]; then
+    echo "- cpu_set: $EFFECTIVE_CPU_SET"
+    if [[ "$CPU_PIN_MODE" == "slot" ]]; then
+      echo "- run_slot: $RUN_SLOT / $RUN_SLOTS_TOTAL (use_smt_in_slot=$USE_SMT_IN_SLOT)"
+    fi
+  fi
+  echo "- pin_build: $PIN_BUILD"
   echo "- run_proof_size: $RUN_PROOF_SIZE"
   echo "- continue_on_error: $CONTINUE_ON_ERROR"
   echo "- cmd_timeout_sec: $CMD_TIMEOUT_SEC"

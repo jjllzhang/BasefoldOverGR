@@ -120,6 +120,7 @@ scripts/run_release_c4_lambda128.sh
 ```
 
 - 常用环境变量：
+  - `RUN_ID`：本次运行 ID（默认 `<timestamp>_pid<shell-pid>`），用于区分输出目录和（可选）构建目录
   - `D_MIN` / `D_MAX`：维度区间（默认 `3..29`）
   - `CONTEXTS`：选择上下文，默认 `all`
     - 可选值：`field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162,field-prime64-ext,field-f2p64-ext,field-prime128-ext,field-f2p128-ext,ring-gr-2p16-64-ext,ring-gr-2p16-128-ext,ring-gr-2p2-64-ext,ring-gr-2p2-128-ext`
@@ -130,6 +131,19 @@ scripts/run_release_c4_lambda128.sh
       `BASEFOLD_MERKLE_MAX_THREADS`、`BASEFOLD_VERIFY_QUERY_MAX_THREADS`
       设为同值（若你未手动设置）。
     - 若希望完全使用运行时默认线程策略，可显式设置 `BENCH_THREADS=0`。
+  - `CPU_PIN_MODE`：`none` / `manual` / `slot`（默认 `none`）
+    - `manual`：用 `CPU_SET` 手动指定 CPU 集合（如 `0-31`）
+    - `slot`：按 `RUN_SLOT` 和 `RUN_SLOTS_TOTAL` 自动切分 CPU，适合并发多实例
+  - `CPU_SET`：当 `CPU_PIN_MODE=manual` 时生效
+  - `RUN_SLOT` / `RUN_SLOTS_TOTAL`：当 `CPU_PIN_MODE=slot` 时生效（`RUN_SLOT` 从 `0` 开始）
+  - `USE_SMT_IN_SLOT`：`0` 或 `1`（默认 `0`）
+    - `0`：按物理核切分（每核只取一个硬件线程）
+    - `1`：按逻辑核切分（包含 SMT sibling）
+  - `PIN_BUILD`：`0` 或 `1`（默认 `0`）
+    - 设为 `1` 时，`cmake configure/build` 也会被 `taskset` 绑核
+  - `ISOLATE_BUILD_DIR`：`0` 或 `1`（默认 `0`）
+    - 设为 `1` 且未手动指定 `BUILD_DIR` 时，会使用 `build-release-<RUN_ID>`，避免并发实例共享同一个 build 目录
+  - `BUILD_DIR`：显式指定构建目录（优先级高于 `ISOLATE_BUILD_DIR`）
   - `RUN_PROOF_SIZE`：`1` 或 `0`（默认 `1`）
     - 当前脚本在该步骤固定使用 `bench_pcs_proof_size --formula`（估算模式）。
     - 当前脚本未向 `bench_pcs_proof_size` 透传扩展挑战参数（`--use-extension-challenges` 与 `--*-challenge-ext`）。
@@ -137,11 +151,23 @@ scripts/run_release_c4_lambda128.sh
   - `CONTINUE_ON_ERROR`：遇到某个点失败后是否继续（默认 `1`）
   - `COMMIT_REPS` / `EVAL_REPS` / `SEED`
 
-说明：脚本按 `d` 串行推进；同一 `d` 下各 context 也串行执行，不会并行抢同一批 CPU 核。并行度主要来自单个 bench 进程内部线程。
+并发多实例建议（互不影响）：
+
+```bash
+# 实例 0
+ISOLATE_BUILD_DIR=1 CPU_PIN_MODE=slot RUN_SLOT=0 RUN_SLOTS_TOTAL=2 \
+CONTEXTS=ring-gr-2p16-64-ext scripts/run_release_c4_lambda128.sh
+
+# 实例 1
+ISOLATE_BUILD_DIR=1 CPU_PIN_MODE=slot RUN_SLOT=1 RUN_SLOTS_TOTAL=2 \
+CONTEXTS=ring-gr-2p16-128-ext scripts/run_release_c4_lambda128.sh
+```
+
+说明：单个脚本内部仍按 `d` 串行推进；同一 `d` 下各 context 也串行执行。并行度主要来自单个 bench 进程内部线程；多脚本并发时建议使用上面的 CPU 分片与独立 build 目录。
 
 ## 5) 输出
 
-脚本输出目录：`results/release_c4_lambda128_sweep_<timestamp>/`
+脚本输出目录：`results/release_c4_lambda128_sweep_<RUN_ID>/`
 
 - 明细 csv：`results.csv`
   - 每行一个 `(context, d)` 点，含 `gamma/queries/4项指标/status/error`
