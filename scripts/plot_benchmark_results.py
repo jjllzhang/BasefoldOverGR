@@ -41,6 +41,25 @@ class SeriesData:
     points_by_metric: Dict[str, List[Tuple[float, float]]]
 
 
+METRIC_CATALOG = {
+    "commit": MetricSpec(
+        key="commit_mean_ms",
+        y_label="Commit time (ms)",
+        output_tag="commit_time_vs_d",
+    ),
+    "prover": MetricSpec(
+        key="prover_mean_ms",
+        y_label="Prover time (ms)",
+        output_tag="prover_time_vs_d",
+    ),
+    "verifier": MetricSpec(
+        key="verifier_mean_ms",
+        y_label="Verifier time (ms)",
+        output_tag="verifier_time_vs_d",
+    ),
+}
+
+
 def _parse_float(raw: str | None) -> float | None:
     if raw is None:
         return None
@@ -58,8 +77,16 @@ def _parse_float(raw: str | None) -> float | None:
 
 def _series_label(csv_path: Path, labels: set[str]) -> str:
     if len(labels) == 1:
-        return next(iter(labels))
-    return csv_path.stem
+        raw_label = next(iter(labels))
+    else:
+        raw_label = csv_path.stem
+
+    lower_label = raw_label.lower()
+    if "fri-based" in lower_label or "ligero-based" in lower_label:
+        return raw_label
+    if lower_label.startswith("basefold over "):
+        return raw_label
+    return f"Basefold over {raw_label}"
 
 
 def load_series_from_csv(csv_path: Path, metric_keys: Iterable[str]) -> SeriesData:
@@ -161,7 +188,7 @@ def plot_metric_vs_d(
             ax.set_xticks(integer_ticks)
     ax.xaxis.set_major_locator(MaxNLocator(integer=True))
 
-    if plotted_count > 1:
+    if plotted_count > 0:
         ax.legend(
             handler_map={Line2D: HandlerLine2D(numpoints=1)},
             loc="upper left",
@@ -181,30 +208,20 @@ def plot_benchmark_metrics(
     csv_paths: Sequence[Path],
     output_dir: Path,
     output_prefix: str = "benchmark",
-    communication_column: str = "proof_size_kb",
+    proof_size_column: str = "proof_size_kb",
+    metrics_to_plot: Sequence[str] | None = None,
 ) -> List[Path]:
-    metrics = [
-        MetricSpec(
-            key="commit_mean_ms",
-            y_label="Commit time (ms)",
-            output_tag="commit_time_vs_d",
+    metric_catalog = {
+        **METRIC_CATALOG,
+        "proof_size": MetricSpec(
+            key=proof_size_column,
+            y_label="Proof size (KB)",
+            output_tag="proof_size_vs_d",
         ),
-        MetricSpec(
-            key="prover_mean_ms",
-            y_label="Prover time (ms)",
-            output_tag="prover_time_vs_d",
-        ),
-        MetricSpec(
-            key="verifier_mean_ms",
-            y_label="Verifier time (ms)",
-            output_tag="verifier_time_vs_d",
-        ),
-        MetricSpec(
-            key=communication_column,
-            y_label="communication (KB)",
-            output_tag="communication_vs_d",
-        ),
-    ]
+    }
+    metric_order = list(metric_catalog.keys())
+    selected_names = list(metrics_to_plot) if metrics_to_plot else metric_order
+    metrics = [metric_catalog[name] for name in selected_names]
     metric_keys = [metric.key for metric in metrics]
     series_list = [load_series_from_csv(csv_path, metric_keys) for csv_path in csv_paths]
 
@@ -220,7 +237,7 @@ def plot_benchmark_metrics(
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Plot commit/prover/verifier/communication vs d from one or more benchmark CSV files."
+            "Plot commit/prover/verifier/proof-size vs d from one or more benchmark CSV files."
         )
     )
     parser.add_argument("inputs", nargs="+", help="Input CSV file paths.")
@@ -236,17 +253,69 @@ def _parse_args() -> argparse.Namespace:
         help="Prefix for output file names (default: benchmark).",
     )
     parser.add_argument(
-        "--communication-column",
         "--proof-size-column",
-        dest="communication_column",
+        "--communication-column",
+        dest="proof_size_column",
         default="proof_size_kb",
-        help="Column to use for communication (default: proof_size_kb).",
+        help="Column to use for proof size (default: proof_size_kb).",
+    )
+    parser.add_argument(
+        "--metrics",
+        nargs="+",
+        help=(
+            "Metrics to plot. Use names from: commit, prover, verifier, proof_size. "
+            "Supports comma-separated tokens."
+        ),
     )
     return parser.parse_args()
 
 
+def _select_metrics(args: argparse.Namespace) -> List[str]:
+    default_metrics = ["commit", "prover", "verifier", "proof_size"]
+    alias_map = {
+        "commit": "commit",
+        "commit_time": "commit",
+        "prover": "prover",
+        "prover_time": "prover",
+        "verifier": "verifier",
+        "verifier_time": "verifier",
+        "proof_size": "proof_size",
+        "proofsize": "proof_size",
+        "proof": "proof_size",
+        "communication": "proof_size",
+    }
+
+    if not args.metrics:
+        return default_metrics
+
+    tokens: List[str] = []
+    for raw_item in args.metrics:
+        tokens.extend(part.strip() for part in raw_item.split(",") if part.strip())
+
+    selected: List[str] = []
+    unknown: List[str] = []
+    for token in tokens:
+        normalized = token.lower().replace("-", "_")
+        if normalized == "all":
+            return default_metrics
+        canonical = alias_map.get(normalized)
+        if canonical is None:
+            unknown.append(token)
+            continue
+        if canonical not in selected:
+            selected.append(canonical)
+
+    if unknown:
+        valid = ", ".join(default_metrics + ["all"])
+        raise ValueError(f"Unknown metric(s): {', '.join(unknown)}. Valid options: {valid}")
+    if not selected:
+        raise ValueError("No valid metrics selected.")
+    return selected
+
+
 def main() -> int:
     args = _parse_args()
+    selected_metrics = _select_metrics(args)
     csv_paths = [Path(path).expanduser().resolve() for path in args.inputs]
 
     missing_files = [str(path) for path in csv_paths if not path.exists()]
@@ -258,7 +327,8 @@ def main() -> int:
         csv_paths=csv_paths,
         output_dir=output_dir,
         output_prefix=args.prefix,
-        communication_column=args.communication_column,
+        proof_size_column=args.proof_size_column,
+        metrics_to_plot=selected_metrics,
     )
 
     print("Generated plots:")
