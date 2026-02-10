@@ -7,6 +7,7 @@ import argparse
 import csv
 import math
 import os
+import re
 import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
@@ -75,12 +76,23 @@ def _parse_float(raw: str | None) -> float | None:
     return value
 
 
+_EXT_CHALLENGE_MARKER_RE = re.compile(
+    r"\s*\(\s*ext(?:ension)?[- ]challenge\s*\)\s*",
+    flags=re.IGNORECASE,
+)
+
+
+def _strip_ext_challenge_marker(label: str) -> str:
+    return _EXT_CHALLENGE_MARKER_RE.sub("", label).strip()
+
+
 def _series_label(csv_path: Path, labels: set[str]) -> str:
     if len(labels) == 1:
         raw_label = next(iter(labels))
     else:
         raw_label = csv_path.stem
 
+    raw_label = _strip_ext_challenge_marker(raw_label)
     lower_label = raw_label.lower()
     if "fri-based" in lower_label or "ligero-based" in lower_label:
         return raw_label
