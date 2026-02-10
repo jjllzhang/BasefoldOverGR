@@ -235,8 +235,12 @@ std::uint64_t FixedFieldElementBytes(const ZZ &mod, long ext_degree) {
   if (ext_degree <= 0)
     LogicError("FixedFieldElementBytes: ext_degree must be > 0");
   const std::uint64_t coeff_bytes = FixedCoeffByteWidth(mod);
-  return 8ULL +
-         static_cast<std::uint64_t>(ext_degree) * (8ULL + coeff_bytes);
+  unsigned __int128 total = 0;
+  total += static_cast<unsigned __int128>(ext_degree) * coeff_bytes;
+  if (total > std::numeric_limits<std::uint64_t>::max()) {
+    LogicError("FixedFieldElementBytes: overflow");
+  }
+  return static_cast<std::uint64_t>(total);
 }
 
 std::uint64_t FixedExtensionElementBytes(std::uint64_t field_elem_bytes,
@@ -245,9 +249,8 @@ std::uint64_t FixedExtensionElementBytes(std::uint64_t field_elem_bytes,
     LogicError("FixedExtensionElementBytes: challenge_ext_degree must be > 0");
   }
   unsigned __int128 total = 0;
-  total += 8ULL;  // coeff count
   total += static_cast<unsigned __int128>(challenge_ext_degree) *
-           (8ULL + field_elem_bytes);
+           field_elem_bytes;
   if (total > std::numeric_limits<std::uint64_t>::max()) {
     LogicError("FixedExtensionElementBytes: overflow");
   }
@@ -274,21 +277,11 @@ std::uint64_t MerkleOpeningBytes(std::uint64_t leaf_count,
 
   const std::size_t height = MerkleHeight(leaf_count);
   unsigned __int128 total = 0;
-  total += 8;  // index
   total += field_elem_bytes;
   total += static_cast<unsigned __int128>(height) * kHashBytes;  // sibling hashes
 
   if (total > std::numeric_limits<std::uint64_t>::max())
     LogicError("MerkleOpeningBytes: overflow");
-  return static_cast<std::uint64_t>(total);
-}
-
-std::uint64_t OpeningBytesWithoutAuth(std::uint64_t elem_bytes) {
-  unsigned __int128 total = 0;
-  total += 8ULL;
-  total += elem_bytes;
-  if (total > std::numeric_limits<std::uint64_t>::max())
-    LogicError("OpeningBytesWithoutAuth: overflow");
   return static_cast<std::uint64_t>(total);
 }
 
@@ -369,10 +362,6 @@ std::uint64_t EstimateEvalProofSizeFormulaBytesExtensionChallenges(
   if (challenge_ext_degree <= 0)
     LogicError("EstimateEvalProofSizeFormulaBytesExtensionChallenges: "
                "challenge_ext_degree must be > 0");
-  if (d == 0) {
-    return EstimateEvalProofSizeFormulaBytes(mod, c, d, k0, num_queries,
-                                             base_ext_degree);
-  }
 
   const std::uint64_t fe_bytes = FixedFieldElementBytes(mod, base_ext_degree);
   const std::uint64_t ext_fe_bytes =
@@ -397,37 +386,19 @@ std::uint64_t EstimateEvalProofSizeFormulaBytesExtensionChallenges(
     }
   }
 
-  // Compact extension proof keeps only top base commitment root and per-query
-  // top-level base openings against π_d.
-  total += kHashBytes;
-  total += static_cast<unsigned __int128>(num_queries) * 2ULL *
-           MerkleOpeningBytes(n_by_level[static_cast<std::size_t>(d)],
-                              fe_bytes);
-
-  total += 1ULL;                                           // extension.enabled
-  total += static_cast<unsigned __int128>(d) * kHashBytes;  // extension roots
+  total += static_cast<unsigned __int128>(d + 1) * kHashBytes;  // roots
   total += static_cast<unsigned __int128>(d) * 3ULL *
-           ext_fe_bytes;  // extension h_i
-  total += static_cast<unsigned __int128>(k0) *
-           ext_fe_bytes;  // msg0_coeffs
-  total += static_cast<unsigned __int128>(n0) *
-           ext_fe_bytes;  // extension pi0_full
+           ext_fe_bytes;  // sumcheck polys
+  total += static_cast<unsigned __int128>(n0) * ext_fe_bytes;  // pi0_full
 
   unsigned __int128 per_query_ext = 0;
-  const std::uint64_t ext_open_no_auth = OpeningBytesWithoutAuth(ext_fe_bytes);
   for (long i = 0; i < d; ++i) {
     const std::uint64_t n_i = n_by_level[static_cast<std::size_t>(i)];
-    per_query_ext += MerkleOpeningBytes(n_i, ext_fe_bytes);  // folded[i]
-
-    if (i < d - 1) {
-      const std::uint64_t n_ip1 = n_by_level[static_cast<std::size_t>(i + 1)];
-      per_query_ext += 2ULL *
-                       static_cast<unsigned __int128>(
-                           MerkleOpeningBytes(n_ip1, ext_fe_bytes));
-    } else {
-      per_query_ext += 2ULL *
-                       static_cast<unsigned __int128>(ext_open_no_auth);
-    }
+    const std::uint64_t n_ip1 = n_by_level[static_cast<std::size_t>(i + 1)];
+    per_query_ext += MerkleOpeningBytes(n_i, ext_fe_bytes);  // folded at level i
+    per_query_ext +=
+        2ULL * static_cast<unsigned __int128>(MerkleOpeningBytes(
+                   n_ip1, ext_fe_bytes));  // left+right at level i+1
   }
   total += static_cast<unsigned __int128>(num_queries) * per_query_ext;
 
@@ -682,8 +653,8 @@ void PrintHelp() {
       << "  then --field-zeta/--ring-zeta are ignored.\n\n"
       << "  With --formula, it does NOT run the prover. It estimates proof size from (c,d,queries)\n"
       << "  assuming fixed-size serialization and sha256-based Merkle hashing.\n"
-      << "  For extension-challenge mode, the formula includes both base payload and extension payload\n"
-      << "  currently carried by BaseFoldPCSEvalProof.\n\n"
+      << "  For extension-challenge mode, formula uses extension element width and the same\n"
+      << "  roots/sumcheck/pi0/query-opening structure.\n\n"
       << "  --field-challenge-ext / --ring-challenge-ext use ';' to separate ZZ_pE\n"
       << "  coefficients and ',' for each ZZ_pE coefficient polynomial.\n"
       << "  Example: '0,1;1;1' means E(U)=x + U + U^2.\n\n"
