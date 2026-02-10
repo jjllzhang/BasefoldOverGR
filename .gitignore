@@ -3,6 +3,7 @@ build/
 build-release/
 cmake-build-*/
 out/
+build-*/
 
 # Results
 results/
