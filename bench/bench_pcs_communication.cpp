@@ -253,8 +253,9 @@ std::uint64_t FixedFieldElementBytes(const ZZ &mod, long ext_degree) {
     LogicError("FixedFieldElementBytes: ext_degree must be > 0");
   }
   const std::uint64_t coeff_bytes = FixedCoeffByteWidth(mod);
-  return 8ULL +
-         static_cast<std::uint64_t>(ext_degree) * (8ULL + coeff_bytes);
+  unsigned __int128 total = 0;
+  total += static_cast<unsigned __int128>(ext_degree) * coeff_bytes;
+  return CheckedToU64(total, "FixedFieldElementBytes");
 }
 
 std::uint64_t FixedExtensionElementBytes(std::uint64_t field_elem_bytes,
@@ -263,9 +264,8 @@ std::uint64_t FixedExtensionElementBytes(std::uint64_t field_elem_bytes,
     LogicError("FixedExtensionElementBytes: challenge_ext_degree must be > 0");
   }
   unsigned __int128 total = 0;
-  total += 8ULL;  // coeff count
-  total += static_cast<unsigned __int128>(challenge_ext_degree) *
-           (8ULL + field_elem_bytes);
+  total +=
+      static_cast<unsigned __int128>(challenge_ext_degree) * field_elem_bytes;
   return CheckedToU64(total, "FixedExtensionElementBytes");
 }
 
@@ -289,34 +289,25 @@ std::uint64_t MerkleOpeningBytes(std::uint64_t leaf_count,
                                  std::uint64_t field_elem_bytes) {
   static constexpr std::uint64_t kHashBytes = 32;
   unsigned __int128 total = 0;
-  total += 8;  // leaf index
   total += field_elem_bytes;
   total += static_cast<unsigned __int128>(MerkleHeight(leaf_count)) * kHashBytes;
   return CheckedToU64(total, "MerkleOpeningBytes");
 }
 
-std::uint64_t OpeningBytesWithoutAuth(std::uint64_t elem_bytes) {
-  unsigned __int128 total = 0;
-  total += 8ULL;         // index
-  total += elem_bytes;   // value
-  return CheckedToU64(total, "OpeningBytesWithoutAuth");
-}
-
-std::uint64_t QueryIndexBytes(std::uint64_t upper_bound) {
+std::uint64_t QueryIndexBits(std::uint64_t upper_bound) {
   if (upper_bound <= 1) {
     return 0;
   }
   std::uint64_t t = upper_bound - 1;
-  int bits = 0;
+  std::uint64_t bits = 0;
   while (t > 0) {
     ++bits;
     t >>= 1;
   }
-  return static_cast<std::uint64_t>((bits + 7) / 8);
+  return bits;
 }
 
 struct CommunicationEstimate {
-  bool extension_mode = false;
   long challenge_ext_degree = 0;
 
   std::uint64_t point_dim = 0;
@@ -325,25 +316,17 @@ struct CommunicationEstimate {
   std::uint64_t n_d = 0;
   std::uint64_t field_elem_bytes = 0;
   std::uint64_t challenge_elem_bytes = 0;
-  std::uint64_t query_index_bytes = 0;
+  std::uint64_t query_index_bits = 0;
 
   std::uint64_t base_roots_p2v = 0;
   std::uint64_t base_sumcheck_p2v = 0;
   std::uint64_t base_pi0_full_p2v = 0;
   std::uint64_t base_openings_p2v = 0;
 
-  std::uint64_t extension_flag_p2v = 0;
-  std::uint64_t extension_roots_p2v = 0;
-  std::uint64_t extension_sumcheck_p2v = 0;
-  std::uint64_t extension_msg0_p2v = 0;
-  std::uint64_t extension_pi0_full_p2v = 0;
-  std::uint64_t extension_openings_p2v = 0;
-
-  std::uint64_t roots_p2v = 0;      // aggregate (base + extension roots)
-  std::uint64_t sumcheck_p2v = 0;   // aggregate
-  std::uint64_t pi0_full_p2v = 0;   // aggregate (not including msg0)
-  std::uint64_t openings_p2v = 0;   // aggregate
-  std::uint64_t misc_p2v = 0;       // extension flag + extension msg0
+  std::uint64_t roots_p2v = 0;
+  std::uint64_t sumcheck_p2v = 0;
+  std::uint64_t pi0_full_p2v = 0;
+  std::uint64_t openings_p2v = 0;
   std::uint64_t total_p2v = 0;
 
   std::uint64_t challenges_v2p = 0;
@@ -392,7 +375,6 @@ CommunicationEstimate EstimateCommunicationBytesBase(const ZZ &mod, long c,
   }
 
   CommunicationEstimate out;
-  out.extension_mode = false;
   out.challenge_ext_degree = 0;
   out.point_dim = static_cast<std::uint64_t>(d + Log2ExactPowerOfTwoLong(k0));
   out.field_elem_bytes = FixedFieldElementBytes(mod, ext_degree);
@@ -440,7 +422,6 @@ CommunicationEstimate EstimateCommunicationBytesBase(const ZZ &mod, long c,
   out.sumcheck_p2v = out.base_sumcheck_p2v;
   out.pi0_full_p2v = out.base_pi0_full_p2v;
   out.openings_p2v = out.base_openings_p2v;
-  out.misc_p2v = 0;
   out.total_p2v =
       CheckedToU64(static_cast<unsigned __int128>(out.roots_p2v) +
                        out.sumcheck_p2v + out.pi0_full_p2v + out.openings_p2v,
@@ -450,13 +431,14 @@ CommunicationEstimate EstimateCommunicationBytesBase(const ZZ &mod, long c,
       static_cast<unsigned __int128>(d) * out.challenge_elem_bytes,
       "challenges_v2p");
 
-  out.query_index_bytes = 0;
+  out.query_index_bits = 0;
   out.query_indices_v2p = 0;
   if (d > 0) {
-    out.query_index_bytes = QueryIndexBytes(out.n_last);
-    out.query_indices_v2p = CheckedToU64(
-        static_cast<unsigned __int128>(num_queries) * out.query_index_bytes,
-        "query_indices_v2p");
+    out.query_index_bits = QueryIndexBits(out.n_last);
+    const unsigned __int128 total_bits =
+        static_cast<unsigned __int128>(num_queries) * out.query_index_bits;
+    out.query_indices_v2p =
+        CheckedToU64(total_bits / 8ULL, "query_indices_v2p");
   }
 
   out.total_v2p_interactive = CheckedToU64(
@@ -500,13 +482,8 @@ CommunicationEstimate EstimateCommunicationBytesExtensionChallenges(
     LogicError("EstimateCommunicationBytesExtensionChallenges: "
                "challenge_ext_degree must be > 0");
   }
-  if (d == 0) {
-    return EstimateCommunicationBytesBase(mod, c, k0, d, num_queries,
-                                          ext_degree);
-  }
 
   CommunicationEstimate out;
-  out.extension_mode = true;
   out.challenge_ext_degree = challenge_ext_degree;
   out.point_dim = static_cast<std::uint64_t>(d + Log2ExactPowerOfTwoLong(k0));
   out.field_elem_bytes = FixedFieldElementBytes(mod, ext_degree);
@@ -521,85 +498,58 @@ CommunicationEstimate EstimateCommunicationBytesExtensionChallenges(
   out.n0 = c_u64 * k0_u64;
   const std::vector<std::uint64_t> n_by_level = BuildLeafCountByLevel(
       out.n0, d, "EstimateCommunicationBytesExtensionChallenges");
-  out.n_last = n_by_level[static_cast<std::size_t>(d - 1)];
+  if (d > 0) {
+    out.n_last = n_by_level[static_cast<std::size_t>(d - 1)];
+  } else {
+    out.n_last = out.n0;
+  }
   out.n_d = n_by_level[static_cast<std::size_t>(d)];
 
-  // Compact extension proof carries only top base commitment root and top-level
-  // base openings against pi_d.
-  out.base_roots_p2v = kHashBytes;
-  out.base_sumcheck_p2v = 0;
-  out.base_pi0_full_p2v = 0;
-  out.base_openings_p2v = CheckedToU64(
-      static_cast<unsigned __int128>(num_queries) * 2ULL *
-          MerkleOpeningBytes(out.n_d, out.field_elem_bytes),
-      "base_openings_p2v");
-
-  out.extension_flag_p2v = 1;
-  out.extension_roots_p2v = CheckedToU64(
-      static_cast<unsigned __int128>(d) * kHashBytes, "extension_roots_p2v");
-  out.extension_sumcheck_p2v = CheckedToU64(
+  // Match bench_pcs_proof_size --formula extension path exactly.
+  out.base_roots_p2v =
+      CheckedToU64(static_cast<unsigned __int128>(d + 1) * kHashBytes,
+                   "roots_p2v");
+  out.base_sumcheck_p2v = CheckedToU64(
       static_cast<unsigned __int128>(d) * 3ULL * out.challenge_elem_bytes,
-      "extension_sumcheck_p2v");
-  out.extension_msg0_p2v =
-      CheckedToU64(static_cast<unsigned __int128>(k0) * out.challenge_elem_bytes,
-                   "extension_msg0_p2v");
-  out.extension_pi0_full_p2v =
+      "sumcheck_p2v");
+  out.base_pi0_full_p2v =
       CheckedToU64(static_cast<unsigned __int128>(out.n0) *
                        out.challenge_elem_bytes,
-                   "extension_pi0_full_p2v");
+                   "pi0_full_p2v");
 
-  const std::uint64_t ext_open_no_auth =
-      OpeningBytesWithoutAuth(out.challenge_elem_bytes);
   unsigned __int128 per_query_ext = 0;
   for (long i = 0; i < d; ++i) {
     const std::uint64_t n_i = n_by_level[static_cast<std::size_t>(i)];
+    const std::uint64_t n_ip1 = n_by_level[static_cast<std::size_t>(i + 1)];
     per_query_ext += MerkleOpeningBytes(n_i, out.challenge_elem_bytes);
-    if (i < d - 1) {
-      const std::uint64_t n_ip1 = n_by_level[static_cast<std::size_t>(i + 1)];
-      per_query_ext += 2ULL * static_cast<unsigned __int128>(
-                                  MerkleOpeningBytes(n_ip1,
-                                                     out.challenge_elem_bytes));
-    } else {
-      per_query_ext += 2ULL * static_cast<unsigned __int128>(ext_open_no_auth);
-    }
+    per_query_ext += 2ULL * static_cast<unsigned __int128>(
+                                MerkleOpeningBytes(n_ip1,
+                                                   out.challenge_elem_bytes));
   }
-  out.extension_openings_p2v = CheckedToU64(
+  out.base_openings_p2v = CheckedToU64(
       static_cast<unsigned __int128>(num_queries) * per_query_ext,
-      "extension_openings_p2v");
+      "openings_p2v");
 
-  out.roots_p2v =
-      CheckedToU64(static_cast<unsigned __int128>(out.base_roots_p2v) +
-                       out.extension_roots_p2v,
-                   "roots_p2v");
-  out.sumcheck_p2v =
-      CheckedToU64(static_cast<unsigned __int128>(out.base_sumcheck_p2v) +
-                       out.extension_sumcheck_p2v,
-                   "sumcheck_p2v");
-  out.pi0_full_p2v =
-      CheckedToU64(static_cast<unsigned __int128>(out.base_pi0_full_p2v) +
-                       out.extension_pi0_full_p2v,
-                   "pi0_full_p2v");
-  out.openings_p2v =
-      CheckedToU64(static_cast<unsigned __int128>(out.base_openings_p2v) +
-                       out.extension_openings_p2v,
-                   "openings_p2v");
-  out.misc_p2v =
-      CheckedToU64(static_cast<unsigned __int128>(out.extension_flag_p2v) +
-                       out.extension_msg0_p2v,
-                   "misc_p2v");
+  out.roots_p2v = out.base_roots_p2v;
+  out.sumcheck_p2v = out.base_sumcheck_p2v;
+  out.pi0_full_p2v = out.base_pi0_full_p2v;
+  out.openings_p2v = out.base_openings_p2v;
   out.total_p2v = CheckedToU64(
       static_cast<unsigned __int128>(out.roots_p2v) + out.sumcheck_p2v +
-          out.pi0_full_p2v + out.openings_p2v + out.misc_p2v,
+          out.pi0_full_p2v + out.openings_p2v,
       "total_p2v");
 
   out.challenges_v2p = CheckedToU64(
       static_cast<unsigned __int128>(d) * out.challenge_elem_bytes,
       "challenges_v2p");
 
-  out.query_index_bytes = QueryIndexBytes(out.n_last);
-  out.query_indices_v2p = CheckedToU64(
-      static_cast<unsigned __int128>(num_queries) * out.query_index_bytes,
-      "query_indices_v2p");
+  out.query_index_bits = QueryIndexBits(out.n_last);
+  {
+    const unsigned __int128 total_bits =
+        static_cast<unsigned __int128>(num_queries) * out.query_index_bits;
+    out.query_indices_v2p =
+        CheckedToU64(total_bits / 8ULL, "query_indices_v2p");
+  }
 
   out.total_v2p_interactive = CheckedToU64(
       static_cast<unsigned __int128>(out.challenges_v2p) + out.query_indices_v2p,
@@ -624,9 +574,8 @@ void PrintHelp() {
       << "Estimation model:\n"
       << "  - No prover execution; formula-only from parameters.\n"
       << "  - Base mode payload: roots + sumcheck polys + pi0_full + query openings.\n"
-      << "  - Extension-challenge mode payload (compact BaseFoldPCSEvalProof):\n"
-      << "      base top root + base top openings + extension roots/h/msg0/pi0/query openings.\n"
-      << "      (r_i are transcript-derived and not counted unless explicitly serialized.)\n"
+      << "  - Extension-challenge mode payload uses the same parameter-formula as\n"
+      << "      bench_pcs_proof_size --formula (roots + sumcheck + pi0_full + openings).\n"
       << "  - Verifier->Prover (interactive-equivalent):\n"
       << "      d challenges r_i + query indices mu.\n"
       << "  - Fiat-Shamir (current implementation): V->P is 0, total equals proof payload.\n"
@@ -681,11 +630,7 @@ void PrintEstimate(const ContextSpec &spec, long c, long k0, long d,
             << "  mod=" << spec.mod << "  queries=" << num_queries;
   if (use_extension_challenges) {
     std::cout << "  ext_challenges=on";
-    if (d > 0) {
-      std::cout << "  ext_deg=" << challenge_ext_degree;
-    } else {
-      std::cout << "  (d=0 -> base path)";
-    }
+    std::cout << "  ext_deg=" << challenge_ext_degree;
   }
   std::cout << "\n";
   std::cout << "  point dim (d+log2(k0)) = " << est.point_dim << "\n";
@@ -699,43 +644,22 @@ void PrintEstimate(const ContextSpec &spec, long c, long k0, long d,
     std::cout << "  challenge elem bytes = " << est.challenge_elem_bytes << "\n";
   }
   if (d > 0) {
-    std::cout << "  mu index bytes   = " << est.query_index_bytes
+    std::cout << "  mu index bits    = " << est.query_index_bits
               << " (interactive-equivalent)\n";
   }
 
   std::cout << std::fixed << std::setprecision(3);
   std::cout << "  prover -> verifier:\n";
-  if (!est.extension_mode) {
-    std::cout << "    roots     " << ToKB(est.roots_p2v) << " KB  ("
-              << est.roots_p2v << " B)\n";
-    std::cout << "    sumcheck  " << ToKB(est.sumcheck_p2v) << " KB  ("
-              << est.sumcheck_p2v << " B)\n";
-    std::cout << "    pi0_full  " << ToKB(est.pi0_full_p2v) << " KB  ("
-              << est.pi0_full_p2v << " B)\n";
-    std::cout << "    openings  " << ToKB(est.openings_p2v) << " KB  ("
-              << est.openings_p2v << " B)\n";
-    std::cout << "    total     " << ToKB(est.total_p2v) << " KB  ("
-              << est.total_p2v << " B)\n";
-  } else {
-    std::cout << "    base root(top)      " << ToKB(est.base_roots_p2v)
-              << " KB  (" << est.base_roots_p2v << " B)\n";
-    std::cout << "    base openings(top)  " << ToKB(est.base_openings_p2v)
-              << " KB  (" << est.base_openings_p2v << " B)\n";
-    std::cout << "    ext enabled flag    " << ToKB(est.extension_flag_p2v)
-              << " KB  (" << est.extension_flag_p2v << " B)\n";
-    std::cout << "    ext roots           " << ToKB(est.extension_roots_p2v)
-              << " KB  (" << est.extension_roots_p2v << " B)\n";
-    std::cout << "    ext sumcheck h_i    " << ToKB(est.extension_sumcheck_p2v)
-              << " KB  (" << est.extension_sumcheck_p2v << " B)\n";
-    std::cout << "    ext msg0            " << ToKB(est.extension_msg0_p2v)
-              << " KB  (" << est.extension_msg0_p2v << " B)\n";
-    std::cout << "    ext pi0_full        " << ToKB(est.extension_pi0_full_p2v)
-              << " KB  (" << est.extension_pi0_full_p2v << " B)\n";
-    std::cout << "    ext openings        " << ToKB(est.extension_openings_p2v)
-              << " KB  (" << est.extension_openings_p2v << " B)\n";
-    std::cout << "    total               " << ToKB(est.total_p2v) << " KB  ("
-              << est.total_p2v << " B)\n";
-  }
+  std::cout << "    roots     " << ToKB(est.roots_p2v) << " KB  (" << est.roots_p2v
+            << " B)\n";
+  std::cout << "    sumcheck  " << ToKB(est.sumcheck_p2v) << " KB  ("
+            << est.sumcheck_p2v << " B)\n";
+  std::cout << "    pi0_full  " << ToKB(est.pi0_full_p2v) << " KB  ("
+            << est.pi0_full_p2v << " B)\n";
+  std::cout << "    openings  " << ToKB(est.openings_p2v) << " KB  ("
+            << est.openings_p2v << " B)\n";
+  std::cout << "    total     " << ToKB(est.total_p2v) << " KB  ("
+            << est.total_p2v << " B)\n";
 
   std::cout << "  verifier -> prover (interactive-equivalent):\n";
   std::cout << "    r_i       " << ToKB(est.challenges_v2p) << " KB  ("
