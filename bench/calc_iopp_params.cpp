@@ -41,6 +41,7 @@ struct CalcResult {
   bool gamma_auto = false;
   bool gamma_auto_feasible = true;
   bool base_valid = true;
+  bool delta_cd_constraint_valid = true;
   long double gamma_search_min = 0;
   long double gamma_search_max = 0;
   long long gamma_search_steps = 0;
@@ -101,7 +102,7 @@ void PrintUsage(const char* argv0) {
       << "  J_gamma(x) = 1 - sqrt(1 - x*(1-gamma))\n"
       << "  delta = J_gamma(J_gamma(Delta_Cd))\n"
       << "  base = 1 - delta + gamma*d\n"
-      << "  validity requires: 0 < base < 1\n"
+      << "  validity requires: 0 < base < 1 and 3*delta - gamma*d < Delta_Cd\n"
       << "  l_iopp from: 2d/(gamma^3*q) + base^l <= 2^-lambda\n"
       << "  l_pcs  from: 2d/q + 2d/(gamma^3*q) + base^l <= 2^-lambda\n"
       << "  recommended l = l_pcs\n";
@@ -317,7 +318,7 @@ long double ResolveQ(const CliArgs& args) {
 }
 
 CalcResult ComputeAtGamma(const CliArgs& args, long double q, long double gamma,
-                          bool keep_levels, bool enforce_base_validity = true) {
+                          bool keep_levels, bool enforce_validity = true) {
   if (!(gamma > 0.0L && gamma < 1.0L)) {
     throw std::runtime_error("gamma must be in (0,1)");
   }
@@ -368,10 +369,20 @@ CalcResult ComputeAtGamma(const CliArgs& args, long double q, long double gamma,
 
   out.base = 1.0L - out.delta + out.gamma * d_ld;
   out.base_valid = (out.base > 0.0L && out.base < 1.0L);
-  if (!out.base_valid) {
-    if (enforce_base_validity) {
+  out.delta_cd_constraint_valid =
+      ((3.0L * out.delta - out.gamma * d_ld) < out.delta_code_lower);
+  if (!out.base_valid || !out.delta_cd_constraint_valid) {
+    if (enforce_validity) {
+      if (!out.base_valid && !out.delta_cd_constraint_valid) {
+        throw std::runtime_error(
+            "Invalid parameters: require 0 < base < 1 and 3*delta - gamma*d < Delta_Cd");
+      }
+      if (!out.base_valid) {
+        throw std::runtime_error(
+            "Invalid parameters: base = 1 - delta + gamma*d must be in (0,1)");
+      }
       throw std::runtime_error(
-          "Invalid parameters: base = 1 - delta + gamma*d must be in (0,1)");
+          "Invalid parameters: require 3*delta - gamma*d < Delta_Cd");
     }
     return out;
   }
@@ -457,7 +468,7 @@ CalcResult Compute(const CliArgs& args) {
                           static_cast<long double>(steps - 1);
     const long double gamma = std::exp(log_min + t * (log_max - log_min));
     CalcResult cur = ComputeAtGamma(args, q, gamma, false, false);
-    if (!cur.base_valid) {
+    if (!cur.base_valid || !cur.delta_cd_constraint_valid) {
       continue;
     }
 
@@ -486,7 +497,7 @@ CalcResult Compute(const CliArgs& args) {
 
   if (!have_any) {
     throw std::runtime_error(
-        "auto-gamma search failed: no gamma in search range yields valid base in (0,1)");
+        "auto-gamma search failed: no gamma in search range satisfies validity constraints");
   }
 
   CalcResult out = have_feasible
