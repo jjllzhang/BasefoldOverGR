@@ -16,6 +16,26 @@ else
 fi
 OUT_DIR="${OUT_DIR:-$OUT_ROOT/release_c4_lambda128_sweep_${RUN_ID}}"
 
+poly_degree_from_coeff_list() {
+  local coeffs="$1"
+  awk -F',' '
+    BEGIN { deg = -1 }
+    {
+      for (i = 1; i <= NF; i++) {
+        gsub(/[[:space:]]/, "", $i)
+        if ($i == "" || $i !~ /^-?[0-9]+$/) {
+          print "ERR"
+          exit
+        }
+        if (($i + 0) != 0) deg = i - 1
+      }
+    }
+    END {
+      if (deg < 0) print 0
+      else print deg
+    }' <<< "$coeffs"
+}
+
 # Target profile: rate = 1/4 (c=4), security = 128 bits.
 C="${C:-4}"
 K0="${K0:-1}"
@@ -47,6 +67,8 @@ EXT128_BETA_TRACE1_DEFAULT='1,0,0,1,1,1,1,1,0,0,0,0,1,0,0,1,1,0,0,0,0,1,1,0,0,0,
 CHALLENGE_F2_128_EXT_DEG2="${CHALLENGE_F2_128_EXT_DEG2:-$EXT128_BETA_TRACE1_DEFAULT;1;1}"  # E(U)=U^2+U+beta, Tr(beta)=1
 CHALLENGE_GR_128_EXT_DEG2="${CHALLENGE_GR_128_EXT_DEG2:-$EXT128_BETA_TRACE1_DEFAULT;1;1}"  # lift of the same Artin-Schreier form
 CHALLENGE_F2_64_EXT_DEG3="${CHALLENGE_F2_64_EXT_DEG3:-$CHALLENGE_FIELD_EXT_DEG3}"  # E(U)=1+U+U^3
+CHALLENGE_F3_40_EXT_DEG3="${CHALLENGE_F3_40_EXT_DEG3:-0,1;1;0;1}"  # E(U)=zeta+U+U^3 over F_(3^40)
+CHALLENGE_F3_81_EXT_DEG2="${CHALLENGE_F3_81_EXT_DEG2:-0,1;1;1}"    # E(U)=zeta+U+U^2 over F_(3^81)
 
 FIELD255_MOD="${FIELD255_MOD:-57896044618658097711785492504343953926634992332820282019728792003956564819949}"  # 2^255 - 19
 FIELD255_F="${FIELD255_F:-1,1}"       # x + 1
@@ -64,6 +86,20 @@ FIELD128_ZETA="${FIELD128_ZETA:-0,1}"  # x
 FIELD64_MOD="${FIELD64_MOD:-18446744073709551557}"  # 64-bit prime: 2^64 - 59
 FIELD64_F="${FIELD64_F:-1,1}"  # x + 1
 FIELD64_ZETA="${FIELD64_ZETA:-0,1}"  # x
+
+# F_(3^40) context (64-bit class): degree-3 extension challenges by default.
+F3_40_MOD="${F3_40_MOD:-3}"
+F3_40_R="${F3_40_R:-40}"
+F3_40_F_DEFAULT='1,2,0,1,2,0,0,2,1,0,0,1,2,1,2,0,0,2,1,1,0,0,2,0,0,2,2,2,2,1,1,0,1,0,2,0,2,0,1,0,1'  # GF(3) irreducible, deg=40
+F3_40_F="${F3_40_F:-$F3_40_F_DEFAULT}"
+F3_40_ZETA="${F3_40_ZETA:-0,1}"  # x
+
+# F_(3^81) context (128-bit class): degree-2 extension challenges by default.
+F3_81_MOD="${F3_81_MOD:-3}"
+F3_81_R="${F3_81_R:-81}"
+F3_81_F_DEFAULT='1,1,2,2,2,1,2,2,0,2,2,0,2,1,2,1,1,1,0,0,0,0,1,0,0,1,1,1,1,2,0,1,1,2,1,0,1,1,1,0,0,0,2,2,2,2,2,0,0,2,2,0,2,1,0,2,0,1,1,0,1,1,1,1,1,1,2,1,0,0,2,0,1,1,2,0,0,1,1,0,1,1'  # GF(3) irreducible, deg=81
+F3_81_F="${F3_81_F:-$F3_81_F_DEFAULT}"
+F3_81_ZETA="${F3_81_ZETA:-0,1}"  # x
 
 RING_F_64_DEFAULT='1,1,1,0,0,1,1,1,0,1,1,1,1,0,1,1,0,0,1,0,1,0,0,0,1,0,1,0,0,0,0,0,1,1,0,1,0,0,0,0,0,0,0,1,0,0,1,1,1,0,1,0,1,0,0,1,1,0,0,0,0,0,1,0,1'
 # x^128 + x^7 + x^2 + x + 1 (AES-GCM polynomial), also used as its 2-adic lift.
@@ -99,6 +135,8 @@ ENABLE_FIELD64_EXT=0
 ENABLE_F2_64_EXT=0
 ENABLE_FIELD128_EXT=0
 ENABLE_F2_128_EXT=0
+ENABLE_F3_40_EXT=0
+ENABLE_F3_81_EXT=0
 ENABLE_RING2P16_64_EXT=0
 ENABLE_RING2P16_128_EXT=0
 ENABLE_RING2P2_64_EXT=0
@@ -148,6 +186,14 @@ if [[ "$USE_SMT_IN_SLOT" != "0" && "$USE_SMT_IN_SLOT" != "1" ]]; then
 fi
 if [[ "$PIN_BUILD" != "0" && "$PIN_BUILD" != "1" ]]; then
   echo "PIN_BUILD must be 0 or 1" >&2
+  exit 2
+fi
+if ! [[ "$F3_40_R" =~ ^[1-9][0-9]*$ && "$F3_81_R" =~ ^[1-9][0-9]*$ ]]; then
+  echo "F3_40_R and F3_81_R must be positive integers" >&2
+  exit 2
+fi
+if ! [[ "$F3_40_MOD" =~ ^([2-9]|[1-9][0-9]+)$ && "$F3_81_MOD" =~ ^([2-9]|[1-9][0-9]+)$ ]]; then
+  echo "F3_40_MOD and F3_81_MOD must be integers >= 2" >&2
   exit 2
 fi
 
@@ -246,6 +292,8 @@ if [[ "$CONTEXTS" == "all" ]]; then
   ENABLE_F2_64_EXT=1
   ENABLE_FIELD128_EXT=1
   ENABLE_F2_128_EXT=1
+  ENABLE_F3_40_EXT=1
+  ENABLE_F3_81_EXT=1
   ENABLE_RING2P16_64_EXT=1
   ENABLE_RING2P16_128_EXT=1
   ENABLE_RING2P2_64_EXT=1
@@ -279,6 +327,12 @@ else
       field-f2p128|field-f2p128-ext)
         ENABLE_F2_128_EXT=1
         ;;
+      field-f3p40|field-f3p40-ext)
+        ENABLE_F3_40_EXT=1
+        ;;
+      field-f3p81|field-f3p81-ext)
+        ENABLE_F3_81_EXT=1
+        ;;
       ring-gr-2p16-64-ext)
         ENABLE_RING2P16_64_EXT=1
         ;;
@@ -295,14 +349,39 @@ else
         ;;
       *)
         echo "Unknown context in CONTEXTS: $token" >&2
-        echo "Valid: field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162,field-prime64-ext,field-f2p64-ext,field-prime128-ext,field-f2p128-ext,ring-gr-2p16-64-ext,ring-gr-2p16-128-ext,ring-gr-2p2-64-ext,ring-gr-2p2-128-ext,all" >&2
+        echo "Valid: field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162,field-prime64-ext,field-f2p64-ext,field-prime128-ext,field-f2p128-ext,field-f3p40-ext,field-f3p81-ext,ring-gr-2p16-64-ext,ring-gr-2p16-128-ext,ring-gr-2p2-64-ext,ring-gr-2p2-128-ext,all" >&2
         exit 2
         ;;
     esac
   done
 fi
 
-SELECTED_CONTEXT_COUNT=$((ENABLE_FIELD255 + ENABLE_RING2P16_162 + ENABLE_F2_256 + ENABLE_RING2P2_162 + ENABLE_FIELD64_EXT + ENABLE_F2_64_EXT + ENABLE_FIELD128_EXT + ENABLE_F2_128_EXT + ENABLE_RING2P16_64_EXT + ENABLE_RING2P16_128_EXT + ENABLE_RING2P2_64_EXT + ENABLE_RING2P2_128_EXT))
+if (( ENABLE_F3_40_EXT )); then
+  deg_f3_40="$(poly_degree_from_coeff_list "$F3_40_F")"
+  if [[ "$deg_f3_40" == "ERR" ]]; then
+    echo "Invalid F3_40_F: expect comma-separated integer coefficients" >&2
+    exit 2
+  fi
+  if (( deg_f3_40 != F3_40_R )); then
+    echo "F3_40 mismatch: deg(F)=$deg_f3_40 but F3_40_R=$F3_40_R" >&2
+    echo "Set F3_40_F to an irreducible polynomial of degree F3_40_R." >&2
+    exit 2
+  fi
+fi
+if (( ENABLE_F3_81_EXT )); then
+  deg_f3_81="$(poly_degree_from_coeff_list "$F3_81_F")"
+  if [[ "$deg_f3_81" == "ERR" ]]; then
+    echo "Invalid F3_81_F: expect comma-separated integer coefficients" >&2
+    exit 2
+  fi
+  if (( deg_f3_81 != F3_81_R )); then
+    echo "F3_81 mismatch: deg(F)=$deg_f3_81 but F3_81_R=$F3_81_R" >&2
+    echo "Set F3_81_F to an irreducible polynomial of degree F3_81_R." >&2
+    exit 2
+  fi
+fi
+
+SELECTED_CONTEXT_COUNT=$((ENABLE_FIELD255 + ENABLE_RING2P16_162 + ENABLE_F2_256 + ENABLE_RING2P2_162 + ENABLE_FIELD64_EXT + ENABLE_F2_64_EXT + ENABLE_FIELD128_EXT + ENABLE_F2_128_EXT + ENABLE_F3_40_EXT + ENABLE_F3_81_EXT + ENABLE_RING2P16_64_EXT + ENABLE_RING2P16_128_EXT + ENABLE_RING2P2_64_EXT + ENABLE_RING2P2_128_EXT))
 if (( SELECTED_CONTEXT_COUNT == 0 )); then
   echo "No context selected. Set CONTEXTS=all or provide at least one valid context id." >&2
   exit 2
@@ -459,6 +538,18 @@ run_one_context_d() {
       calc_m="2"
       eval_extra_args+=(--use-extension-challenges --field-challenge-ext "$CHALLENGE_F2_128_EXT_DEG2")
       ;;
+    field-f3p40-ext)
+      calc_p="$F3_40_MOD"
+      calc_r="$F3_40_R"
+      calc_m="3"
+      eval_extra_args+=(--use-extension-challenges --field-challenge-ext "$CHALLENGE_F3_40_EXT_DEG3")
+      ;;
+    field-f3p81-ext)
+      calc_p="$F3_81_MOD"
+      calc_r="$F3_81_R"
+      calc_m="2"
+      eval_extra_args+=(--use-extension-challenges --field-challenge-ext "$CHALLENGE_F3_81_EXT_DEG2")
+      ;;
     ring-gr-2p16-64-ext)
       calc_p="2"
       calc_r="64"
@@ -563,6 +654,7 @@ run_one_context_d() {
     if ! run_and_log "$proof_log" \
         "$BUILD_DIR/bench_pcs_proof_size" \
         --mode "$mode" \
+        "${eval_extra_args[@]}" \
         "${bench_args[@]}" \
         --c "$C" --k0 "$K0" --d "$d" \
         --queries "$queries" \
@@ -667,6 +759,20 @@ for d in $(seq "$D_MIN" "$D_MAX"); do
       --field-mod "$F2_128_MOD" \
       --field-F "$F2_128_F" \
       --field-zeta "$F2_128_ZETA"
+  fi
+  if (( ENABLE_F3_40_EXT )); then
+    run_one_context_d \
+      "field-f3p40-ext" "F_3^40 (ext-challenge)" "field" "$d" \
+      --field-mod "$F3_40_MOD" \
+      --field-F "$F3_40_F" \
+      --field-zeta "$F3_40_ZETA"
+  fi
+  if (( ENABLE_F3_81_EXT )); then
+    run_one_context_d \
+      "field-f3p81-ext" "F_3^81 (ext-challenge)" "field" "$d" \
+      --field-mod "$F3_81_MOD" \
+      --field-F "$F3_81_F" \
+      --field-zeta "$F3_81_ZETA"
   fi
   if (( ENABLE_RING2P16_64_EXT )); then
     run_one_context_d \
