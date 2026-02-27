@@ -326,14 +326,16 @@ python3 scripts/plot_benchmark_results.py \
 
 ### 参数选取工具（码距 + 推荐 query 次数）
 
-`bench/calc_iopp_params.cpp` 基于 `Basefold_over_GR.pdf` 的 “Instantiation and parameter selection” 段落实现，输入 `d/c/lambda` 与 `q`（或 `p,r,m`）后，自动计算：
+`bench/calc_iopp_params.cpp` 输入 `d/c/lambda` 与 `q`（或 `p,r,m`）后，自动计算：
 
 - 距离下界 `Delta_Cd >= 1 - t_d / n_d`（按 Theorem 1 / Corollary 1 的 `t_i` 递推）；
-- `delta = J_gamma(J_gamma(Delta_Cd))`；
+- `delta < J_gamma(J_gamma(Delta_Cd))`（严格不等式）；
+- 实现策略：固定 `gamma` 时，在满足全部约束（`delta < J_gamma(J_gamma(Delta_Cd))`、`0 < 1-delta+gamma*d < 1`、`3*delta-gamma*d < Delta_Cd`）的可行区间内，取尽量接近上界的 `delta`，以减小查询数；
 - 计算并区分：
   - `l_min_iopp_only`：满足 `2d/(gamma^3 q) + (1-delta+gamma*d)^l <= 2^-lambda`；
   - `l_min_for_PCS`（推荐）：满足 `2d/q + 2d/(gamma^3 q) + (1-delta+gamma*d)^l <= 2^-lambda`。
 - 支持 `--auto-gamma`：在给定 `c,d,k0,lambda,q` 时自动搜索 `gamma`，目标最小化 `l_min_for_PCS`。
+- 搜索实现：`Delta_Cd` 先预计算一次，再对 `gamma` 进行粗到细自适应搜索。
 
 示例：
 
@@ -350,7 +352,7 @@ python3 scripts/plot_benchmark_results.py \
 # 自动选 gamma（目标：l_min_for_PCS 最小）
 ./build-release/calc_iopp_params --d 20 --c 16 --k0 1 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --auto-gamma
 
-# 可选：限制搜索区间和精度
+# 可选：限制搜索区间和搜索预算
 ./build-release/calc_iopp_params --d 20 --c 16 --k0 1 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --auto-gamma --gamma-min 1e-4 --gamma-max 0.05 --gamma-steps 8000
 ```
 

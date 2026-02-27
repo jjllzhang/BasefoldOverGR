@@ -330,14 +330,16 @@ python3 scripts/plot_benchmark_results.py \
 
 ### Parameter Selection Tool (Distance + Recommended Query Count)
 
-`bench/calc_iopp_params.cpp` implements the "Instantiation and parameter selection" section from `Basefold_over_GR.pdf`. Given `d/c/lambda` and `q` (or `p,r,m`), it computes:
+`bench/calc_iopp_params.cpp` given `d/c/lambda` and `q` (or `p,r,m`), it computes:
 
 - Distance lower bound `Delta_Cd >= 1 - t_d / n_d` (using Theorem 1 / Corollary 1 recurrence on `t_i`).
-- `delta = J_gamma(J_gamma(Delta_Cd))`.
+- `delta < J_gamma(J_gamma(Delta_Cd))` (strict inequality).
+- Implementation choice: for fixed `gamma`, select `delta` as close as possible to the feasible upper bound under all constraints (`delta < J_gamma(J_gamma(Delta_Cd))`, `0 < 1-delta+gamma*d < 1`, `3*delta-gamma*d < Delta_Cd`), to minimize the resulting query count.
 - Distinguishes and reports:
   - `l_min_iopp_only`: satisfying `2d/(gamma^3 q) + (1-delta+gamma*d)^l <= 2^-lambda`.
   - `l_min_for_PCS` (recommended): satisfying `2d/q + 2d/(gamma^3 q) + (1-delta+gamma*d)^l <= 2^-lambda`.
 - Supports `--auto-gamma`: searches `gamma` to minimize `l_min_for_PCS` under fixed `c,d,k0,lambda,q`.
+- Search implementation: precomputes `Delta_Cd` once, then runs coarse-to-fine adaptive search over `gamma`.
 
 Examples:
 
@@ -354,7 +356,7 @@ Examples:
 # Auto-select gamma (objective: minimize l_min_for_PCS)
 ./build-release/calc_iopp_params --d 20 --c 16 --k0 1 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --auto-gamma
 
-# Optional: constrain search range and resolution
+# Optional: constrain search range and search budget
 ./build-release/calc_iopp_params --d 20 --c 16 --k0 1 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --auto-gamma --gamma-min 1e-4 --gamma-max 0.05 --gamma-steps 8000
 ```
 

@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
@@ -41,14 +43,17 @@ struct CalcResult {
   bool gamma_auto = false;
   bool gamma_auto_feasible = true;
   bool base_valid = true;
+  bool delta_johnson_constraint_valid = true;
   bool delta_cd_constraint_valid = true;
   long double gamma_search_min = 0;
   long double gamma_search_max = 0;
-  long long gamma_search_steps = 0;
+  long long gamma_search_steps = 0;  // user-provided search budget
+  long long gamma_search_evals = 0;  // actual gamma evaluations
   long double k_d = 0;
   long double n_d = 0;
   long double t_d = 0;
   long double delta_code_lower = 0;
+  long double delta_upper_johnson = 0;
   long double delta = 0;
   long double base = 0;
   bool has_finite_l_iopp = false;
@@ -73,6 +78,14 @@ struct LSolveResult {
   long double base_pow_l = 0;
 };
 
+struct PrecomputedCodeParams {
+  long double k_d = 0;
+  long double n_d = 0;
+  long double t_d = 0;
+  long double delta_code_lower = 0;
+  std::vector<LevelInfo> levels;
+};
+
 void PrintUsage(const char* argv0) {
   std::cout
       << "Usage:\n"
@@ -91,7 +104,7 @@ void PrintUsage(const char* argv0) {
       << "  --auto-gamma        Search gamma automatically to minimize l_min_for_PCS\n"
       << "  --gamma-min <real>  Auto-search lower bound (default: 1e-9)\n"
       << "  --gamma-max <real>  Auto-search upper bound (default: 0.99)\n"
-      << "  --gamma-steps <int> Auto-search grid points (default: 4000)\n"
+      << "  --gamma-steps <int> Auto-search budget (default: 4000)\n"
       << "  --show-levels       Print per-level (n_{i-1}, ell_i, t_i)\n"
       << "  --help              Show this message\n\n"
       << "Formulas (from Basefold_over_GR.pdf, parameter selection):\n"
@@ -100,9 +113,9 @@ void PrintUsage(const char* argv0) {
       << "  ell_i = [ (2*log2(q/(q-1)) + 2)*t_{i-1} + log2(9/4)*n_{i-1} + lambda ] / (log2(q-1)-1)\n"
       << "  Delta_Cd >= 1 - t_d / n_d\n"
       << "  J_gamma(x) = 1 - sqrt(1 - x*(1-gamma))\n"
-      << "  delta = J_gamma(J_gamma(Delta_Cd))\n"
+      << "  delta < J_gamma(J_gamma(Delta_Cd))\n"
       << "  base = 1 - delta + gamma*d\n"
-      << "  validity requires: 0 < base < 1 and 3*delta - gamma*d < Delta_Cd\n"
+      << "  validity requires: delta < J_gamma(J_gamma(Delta_Cd)), 0 < base < 1, and 3*delta - gamma*d < Delta_Cd\n"
       << "  l_iopp from: 2d/(gamma^3*q) + base^l <= 2^-lambda\n"
       << "  l_pcs  from: 2d/q + 2d/(gamma^3*q) + base^l <= 2^-lambda\n"
       << "  recommended l = l_pcs\n";
@@ -317,16 +330,26 @@ long double ResolveQ(const CliArgs& args) {
   }
 }
 
-CalcResult ComputeAtGamma(const CliArgs& args, long double q, long double gamma,
-                          bool keep_levels, bool enforce_validity = true) {
-  if (!(gamma > 0.0L && gamma < 1.0L)) {
-    throw std::runtime_error("gamma must be in (0,1)");
+std::vector<long double> BuildLogGrid(long double g_min, long double g_max,
+                                      long long points) {
+  if (points < 2) {
+    throw std::runtime_error("BuildLogGrid requires at least 2 points");
   }
-  CalcResult out;
-  out.q = q;
-  out.gamma = gamma;
+  std::vector<long double> grid;
+  grid.reserve(static_cast<std::size_t>(points));
+  const long double log_min = std::log(g_min);
+  const long double log_max = std::log(g_max);
+  for (long long i = 0; i < points; ++i) {
+    const long double t = static_cast<long double>(i) /
+                          static_cast<long double>(points - 1);
+    grid.push_back(std::exp(log_min + t * (log_max - log_min)));
+  }
+  return grid;
+}
 
-  const long double d_ld = static_cast<long double>(args.d);
+PrecomputedCodeParams PrecomputeCode(const CliArgs& args, long double q,
+                                     bool keep_levels) {
+  PrecomputedCodeParams out;
   const long double c_ld = static_cast<long double>(args.c);
   const long double k0_ld = static_cast<long double>(args.k0);
   const long double lambda_ld = static_cast<long double>(args.lambda);
@@ -362,24 +385,103 @@ CalcResult ComputeAtGamma(const CliArgs& args, long double q, long double gamma,
   out.k_d = k0_ld * Pow2LD(args.d);
   out.n_d = c_ld * out.k_d;
   out.t_d = t;
-
   out.delta_code_lower = Clamp01(1.0L - out.t_d / out.n_d);
+  return out;
+}
+
+bool IsValidPoint(const CalcResult& out) {
+  return out.base_valid && out.delta_johnson_constraint_valid &&
+         out.delta_cd_constraint_valid;
+}
+
+bool BetterAny(const CalcResult& lhs, long double lhs_gamma,
+               const CalcResult& rhs, long double rhs_gamma) {
+  if (lhs.pcs_budget != rhs.pcs_budget) return lhs.pcs_budget > rhs.pcs_budget;
+  if (lhs.base != rhs.base) return lhs.base < rhs.base;
+  return lhs_gamma < rhs_gamma;
+}
+
+bool BetterFeasible(const CalcResult& lhs, long double lhs_gamma,
+                    const CalcResult& rhs, long double rhs_gamma) {
+  if (lhs.l_min_pcs != rhs.l_min_pcs) return lhs.l_min_pcs < rhs.l_min_pcs;
+  if (lhs.pcs_bound_at_l_pcs != rhs.pcs_bound_at_l_pcs) {
+    return lhs.pcs_bound_at_l_pcs < rhs.pcs_bound_at_l_pcs;
+  }
+  return lhs_gamma < rhs_gamma;
+}
+
+CalcResult ComputeAtGamma(const CliArgs& args, const PrecomputedCodeParams& pre,
+                          long double q, long double gamma, bool keep_levels,
+                          bool enforce_validity = true) {
+  if (!(gamma > 0.0L && gamma < 1.0L)) {
+    throw std::runtime_error("gamma must be in (0,1)");
+  }
+  CalcResult out;
+  out.q = q;
+  out.gamma = gamma;
+
+  const long double d_ld = static_cast<long double>(args.d);
+  const long double lambda_ld = static_cast<long double>(args.lambda);
+  out.k_d = pre.k_d;
+  out.n_d = pre.n_d;
+  out.t_d = pre.t_d;
+  out.delta_code_lower = pre.delta_code_lower;
+  out.levels = keep_levels ? pre.levels : std::vector<LevelInfo>{};
   const long double j1 = Johnson(out.delta_code_lower, out.gamma);
-  out.delta = Clamp01(Johnson(j1, out.gamma));
+  out.delta_upper_johnson = Clamp01(Johnson(j1, out.gamma));
+
+  const long double delta_lb_from_base = out.gamma * d_ld;  // strict: base < 1
+  const long double delta_ub_from_delta_cd =
+      (out.delta_code_lower + out.gamma * d_ld) /
+      3.0L;  // strict: 3*delta - gamma*d < Delta_Cd
+  const long double delta_ub_from_base = 1.0L + out.gamma * d_ld;  // strict: base > 0
+  const long double delta_ub =
+      std::min(std::min(out.delta_upper_johnson, delta_ub_from_delta_cd),
+               std::min(delta_ub_from_base, 1.0L));
+
+  if (!(delta_ub > delta_lb_from_base)) {
+    out.delta = delta_lb_from_base;
+    out.base = 1.0L - out.delta + out.gamma * d_ld;
+    out.base_valid = false;
+    out.delta_johnson_constraint_valid = false;
+    out.delta_cd_constraint_valid = false;
+    if (enforce_validity) {
+      throw std::runtime_error(
+          "Invalid parameters: empty feasible interval for delta under "
+          "delta < J_gamma(J_gamma(Delta_Cd)), 0 < base < 1, and "
+          "3*delta - gamma*d < Delta_Cd");
+    }
+    return out;
+  }
+
+  long double chosen_delta = std::nextafter(
+      delta_ub, -std::numeric_limits<long double>::infinity());
+  if (!(chosen_delta > delta_lb_from_base)) {
+    chosen_delta = (delta_lb_from_base + delta_ub) / 2.0L;
+  }
+  out.delta = chosen_delta;
 
   out.base = 1.0L - out.delta + out.gamma * d_ld;
   out.base_valid = (out.base > 0.0L && out.base < 1.0L);
+  out.delta_johnson_constraint_valid = (out.delta < out.delta_upper_johnson);
   out.delta_cd_constraint_valid =
       ((3.0L * out.delta - out.gamma * d_ld) < out.delta_code_lower);
-  if (!out.base_valid || !out.delta_cd_constraint_valid) {
+  if (!out.base_valid || !out.delta_johnson_constraint_valid ||
+      !out.delta_cd_constraint_valid) {
     if (enforce_validity) {
-      if (!out.base_valid && !out.delta_cd_constraint_valid) {
+      if (!out.base_valid && !out.delta_johnson_constraint_valid &&
+          !out.delta_cd_constraint_valid) {
         throw std::runtime_error(
-            "Invalid parameters: require 0 < base < 1 and 3*delta - gamma*d < Delta_Cd");
+            "Invalid parameters: require delta < J_gamma(J_gamma(Delta_Cd)), "
+            "0 < base < 1, and 3*delta - gamma*d < Delta_Cd");
       }
       if (!out.base_valid) {
         throw std::runtime_error(
             "Invalid parameters: base = 1 - delta + gamma*d must be in (0,1)");
+      }
+      if (!out.delta_johnson_constraint_valid) {
+        throw std::runtime_error(
+            "Invalid parameters: require delta < J_gamma(J_gamma(Delta_Cd))");
       }
       throw std::runtime_error(
           "Invalid parameters: require 3*delta - gamma*d < Delta_Cd");
@@ -417,11 +519,12 @@ CalcResult ComputeAtGamma(const CliArgs& args, long double q, long double gamma,
 CalcResult Compute(const CliArgs& args) {
   ValidateBasicArgs(args);
   const long double q = ResolveQ(args);
+  const PrecomputedCodeParams pre = PrecomputeCode(args, q, args.show_levels);
 
   if (!args.auto_gamma) {
     const long double gamma = args.gamma.value_or(
         1.0L / (10.0L * static_cast<long double>((args.d > 0) ? args.d : 1)));
-    CalcResult out = ComputeAtGamma(args, q, gamma, true);
+    CalcResult out = ComputeAtGamma(args, pre, q, gamma, args.show_levels);
     out.gamma_auto = false;
     return out;
   }
@@ -459,40 +562,46 @@ CalcResult Compute(const CliArgs& args) {
   bool have_any = false;
   CalcResult best_any;
   long double best_any_gamma = 0.0L;
+  long long eval_count = 0;
 
-  const long long steps = args.gamma_steps;
-  const long double log_min = std::log(g_min);
-  const long double log_max = std::log(g_max);
-  for (long long i = 0; i < steps; ++i) {
-    const long double t = static_cast<long double>(i) /
-                          static_cast<long double>(steps - 1);
-    const long double gamma = std::exp(log_min + t * (log_max - log_min));
-    CalcResult cur = ComputeAtGamma(args, q, gamma, false, false);
-    if (!cur.base_valid || !cur.delta_cd_constraint_valid) {
-      continue;
-    }
-
-    if (!have_any ||
-        (cur.pcs_budget > best_any.pcs_budget) ||
-        (cur.pcs_budget == best_any.pcs_budget && cur.base < best_any.base)) {
+  auto consider = [&](const CalcResult& cur, long double gamma) {
+    if (!IsValidPoint(cur)) return;
+    if (!have_any || BetterAny(cur, gamma, best_any, best_any_gamma)) {
       best_any = cur;
       best_any_gamma = gamma;
       have_any = true;
     }
-
-    if (cur.has_finite_l_pcs) {
-      if (!have_feasible ||
-          (cur.l_min_pcs < best_feasible.l_min_pcs) ||
-          (cur.l_min_pcs == best_feasible.l_min_pcs &&
-           cur.pcs_bound_at_l_pcs < best_feasible.pcs_bound_at_l_pcs) ||
-          (cur.l_min_pcs == best_feasible.l_min_pcs &&
-           cur.pcs_bound_at_l_pcs == best_feasible.pcs_bound_at_l_pcs &&
-           gamma < best_feasible_gamma)) {
-        best_feasible = cur;
-        best_feasible_gamma = gamma;
-        have_feasible = true;
-      }
+    if (cur.has_finite_l_pcs &&
+        (!have_feasible ||
+         BetterFeasible(cur, gamma, best_feasible, best_feasible_gamma))) {
+      best_feasible = cur;
+      best_feasible_gamma = gamma;
+      have_feasible = true;
     }
+  };
+
+  struct GammaPoint {
+    long double gamma = 0;
+    CalcResult result;
+  };
+
+  const long long eval_budget = args.gamma_steps;
+  long long coarse_points = static_cast<long long>(
+      std::floor(std::sqrt(static_cast<long double>(eval_budget)) * 4.0L));
+  coarse_points = std::max<long long>(17, coarse_points);
+  coarse_points = std::min<long long>(coarse_points, 401);
+  coarse_points = std::min<long long>(coarse_points, eval_budget);
+  if (coarse_points < 2) coarse_points = 2;
+
+  const std::vector<long double> coarse_grid =
+      BuildLogGrid(g_min, g_max, coarse_points);
+  std::vector<GammaPoint> coarse_samples;
+  coarse_samples.reserve(static_cast<std::size_t>(coarse_points));
+  for (const long double gamma : coarse_grid) {
+    CalcResult cur = ComputeAtGamma(args, pre, q, gamma, false, false);
+    ++eval_count;
+    coarse_samples.push_back(GammaPoint{gamma, cur});
+    consider(cur, gamma);
   }
 
   if (!have_any) {
@@ -500,14 +609,149 @@ CalcResult Compute(const CliArgs& args) {
         "auto-gamma search failed: no gamma in search range satisfies validity constraints");
   }
 
+  std::vector<long long> ranked_indices;
+  ranked_indices.reserve(static_cast<std::size_t>(coarse_samples.size()));
+  const bool rank_feasible = have_feasible;
+  for (long long i = 0; i < static_cast<long long>(coarse_samples.size()); ++i) {
+    const CalcResult& cur = coarse_samples[static_cast<std::size_t>(i)].result;
+    if (!IsValidPoint(cur)) continue;
+    if (rank_feasible && !cur.has_finite_l_pcs) continue;
+    ranked_indices.push_back(i);
+  }
+  if (ranked_indices.empty()) {
+    for (long long i = 0; i < static_cast<long long>(coarse_samples.size()); ++i) {
+      const CalcResult& cur = coarse_samples[static_cast<std::size_t>(i)].result;
+      if (IsValidPoint(cur)) ranked_indices.push_back(i);
+    }
+  }
+
+  std::sort(ranked_indices.begin(), ranked_indices.end(),
+            [&](long long lhs_idx, long long rhs_idx) {
+              const GammaPoint& lhs = coarse_samples[static_cast<std::size_t>(lhs_idx)];
+              const GammaPoint& rhs = coarse_samples[static_cast<std::size_t>(rhs_idx)];
+              if (rank_feasible) {
+                return BetterFeasible(lhs.result, lhs.gamma, rhs.result, rhs.gamma);
+              }
+              return BetterAny(lhs.result, lhs.gamma, rhs.result, rhs.gamma);
+            });
+
+  const long long remaining_budget = std::max<long long>(0, eval_budget - eval_count);
+  const long long refine_rounds = (remaining_budget >= 120) ? 4 : 3;
+  if (remaining_budget > 0) {
+    long long candidate_count =
+        std::min<long long>(6, static_cast<long long>(ranked_indices.size()));
+    const long long max_candidates_by_budget =
+        std::max<long long>(1, remaining_budget / (refine_rounds * 3));
+    candidate_count = std::min<long long>(candidate_count, max_candidates_by_budget);
+    candidate_count = std::max<long long>(1, candidate_count);
+
+    std::vector<long long> candidate_indices;
+    candidate_indices.reserve(static_cast<std::size_t>(candidate_count));
+    for (long long idx : ranked_indices) {
+      bool too_close = false;
+      for (long long picked : candidate_indices) {
+        if (std::llabs(idx - picked) <= 1) {
+          too_close = true;
+          break;
+        }
+      }
+      if (too_close) continue;
+      candidate_indices.push_back(idx);
+      if (static_cast<long long>(candidate_indices.size()) >= candidate_count) break;
+    }
+    if (candidate_indices.empty()) {
+      candidate_indices.push_back(ranked_indices.front());
+    }
+
+    const long long denom = std::max<long long>(
+        1, static_cast<long long>(candidate_indices.size()) * refine_rounds);
+    long long refine_points = remaining_budget / denom;
+    if (refine_points < 3) {
+      candidate_indices.clear();
+    } else {
+      refine_points = std::max<long long>(3, refine_points);
+      refine_points = std::min<long long>(refine_points, 61);
+      if ((refine_points % 2) == 0) ++refine_points;
+      refine_points = std::max<long long>(3, refine_points);
+    }
+
+    for (long long center_idx : candidate_indices) {
+      long double left = (center_idx > 0)
+                             ? coarse_samples[static_cast<std::size_t>(center_idx - 1)].gamma
+                             : g_min;
+      long double right =
+          (center_idx + 1 < static_cast<long long>(coarse_samples.size()))
+              ? coarse_samples[static_cast<std::size_t>(center_idx + 1)].gamma
+              : g_max;
+      if (!(left < right)) continue;
+
+      for (long long round = 0; round < refine_rounds; ++round) {
+        if (!(left < right)) break;
+        const std::vector<long double> grid = BuildLogGrid(left, right, refine_points);
+
+        bool local_have_any = false;
+        bool local_have_feasible = false;
+        long long best_local_idx = -1;
+        CalcResult best_local;
+        long double best_local_gamma = 0.0L;
+
+        for (long long i = 0; i < static_cast<long long>(grid.size()); ++i) {
+          const long double gamma = grid[static_cast<std::size_t>(i)];
+          CalcResult cur = ComputeAtGamma(args, pre, q, gamma, false, false);
+          ++eval_count;
+          consider(cur, gamma);
+          if (!IsValidPoint(cur)) continue;
+
+          if (cur.has_finite_l_pcs) {
+            if (!local_have_feasible ||
+                BetterFeasible(cur, gamma, best_local, best_local_gamma)) {
+              best_local = cur;
+              best_local_gamma = gamma;
+              best_local_idx = i;
+              local_have_feasible = true;
+            }
+            local_have_any = true;
+            continue;
+          }
+
+          if (!local_have_feasible &&
+              (!local_have_any || BetterAny(cur, gamma, best_local, best_local_gamma))) {
+            best_local = cur;
+            best_local_gamma = gamma;
+            best_local_idx = i;
+            local_have_any = true;
+          }
+        }
+
+        if (!local_have_any || best_local_idx < 0) break;
+        if (round + 1 >= refine_rounds) break;
+
+        long double next_left = left;
+        long double next_right = right;
+        if (best_local_idx > 0) {
+          next_left = grid[static_cast<std::size_t>(best_local_idx - 1)];
+        }
+        if (best_local_idx + 1 < static_cast<long long>(grid.size())) {
+          next_right = grid[static_cast<std::size_t>(best_local_idx + 1)];
+        }
+        if (!(next_left < next_right) || (next_left == left && next_right == right)) {
+          break;
+        }
+        left = next_left;
+        right = next_right;
+      }
+    }
+  }
+
   CalcResult out = have_feasible
-                       ? ComputeAtGamma(args, q, best_feasible_gamma, true)
-                       : ComputeAtGamma(args, q, best_any_gamma, true);
+                       ? ComputeAtGamma(args, pre, q, best_feasible_gamma, args.show_levels)
+                       : ComputeAtGamma(args, pre, q, best_any_gamma, args.show_levels);
   out.gamma_auto = true;
   out.gamma_auto_feasible = have_feasible;
   out.gamma_search_min = g_min;
   out.gamma_search_max = g_max;
-  out.gamma_search_steps = steps;
+  out.gamma_search_steps = args.gamma_steps;
+  out.gamma_search_evals = eval_count;
   return out;
 }
 
@@ -522,7 +766,8 @@ void PrintResult(const CliArgs& args, const CalcResult& out) {
   if (out.gamma_auto) {
     std::cout << "  gamma    = " << out.gamma << " (auto-selected)\n";
     std::cout << "  gamma-search range = [" << out.gamma_search_min << ", "
-              << out.gamma_search_max << "], steps=" << out.gamma_search_steps
+              << out.gamma_search_max << "], budget=" << out.gamma_search_steps
+              << ", evals=" << out.gamma_search_evals
               << "\n\n";
   } else {
     std::cout << "  gamma    = " << out.gamma
@@ -547,7 +792,10 @@ void PrintResult(const CliArgs& args, const CalcResult& out) {
   }
 
   std::cout << "IOPP parameters:\n";
-  std::cout << "  delta    = J_gamma(J_gamma(Delta_Cd)) = " << out.delta << "\n";
+  std::cout << "  delta_ub = J_gamma(J_gamma(Delta_Cd)) = " << out.delta_upper_johnson
+            << "\n";
+  std::cout << "  delta    < delta_ub (chosen near upper bound) = " << out.delta
+            << "\n";
   std::cout << "  base     = 1 - delta + gamma*d        = " << out.base << "\n";
   std::cout << "  target   = 2^-lambda = " << out.target_2_minus_lambda << "\n";
   std::cout << "  budget(iopp): 2^-lambda - 2d/(gamma^3*q)          = " << out.iopp_budget
