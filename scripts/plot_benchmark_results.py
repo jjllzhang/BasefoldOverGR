@@ -80,10 +80,22 @@ _EXT_CHALLENGE_MARKER_RE = re.compile(
     r"\s*\(\s*ext(?:ension)?[- ]challenge\s*\)\s*",
     flags=re.IGNORECASE,
 )
+_GR_NOTATION_RE = re.compile(r"GR\(([^()]+)\)")
 
 
 def _strip_ext_challenge_marker(label: str) -> str:
     return _EXT_CHALLENGE_MARKER_RE.sub("", label).strip()
+
+
+def _normalize_gr_notation(label: str) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        inner = match.group(1)
+        if ";" not in inner:
+            return match.group(0)
+        parts = [part.strip() for part in inner.split(";")]
+        return f"GR({','.join(parts)})"
+
+    return _GR_NOTATION_RE.sub(_replace, label)
 
 
 def _series_label(csv_path: Path, labels: set[str]) -> str:
@@ -93,6 +105,7 @@ def _series_label(csv_path: Path, labels: set[str]) -> str:
         raw_label = csv_path.stem
 
     raw_label = _strip_ext_challenge_marker(raw_label)
+    raw_label = _normalize_gr_notation(raw_label)
     lower_label = raw_label.lower()
     if "fri-based" in lower_label or "ligero-based" in lower_label:
         return raw_label
