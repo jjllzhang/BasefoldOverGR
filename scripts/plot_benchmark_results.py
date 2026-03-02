@@ -26,7 +26,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
 from matplotlib.legend_handler import HandlerLine2D
 from matplotlib.lines import Line2D
-from matplotlib.ticker import MaxNLocator
+from matplotlib.ticker import FuncFormatter, LogLocator, MaxNLocator
 
 
 @dataclass(frozen=True)
@@ -114,6 +114,16 @@ def _series_label(csv_path: Path, labels: set[str]) -> str:
     return f"Basefold over {raw_label}"
 
 
+def _format_power_of_two(value: float, _pos: int) -> str:
+    if value <= 0:
+        return ""
+    exponent = math.log2(value)
+    rounded = round(exponent)
+    if abs(exponent - rounded) <= 1e-9:
+        return rf"$2^{{{int(rounded)}}}$"
+    return ""
+
+
 def load_series_from_csv(csv_path: Path, metric_keys: Iterable[str]) -> SeriesData:
     metric_values: Dict[str, Dict[float, List[float]]] = {
         key: defaultdict(list) for key in metric_keys
@@ -162,6 +172,7 @@ def plot_metric_vs_d(
     fig, ax = plt.subplots(figsize=(8, 5))
     plotted_count = 0
     all_x_values: List[float] = []
+    all_y_values: List[float] = []
 
     marker_cycle = cycle(["s", "o", "D", "v", "^", "P", "X", "<", ">"])
 
@@ -172,6 +183,7 @@ def plot_metric_vs_d(
         x_values = [x for x, _ in points]
         y_values = [y for _, y in points]
         all_x_values.extend(x_values)
+        all_y_values.extend(y for y in y_values if y > 0)
 
         marker = next(marker_cycle)
         (line,) = ax.plot(
@@ -212,6 +224,17 @@ def plot_metric_vs_d(
         if integer_ticks:
             ax.set_xticks(integer_ticks)
     ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    if all_y_values:
+        y_min = min(all_y_values)
+        y_max = max(all_y_values)
+        y_min_pow = 2 ** math.floor(math.log2(y_min))
+        y_max_pow = 2 ** math.ceil(math.log2(y_max))
+        if y_max_pow <= y_min_pow:
+            y_max_pow = y_min_pow * 2
+        ax.set_ylim(y_min_pow, y_max_pow)
+    ax.set_yscale("log", base=2)
+    ax.yaxis.set_major_locator(LogLocator(base=2))
+    ax.yaxis.set_major_formatter(FuncFormatter(_format_power_of_two))
 
     if plotted_count > 0:
         ax.legend(
