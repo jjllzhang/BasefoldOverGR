@@ -98,6 +98,17 @@ VerifierQueryParallelConfig LoadVerifierQueryParallelConfig() {
   return cfg;
 }
 
+bool TryInvertBaseUnit(FieldElement &inv_out, const FieldElement &a);
+
+bool BatchInvertBaseUnits(std::vector<FieldElement> &inverses,
+                          const std::vector<FieldElement> &values);
+
+FieldElement EvalLineAtWithInvDenom(const FieldElement &x,
+                                    const FieldElement &x1,
+                                    const FieldElement &y1,
+                                    const FieldElement &y2,
+                                    const FieldElement &inv_denom);
+
 void SortAndUniqueIndices(std::vector<long> &indices) {
   std::sort(indices.begin(), indices.end());
   indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
@@ -308,15 +319,64 @@ void ProverCommitRoundNoValidate(Oracle &pi_i, const Oracle &pi_ip1,
   const long n_i = CodewordLengthAtLevelNoValidate(params, level_i);
   pi_i.SetLength(n_i);
 
-  for (long j = 0; j < n_i; ++j) {
-    const FieldElement &t = params.diag_T[static_cast<std::size_t>(level_i)][j];
-    const FieldElement x1 = t;
-    const FieldElement x2 = params.zeta * t;
+  const Oracle &diag = params.diag_T[static_cast<std::size_t>(level_i)];
+  constexpr long kParallelThreshold = 4096;
 
-    const FieldElement &y1 = pi_ip1[j];
-    const FieldElement &y2 = pi_ip1[j + n_i];
-    pi_i[j] = EvalLineAt(alpha_i, x1, y1, x2, y2);
+  if (n_i > 0) {
+    const FieldElement first_x1 = diag[0];
+    bool all_equal = true;
+    for (long j = 1; j < n_i; ++j) {
+      if (diag[static_cast<std::size_t>(j)] != first_x1) {
+        all_equal = false;
+        break;
+      }
+    }
+    if (all_equal) {
+      const FieldElement denom = (params.zeta * first_x1) - first_x1;
+      if (denom == 0) {
+        LogicError("ProverCommitRoundNoValidate: x1 must not equal x2");
+      }
+      FieldElement inv_denom;
+      if (!TryInvertBaseUnit(inv_denom, denom)) {
+        LogicError("ProverCommitRoundNoValidate: x2-x1 must be a unit");
+      }
+      ForEachIndexMaybeParallel(0, n_i, kParallelThreshold, [&](long j) {
+        pi_i[static_cast<std::size_t>(j)] = EvalLineAtWithInvDenom(
+            alpha_i, first_x1, pi_ip1[static_cast<std::size_t>(j)],
+            pi_ip1[static_cast<std::size_t>(j + n_i)], inv_denom);
+      });
+      return;
+    }
   }
+
+  std::vector<FieldElement> denoms;
+  denoms.resize(static_cast<std::size_t>(n_i));
+  ForEachIndexMaybeParallel(0, n_i, kParallelThreshold, [&](long j) {
+    const FieldElement &x1 = diag[static_cast<std::size_t>(j)];
+    denoms[static_cast<std::size_t>(j)] = (params.zeta * x1) - x1;
+  });
+
+  std::vector<FieldElement> inv_denoms;
+  if (!BatchInvertBaseUnits(inv_denoms, denoms)) {
+    inv_denoms.resize(static_cast<std::size_t>(n_i));
+    ForEachIndexMaybeParallel(0, n_i, kParallelThreshold, [&](long j) {
+      const FieldElement &denom = denoms[static_cast<std::size_t>(j)];
+      if (denom == 0) {
+        LogicError("ProverCommitRoundNoValidate: x1 must not equal x2");
+      }
+      if (!TryInvertBaseUnit(inv_denoms[static_cast<std::size_t>(j)], denom)) {
+        LogicError("ProverCommitRoundNoValidate: x2-x1 must be a unit");
+      }
+    });
+  }
+
+  ForEachIndexMaybeParallel(0, n_i, kParallelThreshold, [&](long j) {
+    const FieldElement &x1 = diag[static_cast<std::size_t>(j)];
+    pi_i[static_cast<std::size_t>(j)] = EvalLineAtWithInvDenom(
+        alpha_i, x1, pi_ip1[static_cast<std::size_t>(j)],
+        pi_ip1[static_cast<std::size_t>(j + n_i)],
+        inv_denoms[static_cast<std::size_t>(j)]);
+  });
 }
 
 IOPPQueryPlan MakeQueryPlanNoValidate(long initial_mu,
@@ -1107,6 +1167,17 @@ bool BatchInvertBaseUnits(std::vector<FieldElement> &inverses,
     suffix *= values[static_cast<std::size_t>(i)];
   }
   return true;
+}
+
+FieldElement EvalLineAtWithInvDenom(const FieldElement &x,
+                                    const FieldElement &x1,
+                                    const FieldElement &y1,
+                                    const FieldElement &y2,
+                                    const FieldElement &inv_denom) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->eval_line_at_ns : nullptr,
+                    prof ? &prof->eval_line_at_calls : nullptr);
+  return y1 + (x - x1) * (y2 - y1) * inv_denom;
 }
 
 ZZ_pEX EvalLineAtExtensionWithInvDenom(const ZZ_pEX &x, const FieldElement &x1,
