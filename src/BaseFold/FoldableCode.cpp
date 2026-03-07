@@ -172,6 +172,83 @@ bool IsAllOnes(const vec_ZZ_pE &v) {
   return true;
 }
 
+bool IsSystematicRepeatedIdentity(const FoldableCodeParams &params) {
+  const long c = params.c;
+  const long k0 = params.k0;
+  if (c <= 0 || k0 <= 0) return false;
+  if (params.G0.NumRows() != k0) return false;
+  if (params.G0.NumCols() != c * k0) return false;
+
+  ZZ_pE zero;
+  clear(zero);
+  ZZ_pE one;
+  set(one);
+
+  for (long block = 0; block < c; ++block) {
+    const long base = block * k0;
+    for (long col = 0; col < k0; ++col) {
+      for (long row = 0; row < k0; ++row) {
+        const ZZ_pE &entry = params.G0[row][base + col];
+        if (row == col) {
+          if (entry != one) return false;
+        } else if (entry != zero) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+struct EncoderFastPathCache {
+  bool valid = false;
+  const FoldableCodeParams *params = nullptr;
+  ZZ modulus;
+  long degree = 0;
+  long c = 0;
+  long k0 = 0;
+  long d = 0;
+  long g0_rows = 0;
+  long g0_cols = 0;
+  std::vector<unsigned char> diag_t_all_ones;
+  bool systematic_repeated_identity_g0 = false;
+};
+
+bool MatchesFastPathCache(const EncoderFastPathCache &cache,
+                          const FoldableCodeParams &params) {
+  return cache.valid && cache.params == &params &&
+         cache.modulus == NTL::ZZ_p::modulus() &&
+         cache.degree == ZZ_pE::degree() && cache.c == params.c &&
+         cache.k0 == params.k0 && cache.d == params.d &&
+         cache.g0_rows == params.G0.NumRows() &&
+         cache.g0_cols == params.G0.NumCols();
+}
+
+const EncoderFastPathCache &GetEncoderFastPathCache(
+    const FoldableCodeParams &params) {
+  static thread_local EncoderFastPathCache cache;
+  if (MatchesFastPathCache(cache, params)) {
+    return cache;
+  }
+
+  cache.valid = true;
+  cache.params = &params;
+  cache.modulus = NTL::ZZ_p::modulus();
+  cache.degree = ZZ_pE::degree();
+  cache.c = params.c;
+  cache.k0 = params.k0;
+  cache.d = params.d;
+  cache.g0_rows = params.G0.NumRows();
+  cache.g0_cols = params.G0.NumCols();
+  cache.diag_t_all_ones.assign(static_cast<std::size_t>(params.d), 0);
+  for (long level = 0; level < params.d; ++level) {
+    cache.diag_t_all_ones[static_cast<std::size_t>(level)] =
+        IsAllOnes(params.diag_T[static_cast<std::size_t>(level)]) ? 1 : 0;
+  }
+  cache.systematic_repeated_identity_g0 = IsSystematicRepeatedIdentity(params);
+  return cache;
+}
+
 void EncodeFoldable_k0_1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
                                   const FoldableCodeParams &params) {
   const long c = params.c;
@@ -191,6 +268,7 @@ void EncodeFoldable_k0_1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
 
   const ZZ_pE &zeta = params.zeta;
   const long parallel_threshold = 1024;
+  const EncoderFastPathCache &fast_path = GetEncoderFastPathCache(params);
 
   // Level 0: encode each scalar message symbol using the single-row G0.
   ForEachIndexMaybeParallel(0, kd, parallel_threshold, [&](long block) {
@@ -205,7 +283,8 @@ void EncodeFoldable_k0_1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
   long blocks = kd;    // number of blocks at current level
   for (long level = 0; level < d; ++level) {
     const vec_ZZ_pE &t = params.diag_T[static_cast<std::size_t>(level)];
-    const bool t_all_ones = IsAllOnes(t);
+    const bool t_all_ones =
+        fast_path.diag_t_all_ones[static_cast<std::size_t>(level)] != 0;
     const long new_block_len = 2 * block_len;
 
     const long half_blocks = blocks / 2;
@@ -268,23 +347,37 @@ void EncodeFoldable_k0_gt1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
 
   out.SetLength(nd);
   const long parallel_threshold = 1024;
+  const EncoderFastPathCache &fast_path = GetEncoderFastPathCache(params);
 
   // Level 0: encode each length-k0 message block using the k0 x n0 generator.
   // out is laid out as consecutive codewords of length n0.
-  ForEachIndexMaybeParallel(0, blocks0, parallel_threshold, [&](long block) {
-    const long msg_base = block * k0;
-    const long out_base = block * n0;
-
-    for (long j = 0; j < n0; ++j) {
-      clear(out[out_base + j]);
-    }
-    for (long r = 0; r < k0; ++r) {
-      const ZZ_pE &m = msg[msg_base + r];
-      for (long j = 0; j < n0; ++j) {
-        out[out_base + j] += m * params.G0[r][j];
+  if (fast_path.systematic_repeated_identity_g0) {
+    ForEachIndexMaybeParallel(0, blocks0, parallel_threshold, [&](long block) {
+      const long msg_base = block * k0;
+      const long out_base = block * n0;
+      for (long copy = 0; copy < c; ++copy) {
+        const long copy_base = out_base + copy * k0;
+        for (long r = 0; r < k0; ++r) {
+          out[copy_base + r] = msg[msg_base + r];
+        }
       }
-    }
-  });
+    });
+  } else {
+    ForEachIndexMaybeParallel(0, blocks0, parallel_threshold, [&](long block) {
+      const long msg_base = block * k0;
+      const long out_base = block * n0;
+
+      for (long j = 0; j < n0; ++j) {
+        clear(out[out_base + j]);
+      }
+      for (long r = 0; r < k0; ++r) {
+        const ZZ_pE &m = msg[msg_base + r];
+        for (long j = 0; j < n0; ++j) {
+          out[out_base + j] += m * params.G0[r][j];
+        }
+      }
+    });
+  }
 
   const ZZ_pE &zeta = params.zeta;
 
@@ -292,7 +385,8 @@ void EncodeFoldable_k0_gt1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
   long blocks = blocks0;   // number of blocks at current level
   for (long level = 0; level < d; ++level) {
     const vec_ZZ_pE &t = params.diag_T[static_cast<std::size_t>(level)];
-    const bool t_all_ones = IsAllOnes(t);
+    const bool t_all_ones =
+        fast_path.diag_t_all_ones[static_cast<std::size_t>(level)] != 0;
     const long new_block_len = 2 * block_len;
 
     const long half_blocks = blocks / 2;
