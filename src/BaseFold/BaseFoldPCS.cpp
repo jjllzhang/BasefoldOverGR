@@ -98,6 +98,27 @@ VerifierQueryParallelConfig LoadVerifierQueryParallelConfig() {
   return cfg;
 }
 
+void SortAndUniqueIndices(std::vector<long> &indices) {
+  std::sort(indices.begin(), indices.end());
+  indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+}
+
+std::size_t FindCachedOpeningPosition(const std::vector<long> &indices,
+                                      long index, const char *func_name) {
+  const auto it = std::lower_bound(indices.begin(), indices.end(), index);
+  if (it == indices.end() || *it != index) {
+    const std::string msg =
+        std::string(func_name) + ": missing cached opening index";
+    LogicError(msg.c_str());
+  }
+  return static_cast<std::size_t>(it - indices.begin());
+}
+
+bool SameMerkleOpening(const MerkleOpening &lhs, const MerkleOpening &rhs) {
+  return lhs.index == rhs.index && lhs.value == rhs.value &&
+         lhs.auth_path.sibling_hashes == rhs.auth_path.sibling_hashes;
+}
+
 template <typename Fn>
 void ForEachIndexMaybeParallel(long begin, long end, long parallel_threshold,
                                const Fn &fn) {
@@ -2431,6 +2452,67 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
     query_plans[static_cast<std::size_t>(q)] = MakeQueryPlan(mu, params);
   }
 
+  const bool use_opening_cache =
+      (prof != nullptr) || (ChooseQueryVerifyThreads(num_queries) <= 1);
+  std::vector<std::vector<long>> requested_indices_by_tree;
+  std::vector<std::vector<MerkleOpening>> cached_openings_by_tree;
+  std::vector<std::vector<unsigned char>> cached_openings_seen_by_tree;
+  std::vector<std::vector<unsigned char>> cached_openings_valid_by_tree;
+  if (use_opening_cache) {
+    requested_indices_by_tree.resize(static_cast<std::size_t>(params.d + 1));
+    for (const IOPPQueryPlan &plan : query_plans) {
+      for (long i = 0; i < params.d; ++i) {
+        const long mu_i = plan.mu_by_level[static_cast<std::size_t>(i)];
+        const long n_i = CodewordLengthAtLevel(params, i);
+        requested_indices_by_tree[static_cast<std::size_t>(i)].push_back(mu_i);
+        requested_indices_by_tree[static_cast<std::size_t>(i + 1)].push_back(
+            mu_i);
+        requested_indices_by_tree[static_cast<std::size_t>(i + 1)].push_back(
+            mu_i + n_i);
+      }
+    }
+    cached_openings_by_tree.resize(static_cast<std::size_t>(params.d + 1));
+    cached_openings_seen_by_tree.resize(static_cast<std::size_t>(params.d + 1));
+    cached_openings_valid_by_tree.resize(static_cast<std::size_t>(params.d + 1));
+    for (long tree_level = 0; tree_level <= params.d; ++tree_level) {
+      std::vector<long> &indices =
+          requested_indices_by_tree[static_cast<std::size_t>(tree_level)];
+      SortAndUniqueIndices(indices);
+      cached_openings_by_tree[static_cast<std::size_t>(tree_level)].resize(
+          indices.size());
+      cached_openings_seen_by_tree[static_cast<std::size_t>(tree_level)]
+          .assign(indices.size(), static_cast<unsigned char>(0));
+      cached_openings_valid_by_tree[static_cast<std::size_t>(tree_level)]
+          .assign(indices.size(), static_cast<unsigned char>(0));
+    }
+  }
+
+  auto verify_opening_cached = [&](long tree_level, long leaf_count,
+                                   const MerkleRoot &root,
+                                   const MerkleOpening &opening) -> bool {
+    if (!use_opening_cache) {
+      return MerkleVerifyOpening(root, leaf_count, opening);
+    }
+    const std::size_t pos = FindCachedOpeningPosition(
+        requested_indices_by_tree[static_cast<std::size_t>(tree_level)],
+        opening.index, "BaseFoldPCSVerifyEval/opening-cache");
+    unsigned char &seen =
+        cached_openings_seen_by_tree[static_cast<std::size_t>(tree_level)][pos];
+    unsigned char &valid =
+        cached_openings_valid_by_tree[static_cast<std::size_t>(tree_level)][pos];
+    MerkleOpening &cached =
+        cached_openings_by_tree[static_cast<std::size_t>(tree_level)][pos];
+    if (seen != 0) {
+      return valid != 0 && SameMerkleOpening(cached, opening);
+    }
+    cached = opening;
+    seen = static_cast<unsigned char>(1);
+    valid = MerkleVerifyOpening(root, leaf_count, opening)
+                ? static_cast<unsigned char>(1)
+                : static_cast<unsigned char>(0);
+    return valid != 0;
+  };
+
   auto verify_one_query = [&](long q) -> bool {
     const IOPPQueryPlan &plan = query_plans[static_cast<std::size_t>(q)];
     const BaseFoldPCSQueryProof &qp =
@@ -2442,14 +2524,54 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
     if (static_cast<long>(qp.folded.size()) != params.d)
       return false;
 
-    IOPPQueryMerkleOpenings open;
-    open.left = qp.left;
-    open.right = qp.right;
-    open.folded = qp.folded;
-    open.pi0_full = proof.pi0_full;
+    if (MerkleCommitOracle(proof.pi0_full) !=
+        proof.commitments.roots_by_level[0]) {
+      return false;
+    }
 
-    return VerifyQueryFromMerkleOpenings(plan, challenges, open,
-                                         proof.commitments, params);
+    for (long i = params.d; i-- > 0;) {
+      const long mu = plan.mu_by_level[static_cast<std::size_t>(i)];
+      const long n_i = CodewordLengthAtLevel(params, i);
+      if (mu < 0 || mu >= n_i)
+        return false;
+
+      const MerkleOpening &left = qp.left[static_cast<std::size_t>(i)];
+      const MerkleOpening &right = qp.right[static_cast<std::size_t>(i)];
+      const MerkleOpening &folded = qp.folded[static_cast<std::size_t>(i)];
+      if (left.index != mu || right.index != mu + n_i || folded.index != mu) {
+        return false;
+      }
+
+      const long n_ip1 = 2 * n_i;
+      if (!verify_opening_cached(
+              i + 1, n_ip1,
+              proof.commitments.roots_by_level[static_cast<std::size_t>(i + 1)],
+              left)) {
+        return false;
+      }
+      if (!verify_opening_cached(
+              i + 1, n_ip1,
+              proof.commitments.roots_by_level[static_cast<std::size_t>(i + 1)],
+              right)) {
+        return false;
+      }
+      if (!verify_opening_cached(
+              i, n_i,
+              proof.commitments.roots_by_level[static_cast<std::size_t>(i)],
+              folded)) {
+        return false;
+      }
+
+      FieldElement x1, x2;
+      FoldingPoints(x1, x2, params, i, mu);
+      const FieldElement expected =
+          EvalLineAt(challenges.alphas[static_cast<std::size_t>(i)], x1,
+                     left.value, x2, right.value);
+      if (expected != folded.value)
+        return false;
+    }
+
+    return IsCodewordC0(proof.pi0_full, params);
   };
 
   if (!VerifyQueriesMaybeParallel(num_queries, prof, verify_one_query)) {
