@@ -12,6 +12,7 @@ add_library(galoisring
   src/BaseFold/Multilinear.cpp
   src/BaseFold/Sumcheck.cpp
   src/BaseFold/BaseFoldPCS.cpp
+  src/BaseFold/ProofSerialize.cpp
   src/BaseFold/ProofSize.cpp
 )
 
@@ -67,12 +68,6 @@ target_link_libraries(bench_pcs_commit PRIVATE galoisring)
 
 add_executable(bench_pcs_eval bench/bench_pcs_eval.cpp)
 target_link_libraries(bench_pcs_eval PRIVATE galoisring)
-
-add_executable(bench_pcs_proof_size bench/bench_pcs_proof_size.cpp)
-target_link_libraries(bench_pcs_proof_size PRIVATE galoisring)
-
-add_executable(bench_pcs_communication bench/bench_pcs_communication.cpp)
-target_link_libraries(bench_pcs_communication PRIVATE galoisring)
 
 add_executable(calc_iopp_params bench/calc_iopp_params.cpp)
 target_compile_features(calc_iopp_params PRIVATE cxx_std_17)

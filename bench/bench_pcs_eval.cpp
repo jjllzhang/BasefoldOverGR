@@ -18,6 +18,7 @@
 
 #include "BaseFold/BaseFoldPCS.hpp"
 #include "BaseFold/Multilinear.hpp"
+#include "BaseFold/ProofSize.hpp"
 #include "BaseFold/Profile.hpp"
 #include "GaloisRing/PrimitiveElement.hpp"
 
@@ -429,10 +430,23 @@ struct BenchResult {
   Stats prover;
   Stats verifier;
   std::uint64_t sink = 0;
+  std::uint64_t proof_size_bytes = 0;
+  double proof_size_kb = 0.0;
   basefold::Profile prover_profile;
   basefold::Profile verifier_profile;
   bool has_profile = false;
 };
+
+std::uint64_t ComputeProofSizeBytes(
+    const basefold::BaseFoldPCSEvalProof &proof,
+    bool use_extension_challenges, long challenge_degree) {
+  basefold::BaseFoldProofSizeOptions options;
+  options.include_version_byte = true;
+  if (use_extension_challenges || proof.extension.enabled) {
+    options.challenge_ext_degree = challenge_degree;
+  }
+  return basefold::BaseFoldPCSEvalProofSizeBytes(proof, options);
+}
 
 BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
                              const std::vector<ZZ_pE> &z,
@@ -440,6 +454,7 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
                              long num_queries,
                              const basefold::FoldableCodeParams &params,
                              const basefold::BaseFoldPCSChallengeConfig *challenge_cfg,
+                             long challenge_degree,
                              bool checked_prover,
                              bool enable_profile,
                              int warmup, int reps) {
@@ -458,6 +473,8 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
   basefold::ResetProfile(verifier_prof);
 
   std::uint64_t sink = 0;
+  std::uint64_t proof_size_bytes_last = 0;
+  double proof_size_kb_last = 0.0;
 
   for (int iter = -warmup; iter < reps; ++iter) {
     const auto t0 = std::chrono::steady_clock::now();
@@ -493,6 +510,11 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
                                                            num_queries, params);
     }();
     const auto t1 = std::chrono::steady_clock::now();
+
+    const std::uint64_t proof_size_bytes = ComputeProofSizeBytes(
+        proof, challenge_cfg != nullptr, challenge_degree);
+    const double proof_size_kb =
+        static_cast<double>(proof_size_bytes) / 1024.0;
 
     basefold::MerkleRoot C{};
     if (!proof.commitments.roots_by_level.empty()) {
@@ -531,6 +553,8 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
     if (iter >= 0) {
       prover_ms.push_back(MsSince(t0, t1));
       verifier_ms.push_back(MsSince(t2, t3));
+      proof_size_bytes_last = proof_size_bytes;
+      proof_size_kb_last = proof_size_kb;
     }
   }
 
@@ -538,6 +562,8 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
   out.prover = ComputeStats(prover_ms);
   out.verifier = ComputeStats(verifier_ms);
   out.sink = sink;
+  out.proof_size_bytes = proof_size_bytes_last;
+  out.proof_size_kb = proof_size_kb_last;
   out.prover_profile = prover_prof;
   out.verifier_profile = verifier_prof;
   out.has_profile = enable_profile;
@@ -575,6 +601,8 @@ void PrintResult(const std::string &label, const ZZ &mod, long c, long d,
             << r.prover.min_ms << ", max " << r.prover.max_ms << ")\n";
   std::cout << "  verifier mean " << r.verifier.mean_ms << " ms  (min "
             << r.verifier.min_ms << ", max " << r.verifier.max_ms << ")\n";
+  std::cout << "  proof size  " << r.proof_size_kb << " KB  ("
+            << r.proof_size_bytes << " B)\n";
 
   std::cout << "  sink    " << r.sink << "\n";
   if (r.has_profile) {
@@ -647,6 +675,8 @@ void PrintHelp() {
       << "  --field-challenge-ext / --ring-challenge-ext use ';' to separate ZZ_pE\n"
       << "  coefficients and ',' for each ZZ_pE coefficient polynomial.\n"
       << "  Example: '0,1;1;1' means E(U)=x + U + U^2.\n\n"
+      << "  Exact fixed-width proof size is computed from the generated proof and\n"
+      << "  printed together with prover/verifier timing.\n\n"
       << "  If --*-challenge-ext is omitted, default is E(U)=zeta + U + U^2.\n\n"
       << "  Merkle build parallel tuning can be configured by env vars:\n"
       << "    BASEFOLD_MERKLE_LEAFS_PER_THREAD\n"
@@ -744,7 +774,8 @@ void RunOneContext(const ContextSpec &spec, long c, long k0, long d,
   }
 
   const BenchResult r = RunEvalBenchmark(f_coeffs, z, y, num_queries, params,
-                                         challenge_cfg_ptr, checked_prover,
+                                         challenge_cfg_ptr, challenge_degree,
+                                         checked_prover,
                                          enable_profile, warmup, reps);
   PrintResult(spec.label, spec.mod, c, d, k0, num_queries, warmup, reps, r,
               use_extension_challenges, challenge_degree);

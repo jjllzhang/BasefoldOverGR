@@ -5,6 +5,8 @@ cmake-build-*/
 out/
 build-*/
 
+.cache/
+
 # Results
 results/
 

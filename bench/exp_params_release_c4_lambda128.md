@@ -13,7 +13,8 @@
   - `commit time`：`bench_pcs_commit` 的 `encode-only mean`
   - `prover time`：`bench_pcs_eval` 的 `prover mean`
   - `verifier time`：`bench_pcs_eval` 的 `verifier mean`
-  - `proof size`：`bench_pcs_proof_size --formula` 的估算值（非真实 prover 产物序列化）
+  - `proof size`：`bench_pcs_eval` 对真实 proof 走 fixed-width `CountingSink`
+    得到的精确序列化大小（`proof_size_bytes` / `proof_size_kb`）
 
 ## 2) 实验上下文（默认 `all` 共 12 组）
 
@@ -144,9 +145,6 @@ scripts/run_release_c4_lambda128.sh
   - `ISOLATE_BUILD_DIR`：`0` 或 `1`（默认 `0`）
     - 设为 `1` 且未手动指定 `BUILD_DIR` 时，会使用 `build-release-<RUN_ID>`，避免并发实例共享同一个 build 目录
   - `BUILD_DIR`：显式指定构建目录（优先级高于 `ISOLATE_BUILD_DIR`）
-  - `RUN_PROOF_SIZE`：`1` 或 `0`（默认 `1`）
-    - 当前脚本在该步骤固定使用 `bench_pcs_proof_size --formula`（估算模式）。
-    - 当前脚本未向 `bench_pcs_proof_size` 透传扩展挑战参数（`--use-extension-challenges` 与 `--*-challenge-ext`）。
   - `CMD_TIMEOUT_SEC`：单条 bench 超时秒数（默认 `0`，即不超时）
   - `CONTINUE_ON_ERROR`：遇到某个点失败后是否继续（默认 `1`）
   - `COMMIT_REPS` / `EVAL_REPS` / `SEED`
@@ -171,5 +169,8 @@ CONTEXTS=ring-gr-2p16-128-ext scripts/run_release_c4_lambda128.sh
 
 - 明细 csv：`results.csv`
   - 每行一个 `(context, d)` 点，含 `gamma/queries/4项指标/status/error`
+  - 其中 `proof_size_bytes` / `proof_size_kb` 来自 `bench_pcs_eval` 对真实 proof
+    的 fixed-width counting 结果
 - 汇总 markdown：`RESULTS.md`
-- 原始日志：`logs/*.log`
+- 原始日志：`logs/*.log`（来自 `calc_iopp_params`、`bench_pcs_commit`、
+  `bench_pcs_eval`）

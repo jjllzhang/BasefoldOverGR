@@ -7,20 +7,19 @@
 
 namespace basefold {
 
-// Estimates the serialized size (bytes) of a BaseFold PCS evaluation proof.
-//
-// This is a bench-oriented estimate consistent with the Merkle+FS data actually
-// carried by BaseFoldPCSEvalProof:
-// - Merkle roots for π_0..π_d
-// - Sumcheck messages h_i
-// - Full π_0
-// - Merkle openings for all queries and levels
-std::uint64_t BaseFoldPCSEvalProofSizeBytes(const BaseFoldPCSEvalProof &proof);
+struct BaseFoldProofSizeOptions {
+  bool include_version_byte = true;
+  long challenge_ext_degree = 0;
+};
 
-// Convenience wrapper returning size in KiB (1024 bytes).
-double BaseFoldPCSEvalProofSizeKB(const BaseFoldPCSEvalProof &proof);
+std::uint64_t BaseFoldPCSEvalProofSizeBytes(
+    const BaseFoldPCSEvalProof &proof,
+    const BaseFoldProofSizeOptions &options = {});
+
+double BaseFoldPCSEvalProofSizeKB(
+    const BaseFoldPCSEvalProof &proof,
+    const BaseFoldProofSizeOptions &options = {});
 
 }  // namespace basefold
 
 #endif  // BASEFOLD_PROOFSIZE_HPP_
-

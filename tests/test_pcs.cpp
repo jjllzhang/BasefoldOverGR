@@ -14,6 +14,7 @@
 
 #include "BaseFold/BaseFoldPCS.hpp"
 #include "BaseFold/Multilinear.hpp"
+#include "BaseFold/ProofSize.hpp"
 #include "tests/test_common.hpp"
 
 using NTL::conv;
@@ -539,6 +540,69 @@ void TestPCS_EvalProof_ExtChallengeConfig_GR42() {
 
 }
 
+void TestPCS_ProofSizeFixedWidth_GF4_HandCheck() {
+  testutil::PrintInfo("PCS: fixed-width proof size matches hand calculation");
+
+  const ZZ p = to_ZZ(2);
+  ZZ_pPush p_push(p);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush e_push(F);
+
+  basefold::BaseFoldPCSEvalProof proof;
+  proof.commitments.roots_by_level.resize(1);
+  proof.h_by_level.resize(1);
+  proof.pi0_full.SetLength(2);
+  proof.query_multiproofs.resize(1);
+  proof.query_multiproofs[0].queried_indices = {0, 1};
+  proof.query_multiproofs[0].values.SetLength(2);
+  proof.query_multiproofs[0].sibling_hashes.resize(3);
+  proof.extension.enabled = false;
+
+  const std::uint64_t expected_bytes = 216;
+  const std::uint64_t actual_bytes =
+      basefold::BaseFoldPCSEvalProofSizeBytes(proof);
+  CHECK_EQ(actual_bytes, expected_bytes);
+  CHECK_EQ(basefold::BaseFoldPCSEvalProofSizeKB(proof),
+           static_cast<double>(expected_bytes) / 1024.0);
+}
+
+void TestPCS_ProofSizeFixedWidth_ExtensionWidthDerivation() {
+  testutil::PrintInfo("PCS: fixed-width proof size derives extension width");
+
+  const ZZ p = to_ZZ(2);
+  ZZ_pPush p_push(p);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush e_push(F);
+
+  basefold::BaseFoldPCSEvalProof proof;
+  proof.extension.enabled = true;
+  proof.extension.msg0_coeffs.resize(1);
+
+  basefold::BaseFoldProofSizeOptions degree2;
+  degree2.challenge_ext_degree = 2;
+  CHECK_EQ(basefold::BaseFoldPCSEvalProofSizeBytes(proof, degree2),
+           static_cast<std::uint64_t>(94));
+  CHECK_EQ(basefold::BaseFoldPCSEvalProofSizeKB(proof, degree2),
+           94.0 / 1024.0);
+
+  basefold::BaseFoldProofSizeOptions degree3;
+  degree3.challenge_ext_degree = 3;
+  CHECK_EQ(basefold::BaseFoldPCSEvalProofSizeBytes(proof, degree3),
+           static_cast<std::uint64_t>(96));
+
+  degree3.include_version_byte = false;
+  CHECK_EQ(basefold::BaseFoldPCSEvalProofSizeBytes(proof, degree3),
+           static_cast<std::uint64_t>(95));
+}
+
 }  // namespace
 
 int main() {
@@ -549,6 +613,8 @@ int main() {
     RUN_TEST(TestPCS_EvalProof_GR42_k0_2);
     RUN_TEST(TestPCS_EvalProof_ExtChallengeConfig_GF4);
     RUN_TEST(TestPCS_EvalProof_ExtChallengeConfig_GR42);
+    RUN_TEST(TestPCS_ProofSizeFixedWidth_GF4_HandCheck);
+    RUN_TEST(TestPCS_ProofSizeFixedWidth_ExtensionWidthDerivation);
   } catch (const exception &e) {
     cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;

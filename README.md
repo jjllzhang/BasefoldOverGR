@@ -28,8 +28,6 @@ Language versions:
 |-- bench
 |   |-- bench_pcs_commit.cpp
 |   |-- bench_pcs_eval.cpp
-|   |-- bench_pcs_proof_size.cpp
-|   |-- bench_pcs_communication.cpp
 |   |-- calc_iopp_params.cpp
 |   `-- exp_params_release_c4_lambda128.md
 |-- include
@@ -44,6 +42,7 @@ Language versions:
 |       |-- Multilinear.hpp
 |       |-- Sumcheck.hpp
 |       |-- Profile.hpp
+|       |-- ProofSerialize.hpp
 |       |-- ProofSize.hpp
 |       `-- BaseFoldPCS.hpp
 |-- scripts
@@ -59,6 +58,7 @@ Language versions:
 |       |-- FoldableCode.cpp
 |       |-- IOPP.cpp
 |       |-- Multilinear.cpp
+|       |-- ProofSerialize.cpp
 |       |-- Sumcheck.cpp
 |       |-- ProofSize.cpp
 |       `-- BaseFoldPCS.cpp
@@ -176,11 +176,21 @@ Language versions:
     - `challenge_extension_modulus` now validates algebraic conditions: irreducible in field mode; basic irreducible after mod-`p` reduction in ring mode.
   - Supports `k0=2^kappa` (BaseFold paper, Remark 3): IOPP depth is `d`, polynomial point dimension is `d+kappa`; `kappa=0` degenerates to Protocol 4 in `Basefold_over_GR.pdf` (`k0==1`).
 
+### `include/BaseFold/ProofSerialize.hpp` / `src/BaseFold/ProofSerialize.cpp`
+
+- Fixed-width proof serializer contract for exact proof-size counting:
+  - `basefold::FixedProofEncodingOptions`
+  - `basefold::FixedProofEncodingContext`
+  - `basefold::CountingSink`
+  - `basefold::CountSerializedBaseFoldPCSEvalProofFixedBytes(...)`
+
 ### `include/BaseFold/ProofSize.hpp` / `src/BaseFold/ProofSize.cpp`
 
-- Bench-oriented BaseFold PCS proof-size estimation:
+- Exact BaseFold PCS proof-size counting through the fixed-width proof serializer:
   - `basefold::BaseFoldPCSEvalProofSizeBytes(proof)`
   - `basefold::BaseFoldPCSEvalProofSizeKB(proof)` (KiB, 1024 bytes)
+- User-facing proof-size reporting is surfaced from `bench_pcs_eval`, which prints
+  `proof_size_bytes` / `proof_size_kb` for the proof it just generated.
 
 ### `bench/bench_pcs_commit.cpp`
 
@@ -193,45 +203,19 @@ Language versions:
 
 - PCS eval-proof benchmark: measures prover and verifier time (Merkle + Fiat-Shamir).
 - Prover defaults to `BaseFoldPCSProveEvalUnchecked`; use `--checked` to include checks in prover timing.
+- Reports exact proof size for the generated proof via the fixed-width `CountingSink`
+  path (`proof_size_bytes` / `proof_size_kb`).
 - `--use-extension-challenges` enables extension challenge path (`BaseFoldPCSChallengeConfig`): sumcheck/folding run in extension domain, top commitment remains in base field/ring.
 - Optional `--field-challenge-ext` / `--ring-challenge-ext` to set challenge extension modulus `E(U)`, format `a0;a1;...;ad` where each `ai` is `ZZ_pE` written as `c0,c1,...`; default is `E(U)=zeta + U + U^2`.
 - `--profile` prints prover/verifier breakdown (accumulated over `reps`, excluding `warmup`; use `--warmup 0 --reps 1` for readable single-run output).
 - Optional `--k0 <int>` (default `1`, must be power of two); polynomial point dimension becomes `d+log2(k0)`, message length is `k_d = k0*2^d`.
 - Optional `--auto-zeta teich` derives Teichmuller generator from `(p,k,F)` as `zeta` (overrides `--field-zeta/--ring-zeta`).
 
-### `bench/bench_pcs_proof_size.cpp`
-
-- PCS eval-proof size estimation:
-  - Without `--formula`: generates one **real proof** and reports estimated proof size (KB); defaults to `BaseFoldPCSProveEval` (includes parameter/length checks and `claimed_y==f(z)` check).
-  - With `--formula`: does not run prover; computes analytic estimate/upper bound from input parameters.
-  - With `--use-extension-challenges` (extension challenge path):
-    - Non-formula mode calls `BaseFoldPCSProveEvalWithChallengeConfig` and measures real extension payload.
-    - Formula mode accounts payload by current compact `BaseFoldPCSEvalProof` layout (base top commitment/root + top openings + extension `roots/h/msg0/pi0/query openings`; `r_i` not carried by default).
-  - Optional `--field-challenge-ext` / `--ring-challenge-ext` sets challenge modulus `E(U)` with the same format.
-  - Optional `--field-challenge-degree <m>` / `--ring-challenge-degree <m>` sets only extension degree; default modulus becomes `E(U)=zeta + U + U^m` (`m=1` gives `E(U)=zeta+U`).
-  - `--*-challenge-ext` and `--*-challenge-degree` are mutually exclusive.
-  - Optional `--k0 <int>` (default `1`, power of two required); point dimension is `d+log2(k0)`, message length `k_d = k0*2^d`.
-  - Optional `--auto-zeta teich` derives Teichmuller generator from `(p,k,F)` as `zeta` (overrides `--field-zeta/--ring-zeta`).
-
-### `bench/bench_pcs_communication.cpp`
-
-- PCS prover/verifier communication estimate (formula-only, no prover run):
-  - Base challenge path: `P -> V` split by current `BaseFoldPCSEvalProof` payload (`roots`, sumcheck, `pi0_full`, query openings).
-  - Extension challenge path (`--use-extension-challenges`):
-    - `P -> V` estimated by compact payload: base top root + top base openings + extension `roots/h/msg0/pi0/query openings`.
-    - Extension `r_i` is excluded by default (reconstructed from transcript).
-  - `V -> P`: interactive-equivalent bandwidth (`d` challenges `r_i` + `queries` indices `mu`).
-  - Also prints current Fiat-Shamir non-interactive total (`V -> P = 0`).
-  - Optional `--field-challenge-ext` / `--ring-challenge-ext` sets challenge modulus `E(U)` (default `E(U)=zeta + U + U^2`).
-  - Optional `--field-challenge-degree <m>` / `--ring-challenge-degree <m>` sets degree only; default modulus `E(U)=zeta + U + U^m` (`m=1` gives `E(U)=zeta+U`).
-  - `--*-challenge-ext` and `--*-challenge-degree` are mutually exclusive.
-  - Optional `--k0 <int>` (default `1`, power of two required).
-
 ### `scripts/plot_benchmark_results.py`
 
 - Plots curves versus `d` from one or more benchmark CSV files (commit/prover/verifier/proof size).
 - Default output directory: `result/plots/`; default filename prefix: `benchmark`.
-- Uses `proof_size_kb` for proof-size by default; can switch column with `--proof-size-column` (alias `--communication-column`).
+- Uses `proof_size_kb` for proof-size by default; can switch column with `--proof-size-column`.
 - Use `--metrics` to select subset (`commit / prover / verifier / proof_size / all`).
 
 ## Dependencies
@@ -269,8 +253,6 @@ Then:
 ```bash
 ./build-release/bench_pcs_commit --help
 ./build-release/bench_pcs_eval --help
-./build-release/bench_pcs_proof_size --help
-./build-release/bench_pcs_communication --help
 ./build-release/calc_iopp_params --help
 ```
 
@@ -291,7 +273,7 @@ Default output directory contains:
 
 - `results.csv`: structured aggregate rows for each `(context, d)`.
 - `RESULTS.md`: markdown table for quick inspection.
-- `logs/*.log`: raw logs from `calc_iopp_params` and `bench_*`.
+- `logs/*.log`: raw logs from `calc_iopp_params`, `bench_pcs_commit`, and `bench_pcs_eval`.
 
 Current `results.csv` header:
 
@@ -303,7 +285,8 @@ Common columns:
 
 - `gamma`: slack parameter selected by `calc_iopp_params --auto-gamma`.
 - `queries`: recommended query count (`l_min_for_PCS`).
-- `proof_size_kb/proof_size_bytes`: estimates from `bench_pcs_proof_size --formula` (KiB / bytes).
+- `proof_size_kb/proof_size_bytes`: exact serialized proof size reported by `bench_pcs_eval`
+  through the fixed-width counting path (KiB / bytes).
 - `status,error`: per-point success status and error message (if any).
 
 ### Result Files and Plotting
@@ -360,7 +343,7 @@ Examples:
 ./build-release/calc_iopp_params --d 20 --c 16 --k0 1 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --auto-gamma --gamma-min 1e-4 --gamma-max 0.05 --gamma-steps 8000
 ```
 
-Example reproducible 128-bit setup (one constant set for all four benches):
+Example reproducible 128-bit setup (one constant set for the release-facing benches):
 
 ```bash
 # ---------- Fixed parameters (optional; only needed if you prefer variables) ----------
@@ -381,22 +364,16 @@ RING_ZETA=0,1
 # ---------- Field profile (GF(p^2), p is 128-bit; direct runnable commands) ----------
 ./build-release/bench_pcs_commit --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --reps 3 --warmup 1
 ./build-release/bench_pcs_eval --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --queries 2 --reps 2 --warmup 1
-./build-release/bench_pcs_proof_size --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --queries 2 --formula
-./build-release/bench_pcs_communication --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --d 10 --queries 2
 
 # ---------- Ring profile (GR(p^2,2), p is 64-bit and p^2 is 128-bit; direct runnable commands) ----------
 ./build-release/bench_pcs_commit --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --reps 3 --warmup 1
 ./build-release/bench_pcs_eval --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --queries 2 --reps 2 --warmup 1
-./build-release/bench_pcs_proof_size --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --queries 2 --formula
-./build-release/bench_pcs_communication --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --d 10 --queries 2
 
 # ---------- Extension-challenge path ----------
 # Note: challenge polynomial args contain ';', so quote them.
 # E(U) = (0 + 3*x) + U + U^2  => '0,3;1;1'
 ./build-release/bench_pcs_eval --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --use-extension-challenges --field-challenge-ext '0,3;1;1' --d 10 --queries 2 --reps 1 --warmup 0
 ./build-release/bench_pcs_eval --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --use-extension-challenges --ring-challenge-ext '0,3;1;1' --d 10 --queries 2 --reps 1 --warmup 0
-./build-release/bench_pcs_proof_size --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --use-extension-challenges --field-challenge-ext '0,3;1;1' --d 10 --queries 2 --formula
-./build-release/bench_pcs_proof_size --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --use-extension-challenges --ring-challenge-ext '0,3;1;1' --d 10 --queries 2 --formula
 ```
 
 ### Merkle Build Parallel Threshold Tuning
@@ -498,40 +475,16 @@ cat "$csv"
 - Recent verifier speedups mainly come from engineering optimization: legality checks of `FoldableCodeParams` are cached to avoid repeated scans of `diag_T` on hot path. This does not reduce Merkle opening checks, folding-consistency checks, or any protocol-level sumcheck relation checks.
 - This cache assumes `FoldableCodeParams` is immutable after construction (especially `diag_T/zeta/G0`). If callers mutate `params` in place, cache behavior may skip repeated parameter-error triggering. That is API misuse and unrelated to proof verification completeness.
 
-## Proof Size (Estimation)
+## Proof Size (Exact)
 
-This repo provides a bench-oriented proof-size estimator (KiB):
+This repo exposes exact proof-size counting through the fixed-width proof serializer:
 
-- `basefold::BaseFoldPCSEvalProofSizeKB(proof)` (see `include/BaseFold/ProofSize.hpp`)
+- `basefold::BaseFoldPCSEvalProofSizeBytes(proof)` (bytes)
+- `basefold::BaseFoldPCSEvalProofSizeKB(proof)` (KiB)
 
-You can also use `bench/bench_pcs_proof_size.cpp` directly:
-
-- Without `--formula`: generate a real proof and report estimated size.
-- With `--formula`: parameter-only estimate (no prover run).
-
-## Communication (Estimation)
-
-Use `bench/bench_pcs_communication.cpp` to estimate PCS bidirectional communication from input parameters only:
-
-- Base challenge path:
-  - `P -> V`: proof payload (`roots`, sumcheck, `pi0_full`, Merkle openings).
-- Extension challenge path (`--use-extension-challenges`):
-  - `P -> V`: compact payload estimate (base top root/openings + extension `roots/h/msg0/pi0/query openings`).
-  - Extension `r_i` is excluded by default (recomputed from transcript).
-- Challenge extension can be specified in two ways:
-  - `--field/ring-challenge-ext`: explicit coefficients of `E(U)`.
-  - `--field/ring-challenge-degree m`: degree-only; auto-construct `E(U)=zeta + U + U^m` (`m=1` gives `zeta+U`).
-- `V -> P`: interactive-equivalent challenges (`r_i` and `mu`).
-- Also reports current Fiat-Shamir communication (`V -> P = 0`).
-
-Examples:
-
-```bash
-./build-release/bench_pcs_communication --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --d 10 --queries 2
-./build-release/bench_pcs_communication --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --d 10 --queries 2
-./build-release/bench_pcs_communication --mode field --field-mod 2 --field-F 1,1,1 --use-extension-challenges --field-challenge-ext '0,1;1;1' --d 10 --queries 2
-./build-release/bench_pcs_communication --mode field --field-mod 2 --field-F 1,1,1 --use-extension-challenges --field-challenge-degree 4 --d 10 --queries 2
-```
+For end users, the intended CLI surface is `bench_pcs_eval`: it generates a real
+proof, then prints the exact `proof_size_bytes` / `proof_size_kb` for that proof in
+the same run.
 
 ## License
 

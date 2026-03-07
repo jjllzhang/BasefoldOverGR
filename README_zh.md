@@ -28,8 +28,6 @@
 ├── bench
 │   ├── bench_pcs_commit.cpp
 │   ├── bench_pcs_eval.cpp
-│   ├── bench_pcs_proof_size.cpp
-│   ├── bench_pcs_communication.cpp
 │   ├── calc_iopp_params.cpp
 │   └── exp_params_release_c4_lambda128.md
 ├── include
@@ -44,6 +42,7 @@
 │       ├── Multilinear.hpp
 │       ├── Sumcheck.hpp
 │       ├── Profile.hpp
+│       ├── ProofSerialize.hpp
 │       ├── ProofSize.hpp
 │       └── BaseFoldPCS.hpp
 ├── scripts
@@ -59,6 +58,7 @@
 │       ├── FoldableCode.cpp
 │       ├── IOPP.cpp
 │       ├── Multilinear.cpp
+│       ├── ProofSerialize.cpp
 │       ├── Sumcheck.cpp
 │       ├── ProofSize.cpp
 │       └── BaseFoldPCS.cpp
@@ -173,11 +173,21 @@
     - `challenge_extension_modulus` 现在会校验代数条件：在域模式要求不可约；在环模式要求模 `p` 约化后不可约（basic irreducible）。
   - 支持 `k0=2^κ` 的情况（BaseFold 论文 Remark 3）：IOPP depth 为 `d`，多项式点维度为 `d+κ`；`κ=0` 时退化为 `Basefold_over_GR.pdf` 的 Protocol 4（`k0==1`）。
 
+### `include/BaseFold/ProofSerialize.hpp` / `src/BaseFold/ProofSerialize.cpp`
+
+- fixed-width proof serializer 的公共契约：
+  - `basefold::FixedProofEncodingOptions`
+  - `basefold::FixedProofEncodingContext`
+  - `basefold::CountingSink`
+  - `basefold::CountSerializedBaseFoldPCSEvalProofFixedBytes(...)`
+
 ### `include/BaseFold/ProofSize.hpp` / `src/BaseFold/ProofSize.cpp`
 
-- BaseFold PCS proof size 的估算函数（bench-oriented）：
+- 通过 fixed-width proof serializer 做 BaseFold PCS proof size 的精确计数：
   - `basefold::BaseFoldPCSEvalProofSizeBytes(proof)`
   - `basefold::BaseFoldPCSEvalProofSizeKB(proof)`（KiB, 1024 bytes）
+- 面向用户的 proof size 输出来自 `bench_pcs_eval`：同一次 prove/eval bench
+  会直接打印 `proof_size_bytes` / `proof_size_kb`。
 
 ### `bench/bench_pcs_commit.cpp`
 
@@ -189,45 +199,19 @@
 
 - PCS eval proof 性能基准：测量 prover time 与 verifier time（Merkle + Fiat–Shamir）。
 - 默认 prover 走 `BaseFoldPCSProveEvalUnchecked`；如需把校验也算进 prover time，可加 `--checked`。
+- 同一次运行会通过 fixed-width `CountingSink` 路径输出该 proof 的精确大小
+  （`proof_size_bytes` / `proof_size_kb`）。
 - 可加 `--use-extension-challenges` 切到扩域/扩环 challenge 路径（`BaseFoldPCSChallengeConfig`），此时 sumcheck/folding 在扩域/扩环上运行，顶层 commitment 仍在原域/环。
 - 可选 `--field-challenge-ext` / `--ring-challenge-ext` 指定 challenge 扩域模多项式 `E(U)`，格式为 `a0;a1;...;ad`（每个 `ai` 是一个 `ZZ_pE` 元素，写作 `c0,c1,...`）；若不指定，默认 `E(U)=zeta + U + U^2`。
 - 可加 `--profile` 输出 prover/verifier 内部耗时拆分（profile 会在 `reps` 次迭代上累加，不包含 `warmup`；建议 `--warmup 0 --reps 1` 方便阅读）。
 - 可选 `--k0 <int>`（默认 `1`，要求 2 的幂）；此时多项式点维度为 `d+log2(k0)`，消息长度为 `k_d = k0*2^d`。
 - 可选 `--auto-zeta teich` 自动从 `(p,k,F)` 推导 Teichmüller 子群生成元作为 `zeta`（启用后忽略 `--field-zeta/--ring-zeta`）。
 
-### `bench/bench_pcs_proof_size.cpp`
-
-- PCS eval proof size 估算：
-  - 不带 `--formula`：生成一次 **真实 proof** 并输出估算的 proof size（KB）；默认使用 `BaseFoldPCSProveEval`（包含参数/长度检查与 `claimed_y==f(z)` 校验）。
-  - 带 `--formula`：完全不运行 prover，仅根据输入参数用公式给出近似/上界估算。
-  - 可加 `--use-extension-challenges` 切到扩域/扩环 challenge 路径：
-    - 非公式模式会调用 `BaseFoldPCSProveEvalWithChallengeConfig`，统计真实扩域/扩环 proof payload；
-    - 公式模式会按当前紧凑化后的 `BaseFoldPCSEvalProof` 字段布局计入 payload（base 顶层 commitment/root 与顶层 openings + extension `roots/h/msg0/pi0/query openings`；`r_i` 默认不单独携带）。
-  - 可选 `--field-challenge-ext` / `--ring-challenge-ext` 指定 challenge 扩域模多项式 `E(U)`，格式为 `a0;a1;...;ad`（每个 `ai` 是一个 `ZZ_pE` 元素，写作 `c0,c1,...`）；若不指定，默认 `E(U)=zeta + U + U^2`。
-  - 可选 `--field-challenge-degree <m>` / `--ring-challenge-degree <m>` 仅指定扩张次数，自动构造默认多项式 `E(U)=zeta + U + U^m`（`m=1` 时为 `E(U)=zeta+U`）。
-  - `--*-challenge-ext` 与 `--*-challenge-degree` 互斥。
-  - 可选 `--k0 <int>`（默认 `1`，要求 2 的幂）；此时多项式点维度为 `d+log2(k0)`，消息长度为 `k_d = k0*2^d`。
-  - 可选 `--auto-zeta teich` 自动从 `(p,k,F)` 推导 Teichmüller 子群生成元作为 `zeta`（启用后忽略 `--field-zeta/--ring-zeta`）。
-
-### `bench/bench_pcs_communication.cpp`
-
-- PCS prover/verifier 通信量估算（仅公式，不运行 prover）：
-  - Base challenge 路径：`P -> V` 按当前 `BaseFoldPCSEvalProof` payload 拆分（roots、sumcheck、`pi0_full`、query openings）。
-  - 扩域/扩环 challenge 路径（`--use-extension-challenges`）：
-    - `P -> V` 估算按当前紧凑 payload：base 顶层 root + 顶层 base openings + extension `roots/h/msg0/pi0/query openings`；
-    - 默认不单独计入 extension `r_i`（按 transcript 重算）。
-  - `V -> P`：给出交互式等价口径（`d` 个 challenge `r_i` + `queries` 个索引 `mu`）。
-  - 同时输出当前 Fiat–Shamir 非交互路径总通信量（`V -> P = 0`）。
-  - 可选 `--field-challenge-ext` / `--ring-challenge-ext` 指定 challenge 扩域模 `E(U)`（省略时默认 `E(U)=zeta + U + U^2`）。
-  - 可选 `--field-challenge-degree <m>` / `--ring-challenge-degree <m>` 仅指定扩张次数，自动构造默认多项式 `E(U)=zeta + U + U^m`（`m=1` 时为 `E(U)=zeta+U`）。
-  - `--*-challenge-ext` 与 `--*-challenge-degree` 互斥。
-  - 可选 `--k0 <int>`（默认 `1`，要求 2 的幂）。
-
 ### `scripts/plot_benchmark_results.py`
 
 - 从一个或多个 benchmark CSV 画出随 `d` 变化的曲线图（commit/prover/verifier/proof size）。
 - 默认输出目录 `result/plots/`，默认输出前缀 `benchmark`。
-- 默认读取 `proof_size_kb` 列作为 proof-size 曲线；可用 `--proof-size-column`（或别名 `--communication-column`）改成其他列（例如通信量列）。
+- 默认读取 `proof_size_kb` 列作为 proof-size 曲线；可用 `--proof-size-column` 改成其他列。
 - 可用 `--metrics` 选择只画部分指标（`commit / prover / verifier / proof_size / all`）。
 
 ## 依赖
@@ -265,8 +249,6 @@ cmake --build build-release
 ```bash
 ./build-release/bench_pcs_commit --help
 ./build-release/bench_pcs_eval --help
-./build-release/bench_pcs_proof_size --help
-./build-release/bench_pcs_communication --help
 ./build-release/calc_iopp_params --help
 ```
 
@@ -287,7 +269,7 @@ CONTEXTS=field-prime128-ext D_MIN=10 D_MAX=20 scripts/run_release_c4_lambda128.s
 
 - `results.csv`：每个 `(context, d)` 的结构化结果汇总。
 - `RESULTS.md`：便于快速浏览的 markdown 表格。
-- `logs/*.log`：`calc_iopp_params` / `bench_*` 的原始日志。
+- `logs/*.log`：`calc_iopp_params`、`bench_pcs_commit`、`bench_pcs_eval` 的原始日志。
 
 `results.csv` 当前表头为：
 
@@ -299,7 +281,8 @@ context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_m
 
 - `gamma`：`calc_iopp_params --auto-gamma` 选出的 slack 参数。
 - `queries`：推荐查询次数（即 `l_min_for_PCS`）。
-- `proof_size_kb/proof_size_bytes`：来自 `bench_pcs_proof_size --formula` 的估算结果（KiB / bytes）。
+- `proof_size_kb/proof_size_bytes`：来自 `bench_pcs_eval` 的精确序列化结果
+  （fixed-width counting 路径，KiB / bytes）。
 - `status,error`：该 `(context,d)` 点是否成功及失败原因（若有）。
 
 ### 结果文件与绘图
@@ -356,7 +339,7 @@ python3 scripts/plot_benchmark_results.py \
 ./build-release/calc_iopp_params --d 20 --c 16 --k0 1 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --auto-gamma --gamma-min 1e-4 --gamma-max 0.05 --gamma-steps 8000
 ```
 
-示例（128-bit 可复现参数，一套常量覆盖四个 bench）：
+示例（128-bit 可复现参数，一套常量覆盖 release 面向用户的 bench）：
 
 ```bash
 # ---------- 固定参数（可选；仅在你想用变量写法时需要） ----------
@@ -377,22 +360,16 @@ RING_ZETA=0,1
 # ---------- Field profile (GF(p^2), p 为 128-bit；无变量版本，直接可运行) ----------
 ./build-release/bench_pcs_commit --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --reps 3 --warmup 1
 ./build-release/bench_pcs_eval --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --queries 2 --reps 2 --warmup 1
-./build-release/bench_pcs_proof_size --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --queries 2 --formula
-./build-release/bench_pcs_communication --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --d 10 --queries 2
 
 # ---------- Ring profile (GR(p^2,2), p 为 64-bit, p^2 为 128-bit；无变量版本，直接可运行) ----------
 ./build-release/bench_pcs_commit --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --reps 3 --warmup 1
 ./build-release/bench_pcs_eval --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --queries 2 --reps 2 --warmup 1
-./build-release/bench_pcs_proof_size --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --queries 2 --formula
-./build-release/bench_pcs_communication --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --d 10 --queries 2
 
 # ---------- extension-challenge 路径 ----------
 # 注意：challenge 多项式参数含 ';'，请使用引号
 # E(U) = (0 + 3*x) + U + U^2  => '0,3;1;1'
 ./build-release/bench_pcs_eval --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --use-extension-challenges --field-challenge-ext '0,3;1;1' --d 10 --queries 2 --reps 1 --warmup 0
 ./build-release/bench_pcs_eval --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --use-extension-challenges --ring-challenge-ext '0,3;1;1' --d 10 --queries 2 --reps 1 --warmup 0
-./build-release/bench_pcs_proof_size --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --use-extension-challenges --field-challenge-ext '0,3;1;1' --d 10 --queries 2 --formula
-./build-release/bench_pcs_proof_size --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --use-extension-challenges --ring-challenge-ext '0,3;1;1' --d 10 --queries 2 --formula
 ```
 
 ### Merkle Build 并行阈值调优
@@ -494,38 +471,15 @@ cat "$csv"
 - verifier 近期的主要加速来自工程优化：对 `FoldableCodeParams` 的合法性检查做缓存，避免在热路径上重复扫描 `diag_T`。这不会减少 Merkle opening 校验次数、folding 一致性检查次数，也不会减少 sumcheck 关系检查等协议级验证步骤。
 - 该缓存假设 `FoldableCodeParams` 在构造后是不可变配置（尤其 `diag_T/zeta/G0`）。如果调用方原地修改 `params`，缓存可能导致后续不再重复触发参数错误检查；但这属于 API 误用，与 proof 验证完整性无关。
 
-## Proof size（估算）
+## Proof size（精确值）
 
-本仓库提供了一个 bench-oriented 的 proof size 估算函数（单位 KiB）：
+本仓库通过 fixed-width proof serializer 提供 BaseFold PCS proof size 的精确计数：
 
-- `basefold::BaseFoldPCSEvalProofSizeKB(proof)`（见 `include/BaseFold/ProofSize.hpp`）
-  也可以直接使用 `bench/bench_pcs_proof_size.cpp`：
-  - 不带 `--formula`：生成真实 proof 并输出估算大小；
-  - 带 `--formula`：仅参数估计（不运行 prover）。
+- `basefold::BaseFoldPCSEvalProofSizeBytes(proof)`（bytes）
+- `basefold::BaseFoldPCSEvalProofSizeKB(proof)`（KiB）
 
-## Communication（估算）
-
-可使用 `bench/bench_pcs_communication.cpp` 仅根据输入参数估算 PCS 双向通信量：
-
-- Base challenge 路径：
-  - `P -> V`：proof payload（roots、sumcheck、`pi0_full`、Merkle openings）。
-- 扩域/扩环 challenge 路径（`--use-extension-challenges`）：
-  - `P -> V`：按紧凑 payload 估算（base 顶层 root/openings + extension `roots/h/msg0/pi0/query openings`）。
-  - 默认不单独计入 extension `r_i`（按 transcript 重算）。
-- challenge 扩域可用两种方式指定：
-  - `--field/ring-challenge-ext`：显式给 `E(U)` 多项式系数。
-  - `--field/ring-challenge-degree m`：仅给扩张次数，自动构造默认 `E(U)=zeta + U + U^m`（`m=1` 时为 `zeta+U`）。
-- `V -> P`：交互式等价挑战（`r_i` 与 `mu`）。
-- 同时给出当前 Fiat–Shamir 路径通信量（`V -> P = 0`）。
-
-示例：
-
-```bash
-./build-release/bench_pcs_communication --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --d 10 --queries 2
-./build-release/bench_pcs_communication --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --d 10 --queries 2
-./build-release/bench_pcs_communication --mode field --field-mod 2 --field-F 1,1,1 --use-extension-challenges --field-challenge-ext '0,1;1;1' --d 10 --queries 2
-./build-release/bench_pcs_communication --mode field --field-mod 2 --field-F 1,1,1 --use-extension-challenges --field-challenge-degree 4 --d 10 --queries 2
-```
+对终端用户而言，推荐直接看 `bench_pcs_eval`：它在生成真实 proof 后，会在同一次运行里输出
+`proof_size_bytes` / `proof_size_kb`。
 
 ## License
 

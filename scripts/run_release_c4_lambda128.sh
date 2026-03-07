@@ -587,7 +587,6 @@ run_one_context_d() {
   local calc_log="$OUT_DIR/logs/${prefix}_calc_iopp.log"
   local commit_log="$OUT_DIR/logs/${prefix}_commit.log"
   local eval_log="$OUT_DIR/logs/${prefix}_eval.log"
-  local proof_log="$OUT_DIR/logs/${prefix}_proof_size.log"
 
   echo "  - ${context_label}: d=${d} (poly_dim=2^${d})"
 
@@ -647,29 +646,13 @@ run_one_context_d() {
       if [[ -z "$verifier_ms" ]]; then
         verifier_ms="NA"
       fi
-    fi
-  fi
-
-  if [[ "$status" == "ok" && "$RUN_PROOF_SIZE" == "1" ]]; then
-    if ! run_and_log "$proof_log" \
-        "$BUILD_DIR/bench_pcs_proof_size" \
-        --mode "$mode" \
-        "${eval_extra_args[@]}" \
-        "${bench_args[@]}" \
-        --c "$C" --k0 "$K0" --d "$d" \
-        --queries "$queries" \
-        --formula \
-        --seed "$SEED"; then
-      status="proof_failed"
-      error="$(first_error_line "$proof_log")"
-    else
-      proof_kb="$(parse_first "proof size" 3 "$proof_log")"
-      proof_bytes="$(awk '/proof size/{gsub(/[^0-9]/, "", $5); print $5; exit}' "$proof_log")"
-      if [[ -z "$proof_kb" ]]; then
-        proof_kb="NA"
-      fi
-      if [[ -z "$proof_bytes" ]]; then
-        proof_bytes="NA"
+      if [[ "$RUN_PROOF_SIZE" == "1" ]]; then
+        proof_kb="$(parse_first "proof size" 3 "$eval_log")"
+        proof_bytes="$(awk '/proof size/{gsub(/[^0-9]/, "", $5); print $5; exit}' "$eval_log")"
+        if [[ -z "$proof_kb" || -z "$proof_bytes" ]]; then
+          status="proof_parse_failed"
+          error="missing proof size line in bench_pcs_eval output"
+        fi
       fi
     fi
   fi
@@ -691,11 +674,11 @@ fi
 echo "[2/4] Build required benchmarks/tools"
 if [[ -n "$EFFECTIVE_CPU_SET" && "$PIN_BUILD" == "1" ]]; then
   taskset -c "$EFFECTIVE_CPU_SET" cmake --build "$BUILD_DIR" \
-    --target bench_pcs_commit bench_pcs_eval bench_pcs_proof_size calc_iopp_params \
+    --target bench_pcs_commit bench_pcs_eval calc_iopp_params \
     --parallel
 else
   cmake --build "$BUILD_DIR" \
-    --target bench_pcs_commit bench_pcs_eval bench_pcs_proof_size calc_iopp_params \
+    --target bench_pcs_commit bench_pcs_eval calc_iopp_params \
     --parallel
 fi
 
