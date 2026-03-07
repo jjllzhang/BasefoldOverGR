@@ -573,9 +573,9 @@ void PrintHelp() {
       << "                          [--field-challenge-degree <int>] [--ring-challenge-degree <int>]\n\n"
       << "Estimation model:\n"
       << "  - No prover execution; formula-only from parameters.\n"
-      << "  - Base mode payload: roots + sumcheck polys + pi0_full + query openings.\n"
+      << "  - Base mode payload: roots + sumcheck polys + pi0_full + query opening upper bound.\n"
       << "  - Extension-challenge mode payload uses the same parameter-formula as\n"
-      << "      bench_pcs_proof_size --formula (roots + sumcheck + pi0_full + openings).\n"
+      << "      bench_pcs_proof_size --formula (independent-opening upper bound).\n"
       << "  - Verifier->Prover (interactive-equivalent):\n"
       << "      d challenges r_i + query indices mu.\n"
       << "  - Fiat-Shamir (current implementation): V->P is 0, total equals proof payload.\n"
@@ -673,7 +673,7 @@ void PrintEstimate(const ContextSpec &spec, long c, long k0, long d,
   std::cout << "    total     " << ToKB(est.total_interactive) << " KB  ("
             << est.total_interactive << " B)\n";
 
-  std::cout << "  total Fiat-Shamir communication (current code path):\n";
+  std::cout << "  total Fiat-Shamir communication (independent-opening upper bound):\n";
   std::cout << "    total     " << ToKB(est.total_fs) << " KB  ("
             << est.total_fs << " B)\n";
 }

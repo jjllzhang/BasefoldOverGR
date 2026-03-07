@@ -199,6 +199,24 @@ struct MerkleOpening {
   MerkleAuthPath auth_path;
 };
 
+struct MerkleMultiproofStats {
+  std::uint64_t opened_leaf_count = 0;
+  std::uint64_t unique_sibling_count = 0;
+  std::uint64_t verifier_hashes = 0;
+};
+
+// A pruned Merkle multiproof for multiple leaves in the same oracle.
+// Conventions:
+// - queried_indices is sorted, unique, and names the opened leaves.
+// - values[i] is the opened payload for queried_indices[i].
+// - sibling_hashes stores the unique pruned authentication siblings in the
+//   planner-defined order used by MerkleVerifyMultiproof.
+struct MerkleMultiproof {
+  std::vector<long> queried_indices;
+  Oracle values;
+  std::vector<Digest> sibling_hashes;
+};
+
 // A Merkle commitment to an oracle π_i (root digest).
 using MerkleRoot = Digest;
 
@@ -228,10 +246,23 @@ MerkleRoot MerkleCommitOracle(const Oracle &oracle);
 // Produces a Merkle opening for oracle[index].
 MerkleOpening MerkleOpenOracle(const Oracle &oracle, long index);
 
+// Produces a pruned Merkle multiproof for a set of queried indices.
+// `queried_indices` may contain duplicates and need not be sorted.
+MerkleMultiproof MerkleOpenOracleMany(const Oracle &oracle,
+                                      const std::vector<long> &queried_indices);
+
 // Verifies that `opening` is a valid decommitment to `root` for an oracle of
 // length `leaf_count`.
 bool MerkleVerifyOpening(const MerkleRoot &root, long leaf_count,
                          const MerkleOpening &opening);
+
+// Returns multiproof planning statistics for a queried index set.
+MerkleMultiproofStats PlanMerkleMultiproof(
+    long leaf_count, const std::vector<long> &queried_indices);
+
+// Verifies that `proof` is a valid pruned multiproof for `root`.
+bool MerkleVerifyMultiproof(const MerkleRoot &root, long leaf_count,
+                            const MerkleMultiproof &proof);
 
 // A reusable Merkle tree for an oracle, allowing one build and many openings.
 //
@@ -252,6 +283,12 @@ class MerkleTree {
   // Produces a Merkle opening for oracle[index] using this tree's cached nodes.
   // Precondition: oracle.length() == LeafCount().
   MerkleOpening Open(const Oracle &oracle, long index) const;
+
+  // Produces a pruned Merkle multiproof for queried_indices using this tree's
+  // cached nodes. queried_indices may contain duplicates and need not be
+  // sorted.
+  MerkleMultiproof OpenMany(const Oracle &oracle,
+                            const std::vector<long> &queried_indices) const;
 
  private:
   long leaf_count_ = 0;

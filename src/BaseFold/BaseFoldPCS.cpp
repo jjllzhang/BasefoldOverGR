@@ -119,6 +119,41 @@ bool SameMerkleOpening(const MerkleOpening &lhs, const MerkleOpening &rhs) {
          lhs.auth_path.sibling_hashes == rhs.auth_path.sibling_hashes;
 }
 
+std::vector<std::vector<long>> CollectBaseQueryIndicesByTree(
+    const std::vector<IOPPQueryPlan> &query_plans,
+    const FoldableCodeParams &params) {
+  std::vector<std::vector<long>> requested;
+  requested.resize(static_cast<std::size_t>(params.d + 1));
+  for (const IOPPQueryPlan &plan : query_plans) {
+    for (long i = 0; i < params.d; ++i) {
+      const long mu_i = plan.mu_by_level[static_cast<std::size_t>(i)];
+      const long n_i = CodewordLengthAtLevel(params, i);
+      requested[static_cast<std::size_t>(i)].push_back(mu_i);
+      requested[static_cast<std::size_t>(i + 1)].push_back(mu_i);
+      requested[static_cast<std::size_t>(i + 1)].push_back(mu_i + n_i);
+    }
+  }
+  for (std::vector<long> &indices : requested) {
+    SortAndUniqueIndices(indices);
+  }
+  return requested;
+}
+
+const FieldElement *FindMerkleMultiproofValue(const MerkleMultiproof &proof,
+                                              long index) {
+  if (static_cast<long>(proof.values.length()) !=
+      static_cast<long>(proof.queried_indices.size())) {
+    return nullptr;
+  }
+  const auto it = std::lower_bound(proof.queried_indices.begin(),
+                                   proof.queried_indices.end(), index);
+  if (it == proof.queried_indices.end() || *it != index) {
+    return nullptr;
+  }
+  const std::size_t pos = static_cast<std::size_t>(it - proof.queried_indices.begin());
+  return &proof.values[static_cast<long>(pos)];
+}
+
 template <typename Fn>
 void ForEachIndexMaybeParallel(long begin, long end, long parallel_threshold,
                                const Fn &fn) {
@@ -2269,34 +2304,23 @@ BaseFoldPCSProveEvalUnchecked(const vec_ZZ_pE &f_coeffs,
 
   proof.pi0_full = oracles.pi[0];
 
-  proof.query_proofs.resize(static_cast<std::size_t>(num_queries));
-
   const long n_last = CodewordLengthAtLevelNoValidate(params, params.d - 1);
+  std::vector<IOPPQueryPlan> query_plans;
+  query_plans.resize(static_cast<std::size_t>(num_queries));
   for (long q = 0; q < num_queries; ++q) {
     const long mu =
         transcript.ChallengeIndex("mu/" + std::to_string(q), n_last);
-    const IOPPQueryPlan plan = MakeQueryPlanNoValidate(mu, params);
+    query_plans[static_cast<std::size_t>(q)] = MakeQueryPlanNoValidate(mu, params);
+  }
 
-    BaseFoldPCSQueryProof qp;
-    qp.left.resize(static_cast<std::size_t>(params.d));
-    qp.right.resize(static_cast<std::size_t>(params.d));
-    qp.folded.resize(static_cast<std::size_t>(params.d));
-
-    for (long i = 0; i < params.d; ++i) {
-      const long mu_i = plan.mu_by_level[static_cast<std::size_t>(i)];
-      const long n_i = CodewordLengthAtLevelNoValidate(params, i);
-      qp.left[static_cast<std::size_t>(i)] =
-          merkle[static_cast<std::size_t>(i + 1)].Open(
-              oracles.pi[static_cast<std::size_t>(i + 1)], mu_i);
-      qp.right[static_cast<std::size_t>(i)] =
-          merkle[static_cast<std::size_t>(i + 1)].Open(
-              oracles.pi[static_cast<std::size_t>(i + 1)], mu_i + n_i);
-      qp.folded[static_cast<std::size_t>(i)] =
-          merkle[static_cast<std::size_t>(i)].Open(
-              oracles.pi[static_cast<std::size_t>(i)], mu_i);
-    }
-
-    proof.query_proofs[static_cast<std::size_t>(q)] = std::move(qp);
+  proof.query_multiproofs.resize(static_cast<std::size_t>(params.d + 1));
+  const std::vector<std::vector<long>> requested_indices_by_tree =
+      CollectBaseQueryIndicesByTree(query_plans, params);
+  for (long tree_level = 0; tree_level <= params.d; ++tree_level) {
+    proof.query_multiproofs[static_cast<std::size_t>(tree_level)] =
+        merkle[static_cast<std::size_t>(tree_level)].OpenMany(
+            oracles.pi[static_cast<std::size_t>(tree_level)],
+            requested_indices_by_tree[static_cast<std::size_t>(tree_level)]);
   }
 
   return proof;
@@ -2325,8 +2349,13 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
     return false;
   if (static_cast<long>(proof.h_by_level.size()) != params.d)
     return false;
-  if (static_cast<long>(proof.query_proofs.size()) != num_queries)
+  const bool has_query_multiproofs = !proof.query_multiproofs.empty();
+  if (has_query_multiproofs) {
+    if (static_cast<long>(proof.query_multiproofs.size()) != params.d + 1)
+      return false;
+  } else if (static_cast<long>(proof.query_proofs.size()) != num_queries) {
     return false;
+  }
 
   if (proof.commitments.roots_by_level[static_cast<std::size_t>(params.d)] !=
       commitment_C) {
@@ -2350,6 +2379,11 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
       return false;
 
     return EvalMultilinearMonomialCoeffs(msg0, z) == claimed_y;
+  }
+
+  if (MerkleCommitOracle(proof.pi0_full) !=
+      proof.commitments.roots_by_level[0]) {
+    return false;
   }
 
   Sha256Transcript transcript;
@@ -2452,38 +2486,84 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
     query_plans[static_cast<std::size_t>(q)] = MakeQueryPlan(mu, params);
   }
 
+  const std::vector<std::vector<long>> requested_indices_by_tree =
+      CollectBaseQueryIndicesByTree(query_plans, params);
+
+  if (has_query_multiproofs) {
+    ScopedTimer query_timer(prof ? &prof->verify_query_merkle_ns : nullptr,
+                            prof ? &prof->verify_query_merkle_calls : nullptr);
+
+    for (long tree_level = 0; tree_level <= params.d; ++tree_level) {
+      const MerkleMultiproof &multiproof =
+          proof.query_multiproofs[static_cast<std::size_t>(tree_level)];
+      const std::vector<long> &expected_indices =
+          requested_indices_by_tree[static_cast<std::size_t>(tree_level)];
+      if (multiproof.queried_indices != expected_indices) {
+        return false;
+      }
+      if (static_cast<long>(multiproof.values.length()) !=
+          static_cast<long>(expected_indices.size())) {
+        return false;
+      }
+      const long leaf_count = CodewordLengthAtLevel(params, tree_level);
+      if (!MerkleVerifyMultiproof(
+              proof.commitments.roots_by_level[static_cast<std::size_t>(tree_level)],
+              leaf_count, multiproof)) {
+        return false;
+      }
+    }
+
+    auto verify_one_query = [&](long q) -> bool {
+      const IOPPQueryPlan &plan = query_plans[static_cast<std::size_t>(q)];
+      for (long i = params.d; i-- > 0;) {
+        const long mu = plan.mu_by_level[static_cast<std::size_t>(i)];
+        const long n_i = CodewordLengthAtLevel(params, i);
+        if (mu < 0 || mu >= n_i) {
+          return false;
+        }
+
+        const FieldElement *left = FindMerkleMultiproofValue(
+            proof.query_multiproofs[static_cast<std::size_t>(i + 1)], mu);
+        const FieldElement *right = FindMerkleMultiproofValue(
+            proof.query_multiproofs[static_cast<std::size_t>(i + 1)], mu + n_i);
+        const FieldElement *folded = FindMerkleMultiproofValue(
+            proof.query_multiproofs[static_cast<std::size_t>(i)], mu);
+        if (left == nullptr || right == nullptr || folded == nullptr) {
+          return false;
+        }
+
+        FieldElement x1, x2;
+        FoldingPoints(x1, x2, params, i, mu);
+        const FieldElement expected = EvalLineAt(
+            challenges.alphas[static_cast<std::size_t>(i)], x1, *left, x2, *right);
+        if (expected != *folded) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    return VerifyQueriesMaybeParallel(num_queries, prof, verify_one_query);
+  }
+
   const bool use_opening_cache =
       (prof != nullptr) || (ChooseQueryVerifyThreads(num_queries) <= 1);
-  std::vector<std::vector<long>> requested_indices_by_tree;
   std::vector<std::vector<MerkleOpening>> cached_openings_by_tree;
   std::vector<std::vector<unsigned char>> cached_openings_seen_by_tree;
   std::vector<std::vector<unsigned char>> cached_openings_valid_by_tree;
   if (use_opening_cache) {
-    requested_indices_by_tree.resize(static_cast<std::size_t>(params.d + 1));
-    for (const IOPPQueryPlan &plan : query_plans) {
-      for (long i = 0; i < params.d; ++i) {
-        const long mu_i = plan.mu_by_level[static_cast<std::size_t>(i)];
-        const long n_i = CodewordLengthAtLevel(params, i);
-        requested_indices_by_tree[static_cast<std::size_t>(i)].push_back(mu_i);
-        requested_indices_by_tree[static_cast<std::size_t>(i + 1)].push_back(
-            mu_i);
-        requested_indices_by_tree[static_cast<std::size_t>(i + 1)].push_back(
-            mu_i + n_i);
-      }
-    }
     cached_openings_by_tree.resize(static_cast<std::size_t>(params.d + 1));
     cached_openings_seen_by_tree.resize(static_cast<std::size_t>(params.d + 1));
     cached_openings_valid_by_tree.resize(static_cast<std::size_t>(params.d + 1));
     for (long tree_level = 0; tree_level <= params.d; ++tree_level) {
-      std::vector<long> &indices =
-          requested_indices_by_tree[static_cast<std::size_t>(tree_level)];
-      SortAndUniqueIndices(indices);
       cached_openings_by_tree[static_cast<std::size_t>(tree_level)].resize(
-          indices.size());
+          requested_indices_by_tree[static_cast<std::size_t>(tree_level)].size());
       cached_openings_seen_by_tree[static_cast<std::size_t>(tree_level)]
-          .assign(indices.size(), static_cast<unsigned char>(0));
+          .assign(requested_indices_by_tree[static_cast<std::size_t>(tree_level)].size(),
+                  static_cast<unsigned char>(0));
       cached_openings_valid_by_tree[static_cast<std::size_t>(tree_level)]
-          .assign(indices.size(), static_cast<unsigned char>(0));
+          .assign(requested_indices_by_tree[static_cast<std::size_t>(tree_level)].size(),
+                  static_cast<unsigned char>(0));
     }
   }
 
@@ -2523,11 +2603,6 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
       return false;
     if (static_cast<long>(qp.folded.size()) != params.d)
       return false;
-
-    if (MerkleCommitOracle(proof.pi0_full) !=
-        proof.commitments.roots_by_level[0]) {
-      return false;
-    }
 
     for (long i = params.d; i-- > 0;) {
       const long mu = plan.mu_by_level[static_cast<std::size_t>(i)];
@@ -2571,7 +2646,7 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
         return false;
     }
 
-    return IsCodewordC0(proof.pi0_full, params);
+    return true;
   };
 
   if (!VerifyQueriesMaybeParallel(num_queries, prof, verify_one_query)) {

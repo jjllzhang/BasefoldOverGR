@@ -733,7 +733,7 @@ void RunOneContext(const ContextSpec &spec, long c, long k0, long d,
 
     std::cout << "\n[" << spec.label << "] c=" << c << " k0=" << k0 << " d=" << d
               << "  mod=" << spec.mod << "  queries=" << num_queries
-              << "  (formula)";
+              << "  (formula upper bound)";
     if (use_extension_challenges) {
       std::cout << "  ext_challenges=on"
                 << "  ext_deg=" << challenge_degree;

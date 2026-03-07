@@ -220,10 +220,18 @@ void TestPCS_EvalProof_GF4() {
   const basefold::BaseFoldPCSEvalProof proof =
       basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries, params);
 
+  CHECK(static_cast<long>(proof.query_multiproofs.size()) == params.d + 1);
+  CHECK(proof.query_proofs.empty());
   CHECK(basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params));
 
   const ZZ_pE y_bad = y + testutil::ConstZZpE(1);
   CHECK(!basefold::BaseFoldPCSVerifyEval(C, z, y_bad, num_queries, proof, params));
+
+  basefold::BaseFoldPCSEvalProof proof_tampered = proof;
+  CHECK(proof_tampered.query_multiproofs[0].values.length() > 0);
+  proof_tampered.query_multiproofs[0].values[0] += testutil::ConstZZpE(1);
+  CHECK(!basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof_tampered,
+                                         params));
 }
 
 void TestPCS_EvalProof_GF4_k0_2() {
@@ -300,6 +308,8 @@ void TestPCS_EvalProof_GR42() {
   const basefold::BaseFoldPCSEvalProof proof =
       basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries, params);
 
+  CHECK(static_cast<long>(proof.query_multiproofs.size()) == params.d + 1);
+  CHECK(proof.query_proofs.empty());
   CHECK(basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params));
 
   const ZZ_pE y_bad = y + testutil::ConstZZpE(1);

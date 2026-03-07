@@ -402,6 +402,63 @@ void TestIOPP_GR42_MerkleOpenings() {
       open0));
 }
 
+void TestIOPP_MerkleMultiproof() {
+  testutil::PrintInfo("IOPP: Merkle multiproof verifies and rejects tampering");
+
+  const ZZ p = to_ZZ(2);
+  ZZ_pPush p_push(p);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush e_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  basefold::Oracle oracle;
+  oracle.SetLength(5);
+  oracle[0] = testutil::ConstZZpE(0);
+  oracle[1] = testutil::ConstZZpE(1);
+  oracle[2] = alpha;
+  oracle[3] = alpha + testutil::ConstZZpE(1);
+  oracle[4] = testutil::ConstZZpE(1);
+
+  const basefold::MerkleRoot root = basefold::MerkleCommitOracle(oracle);
+  const std::vector<long> queried = {4, 1, 1, 3};
+  const basefold::MerkleMultiproof proof =
+      basefold::MerkleOpenOracleMany(oracle, queried);
+
+  CHECK(proof.queried_indices.size() == 3U);
+  CHECK(proof.queried_indices[0] == 1);
+  CHECK(proof.queried_indices[1] == 3);
+  CHECK(proof.queried_indices[2] == 4);
+  CHECK(basefold::MerkleVerifyMultiproof(root, oracle.length(), proof));
+
+  basefold::MerkleMultiproof proof_value_tampered = proof;
+  proof_value_tampered.values[0] += testutil::ConstZZpE(1);
+  CHECK(!basefold::MerkleVerifyMultiproof(root, oracle.length(),
+                                          proof_value_tampered));
+
+  basefold::MerkleMultiproof proof_hash_tampered = proof;
+  CHECK(!proof_hash_tampered.sibling_hashes.empty());
+  proof_hash_tampered.sibling_hashes[0][0] ^=
+      static_cast<basefold::Byte>(0x01);
+  CHECK(!basefold::MerkleVerifyMultiproof(root, oracle.length(),
+                                          proof_hash_tampered));
+
+  basefold::MerkleMultiproof proof_order_tampered = proof;
+  std::swap(proof_order_tampered.queried_indices[0],
+            proof_order_tampered.queried_indices[1]);
+  CHECK(!basefold::MerkleVerifyMultiproof(root, oracle.length(),
+                                          proof_order_tampered));
+
+  CHECK(!basefold::MerkleVerifyMultiproof(root, oracle.length() - 1, proof));
+}
+
 void TestIOPP_DecodeC0() {
   testutil::PrintInfo("IOPP: DecodeC0 recovers a witness for pi0");
 
@@ -500,6 +557,7 @@ int main() {
     RUN_TEST(TestIOPP_GR42_CommitAndQuery);
     RUN_TEST(TestIOPP_MerkleOpenings);
     RUN_TEST(TestIOPP_GR42_MerkleOpenings);
+    RUN_TEST(TestIOPP_MerkleMultiproof);
     RUN_TEST(TestIOPP_DecodeC0);
     RUN_TEST(TestIOPP_GR42_DecodeC0);
   } catch (const exception &e) {

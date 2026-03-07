@@ -94,8 +94,13 @@ struct BaseFoldPCSEvalProof {
   // Extension-challenge compact path: may be empty.
   Oracle pi0_full;
 
+  // Shared base openings grouped by oracle level π_0..π_d.
+  // Base-challenge path may populate this and leave query_proofs empty.
+  std::vector<MerkleMultiproof> query_multiproofs;
+
   // Base openings for ℓ independent IOPP.query repetitions.
-  // See BaseFoldPCSQueryProof comment for compact extension-challenge layout.
+  // Used by the extension-challenge compact path, and accepted as a legacy
+  // base-challenge layout when query_multiproofs is empty.
   std::vector<BaseFoldPCSQueryProof> query_proofs;
 
   // Optional extension-ring payload used when

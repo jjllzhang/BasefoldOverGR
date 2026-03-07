@@ -37,6 +37,17 @@ std::size_t SerializedMerkleOpeningSize(const MerkleOpening &o) {
   return total;
 }
 
+std::size_t SerializedMerkleMultiproofSize(const MerkleMultiproof &proof) {
+  static constexpr std::size_t kHashBytes = 32;
+  std::size_t total = 0;
+  total += proof.queried_indices.size() * 8;  // indices as u64
+  for (long i = 0; i < proof.values.length(); ++i) {
+    total += SerializedFieldElementSize(proof.values[i]);
+  }
+  total += proof.sibling_hashes.size() * kHashBytes;
+  return total;
+}
+
 std::size_t SerializedExtensionElementSize(const NTL::ZZ_pEX &x) {
   const long d = NTL::deg(x);
   std::size_t total = 8;  // coeff count as u64
@@ -75,6 +86,10 @@ std::uint64_t BaseFoldPCSEvalProofSizeBytes(const BaseFoldPCSEvalProof &p) {
 
   for (long i = 0; i < p.pi0_full.length(); ++i) {
     total += static_cast<std::uint64_t>(SerializedFieldElementSize(p.pi0_full[i]));
+  }
+
+  for (const MerkleMultiproof &proof : p.query_multiproofs) {
+    total += static_cast<std::uint64_t>(SerializedMerkleMultiproofSize(proof));
   }
 
   for (const BaseFoldPCSQueryProof &qp : p.query_proofs) {

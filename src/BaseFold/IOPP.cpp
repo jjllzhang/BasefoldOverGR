@@ -377,6 +377,118 @@ std::size_t ExpectedMerkleHeight(long leaf_count) {
   return height;
 }
 
+struct MerkleMultiproofPlanLevel {
+  std::vector<long> node_indices;
+  std::vector<long> sibling_indices;
+  std::vector<long> parent_indices;
+};
+
+struct MerkleMultiproofPlan {
+  long tree_leaf_count = 0;
+  long padded_leaf_count = 0;
+  std::vector<long> queried_indices;
+  std::vector<MerkleMultiproofPlanLevel> levels;
+  MerkleMultiproofStats stats;
+};
+
+long NextPowerOfTwoLong(long x) {
+  if (x <= 1)
+    return 1;
+  long value = 1;
+  while (value < x) {
+    if (value > std::numeric_limits<long>::max() / 2) {
+      LogicError("NextPowerOfTwoLong: overflow");
+    }
+    value *= 2;
+  }
+  return value;
+}
+
+bool IsSortedUniqueMerkleIndicesInRange(long leaf_count,
+                                        const std::vector<long> &indices) {
+  if (leaf_count < 0) {
+    return false;
+  }
+  long prev = -1;
+  for (long index : indices) {
+    if (index < 0 || index >= leaf_count) {
+      return false;
+    }
+    if (prev >= 0 && index <= prev) {
+      return false;
+    }
+    prev = index;
+  }
+  return true;
+}
+
+std::vector<long> SortAndValidateMerkleIndicesOrThrow(
+    long leaf_count, const std::vector<long> &queried_indices,
+    const char *func_name) {
+  if (leaf_count < 0) {
+    const std::string msg = std::string(func_name) + ": invalid leaf count";
+    LogicError(msg.c_str());
+  }
+  std::vector<long> unique = queried_indices;
+  std::sort(unique.begin(), unique.end());
+  unique.erase(std::unique(unique.begin(), unique.end()), unique.end());
+  for (long index : unique) {
+    if (index < 0 || index >= leaf_count) {
+      const std::string msg = std::string(func_name) + ": index out of range";
+      LogicError(msg.c_str());
+    }
+  }
+  return unique;
+}
+
+MerkleMultiproofPlan BuildMerkleMultiproofPlanFromSortedUnique(
+    long leaf_count, const std::vector<long> &queried_indices) {
+  MerkleMultiproofPlan plan;
+  plan.tree_leaf_count = leaf_count;
+  if (leaf_count <= 0) {
+    return plan;
+  }
+
+  plan.padded_leaf_count = NextPowerOfTwoLong(leaf_count);
+  plan.queried_indices = queried_indices;
+  plan.stats.opened_leaf_count =
+      static_cast<std::uint64_t>(queried_indices.size());
+
+  if (queried_indices.empty()) {
+    return plan;
+  }
+
+  std::vector<long> current = queried_indices;
+  long level_width = plan.padded_leaf_count;
+  while (level_width > 1) {
+    MerkleMultiproofPlanLevel level;
+    level.node_indices = current;
+    level.sibling_indices.reserve((current.size() + 1U) / 2U);
+    level.parent_indices.reserve((current.size() + 1U) / 2U);
+
+    for (std::size_t i = 0; i < current.size();) {
+      const long node = current[i];
+      const bool has_paired_sibling =
+          (i + 1U < current.size()) && ((node & 1L) == 0L) &&
+          (current[i + 1U] == node + 1L);
+      if (!has_paired_sibling) {
+        level.sibling_indices.push_back(node ^ 1L);
+      }
+      level.parent_indices.push_back(node / 2L);
+      i += has_paired_sibling ? 2U : 1U;
+    }
+
+    plan.stats.unique_sibling_count +=
+        static_cast<std::uint64_t>(level.sibling_indices.size());
+    current = level.parent_indices;
+    plan.levels.push_back(std::move(level));
+    level_width /= 2L;
+  }
+
+  plan.stats.verifier_hashes = plan.stats.unique_sibling_count;
+  return plan;
+}
+
 Digest MerkleRootRaw(std::vector<Digest> level) {
   if (level.empty())
     return HashWithPrefix(static_cast<Byte>(0x04));
@@ -764,6 +876,12 @@ MerkleOpening MerkleOpenOracle(const Oracle &oracle, long index) {
   return opening;
 }
 
+MerkleMultiproof MerkleOpenOracleMany(const Oracle &oracle,
+                                      const std::vector<long> &queried_indices) {
+  const MerkleTree tree = MerkleTree::Build(oracle);
+  return tree.OpenMany(oracle, queried_indices);
+}
+
 bool MerkleVerifyOpening(const MerkleRoot &root, long leaf_count,
                          const MerkleOpening &opening) {
   Profile *prof = ActiveProfile();
@@ -793,6 +911,115 @@ bool MerkleVerifyOpening(const MerkleRoot &root, long leaf_count,
 
   const Digest expected_root = HashRootWithCount(leaf_count, cur);
   return expected_root == root;
+}
+
+MerkleMultiproofStats PlanMerkleMultiproof(
+    long leaf_count, const std::vector<long> &queried_indices) {
+  const std::vector<long> unique = SortAndValidateMerkleIndicesOrThrow(
+      leaf_count, queried_indices, "PlanMerkleMultiproof");
+  return BuildMerkleMultiproofPlanFromSortedUnique(leaf_count, unique).stats;
+}
+
+bool MerkleVerifyMultiproof(const MerkleRoot &root, long leaf_count,
+                            const MerkleMultiproof &proof) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->merkle_verify_opening_ns : nullptr,
+                    prof ? &prof->merkle_verify_opening_calls : nullptr);
+
+  if (leaf_count < 0) {
+    return false;
+  }
+  if (static_cast<long>(proof.values.length()) !=
+      static_cast<long>(proof.queried_indices.size())) {
+    return false;
+  }
+
+  if (leaf_count == 0) {
+    if (!proof.queried_indices.empty() || proof.values.length() != 0 ||
+        !proof.sibling_hashes.empty()) {
+      return false;
+    }
+    return root == HashRootWithCount(0, HashWithPrefix(static_cast<Byte>(0x04)));
+  }
+
+  if (!IsSortedUniqueMerkleIndicesInRange(leaf_count, proof.queried_indices)) {
+    return false;
+  }
+
+  const MerkleMultiproofPlan plan =
+      BuildMerkleMultiproofPlanFromSortedUnique(leaf_count, proof.queried_indices);
+  if (proof.sibling_hashes.size() !=
+      static_cast<std::size_t>(plan.stats.unique_sibling_count)) {
+    return false;
+  }
+
+  if (proof.queried_indices.empty()) {
+    return proof.sibling_hashes.empty();
+  }
+
+  std::vector<std::pair<long, Digest>> current;
+  current.resize(proof.queried_indices.size());
+  for (std::size_t i = 0; i < proof.queried_indices.size(); ++i) {
+    current[i] = {proof.queried_indices[i],
+                  HashLeaf(proof.queried_indices[i], proof.values[static_cast<long>(i)])};
+  }
+
+  std::size_t sibling_cursor = 0;
+  for (const MerkleMultiproofPlanLevel &level : plan.levels) {
+    if (current.size() != level.node_indices.size()) {
+      return false;
+    }
+    for (std::size_t i = 0; i < current.size(); ++i) {
+      if (current[i].first != level.node_indices[i]) {
+        return false;
+      }
+    }
+
+    std::vector<std::pair<long, Digest>> parents;
+    parents.resize(level.parent_indices.size());
+    std::size_t parent_count = 0;
+    for (std::size_t i = 0; i < current.size();) {
+      const long index = current[i].first;
+      const Digest &hash = current[i].second;
+      const bool has_adjacent =
+          (i + 1U < current.size()) && ((index & 1L) == 0L) &&
+          (current[i + 1U].first == index + 1L);
+      if (parent_count >= parents.size()) {
+        return false;
+      }
+
+      const long parent_index = index / 2L;
+      if (parent_index != level.parent_indices[parent_count]) {
+        return false;
+      }
+
+      Digest parent_hash;
+      if (has_adjacent) {
+        parent_hash = HashNode(hash, current[i + 1U].second);
+        i += 2U;
+      } else {
+        if (sibling_cursor >= proof.sibling_hashes.size()) {
+          return false;
+        }
+        const Digest &sibling = proof.sibling_hashes[sibling_cursor++];
+        parent_hash = ((index & 1L) == 0L) ? HashNode(hash, sibling)
+                                           : HashNode(sibling, hash);
+        ++i;
+      }
+
+      parents[parent_count] = {parent_index, parent_hash};
+      ++parent_count;
+    }
+    if (parent_count != parents.size()) {
+      return false;
+    }
+    current = std::move(parents);
+  }
+
+  if (sibling_cursor != proof.sibling_hashes.size() || current.size() != 1U) {
+    return false;
+  }
+  return HashRootWithCount(leaf_count, current.front().second) == root;
 }
 
 MerkleTree MerkleTree::Build(const Oracle &oracle) {
@@ -936,6 +1163,43 @@ MerkleOpening MerkleTree::Open(const Oracle &oracle, long index) const {
   opening.value = oracle[index];
   opening.auth_path = std::move(path);
   return opening;
+}
+
+MerkleMultiproof MerkleTree::OpenMany(
+    const Oracle &oracle, const std::vector<long> &queried_indices) const {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->merkle_tree_open_ns : nullptr,
+                    prof ? &prof->merkle_tree_open_calls : nullptr);
+
+  if (oracle.length() != leaf_count_) {
+    LogicError("MerkleTree::OpenMany: oracle length mismatch");
+  }
+  const std::vector<long> unique = SortAndValidateMerkleIndicesOrThrow(
+      leaf_count_, queried_indices, "MerkleTree::OpenMany");
+
+  MerkleMultiproof proof;
+  proof.queried_indices = unique;
+  proof.values.SetLength(static_cast<long>(unique.size()));
+  if (unique.empty()) {
+    return proof;
+  }
+
+  const MerkleMultiproofPlan plan =
+      BuildMerkleMultiproofPlanFromSortedUnique(leaf_count_, unique);
+  for (std::size_t i = 0; i < unique.size(); ++i) {
+    proof.values[static_cast<long>(i)] =
+        oracle[static_cast<long>(unique[i])];
+  }
+  proof.sibling_hashes.reserve(
+      static_cast<std::size_t>(plan.stats.unique_sibling_count));
+  for (std::size_t level_index = 0; level_index < plan.levels.size();
+       ++level_index) {
+    const std::vector<Digest> &level = levels_[level_index];
+    for (long sibling : plan.levels[level_index].sibling_indices) {
+      proof.sibling_hashes.push_back(level[static_cast<std::size_t>(sibling)]);
+    }
+  }
+  return proof;
 }
 
 IOPPChallenges
