@@ -8,14 +8,14 @@
 #include <iostream>
 #include <string>
 
-extern int g_failures;
+extern int g_test_failure_count;
 
 inline void Check(bool condition, const std::string &message, const char *file,
                   int line) {
   if (condition)
     return;
   std::cerr << file << ":" << line << " FAIL: " << message << "\n";
-  g_failures++;
+  g_test_failure_count++;
 }
 
 #define CHECK(cond) Check((cond), #cond, __FILE__, __LINE__)
@@ -64,9 +64,9 @@ inline NTL::ZZ_pE ConstZZpE(long value) {
 #define RUN_TEST(fn)                                                           \
   do {                                                                         \
     testutil::PrintTestStart(#fn);                                             \
-    const int _before = g_failures;                                            \
+    const int _before = g_test_failure_count;                                  \
     fn();                                                                      \
-    const int _after = g_failures;                                             \
+    const int _after = g_test_failure_count;                                   \
     testutil::PrintTestResult(#fn, _after - _before);                          \
   } while (0)
 

@@ -77,8 +77,8 @@ int ParsePositiveEnvInt(const char *name, int fallback) {
 
 MerkleBuildParallelConfig ParseMerkleBuildParallelConfigFromEnv() {
   MerkleBuildParallelConfig cfg;
-  cfg.leafs_per_thread = ParsePositiveEnvLong(
-      "BASEFOLD_MERKLE_LEAFS_PER_THREAD", cfg.leafs_per_thread);
+  cfg.leaves_per_thread = ParsePositiveEnvLong(
+      "BASEFOLD_MERKLE_LEAVES_PER_THREAD", cfg.leaves_per_thread);
   cfg.parallel_level_threshold = ParsePositiveEnvLong(
       "BASEFOLD_MERKLE_PARALLEL_LEVEL_THRESHOLD",
       cfg.parallel_level_threshold);
@@ -94,7 +94,7 @@ MerkleBuildParallelConfig &MutableMerkleBuildParallelConfig() {
 
 MerkleBuildParallelConfig LoadMerkleBuildParallelConfig() {
   MerkleBuildParallelConfig cfg = MutableMerkleBuildParallelConfig();
-  if (cfg.leafs_per_thread <= 0) cfg.leafs_per_thread = 32768;
+  if (cfg.leaves_per_thread <= 0) cfg.leaves_per_thread = 32768;
   if (cfg.parallel_level_threshold <= 0) cfg.parallel_level_threshold = 8192;
   if (cfg.max_threads <= 0) cfg.max_threads = 8;
   return cfg;
@@ -103,9 +103,9 @@ MerkleBuildParallelConfig LoadMerkleBuildParallelConfig() {
 int ChooseMerkleBuildThreads(long leaf_count,
                              const MerkleBuildParallelConfig &cfg) {
 #if defined(BASEFOLD_USE_OPENMP)
-  if (leaf_count < cfg.leafs_per_thread) return 1;
+  if (leaf_count < cfg.leaves_per_thread) return 1;
   const int max_threads = omp_get_max_threads();
-  int threads_to_use = static_cast<int>(leaf_count / cfg.leafs_per_thread);
+  int threads_to_use = static_cast<int>(leaf_count / cfg.leaves_per_thread);
   if (threads_to_use > cfg.max_threads) threads_to_use = cfg.max_threads;
   if (threads_to_use > max_threads) threads_to_use = max_threads;
   if (threads_to_use < 1) threads_to_use = 1;
@@ -184,10 +184,10 @@ bool BaseModulusIsPrime() {
   return cached_is_prime;
 }
 
-bool IsUnit(const ZZ_pE &a) {
+bool IsUnitInCurrentZZpEContext(const ZZ_pE &a) {
   if (a == 0) return false;
   const long r = ZZ_pE::degree();
-  if (r <= 0) LogicError("IsUnit: invalid extension degree");
+  if (r <= 0) LogicError("IsUnitInCurrentZZpEContext: invalid extension degree");
   if (r == 1) {
     return IsUnitInBaseRing(coeff(rep(a), 0));
   }
@@ -198,14 +198,16 @@ bool IsUnit(const ZZ_pE &a) {
   return false;
 }
 
-bool TryInvertUnit(ZZ_pE &inv_out, const ZZ_pE &a) {
+bool TryInvertUnitInCurrentZZpEContext(ZZ_pE &inv_out, const ZZ_pE &a) {
   Profile *prof = ActiveProfile();
   ScopedTimer timer(prof ? &prof->try_invert_unit_ns : nullptr,
                     prof ? &prof->try_invert_unit_calls : nullptr);
 
   if (a == 0) return false;
   const long r = ZZ_pE::degree();
-  if (r <= 0) LogicError("TryInvertUnit: invalid extension degree");
+  if (r <= 0) {
+    LogicError("TryInvertUnitInCurrentZZpEContext: invalid extension degree");
+  }
 
   // Context-aware single-entry cache: inversions are often repeated (e.g. when
   // diag_T is constant, all folding denominators match).
@@ -237,9 +239,9 @@ bool TryInvertUnit(ZZ_pE &inv_out, const ZZ_pE &a) {
     bool is_unit = false;
     if (prof != nullptr) {
       ScopedTimer is_unit_timer(&prof->is_unit_ns, &prof->is_unit_calls);
-      is_unit = IsUnit(a);
+      is_unit = IsUnitInCurrentZZpEContext(a);
     } else {
-      is_unit = IsUnit(a);
+      is_unit = IsUnitInCurrentZZpEContext(a);
     }
     if (!is_unit) return false;
 
@@ -299,8 +301,8 @@ bool TryInvertUnit(ZZ_pE &inv_out, const ZZ_pE &a) {
   return true;
 }
 
-Digest HashWithPrefix(Byte prefix) {
-  return HashDigest(&prefix, 1, "HashWithPrefix");
+Digest HashWithDomainTagByte(Byte domain_tag_byte) {
+  return HashDigest(&domain_tag_byte, 1, "HashWithDomainTagByte");
 }
 
 Digest HashNode(const Digest &left, const Digest &right) {
@@ -370,7 +372,7 @@ using MerkleMultiproofPlanLevel = multiproof_planner::PlanLevel;
 
 Digest MerkleRootRaw(std::vector<Digest> level) {
   if (level.empty())
-    return HashWithPrefix(static_cast<Byte>(0x04));
+    return HashWithDomainTagByte(static_cast<Byte>(0x04));
 
   while (level.size() > 1) {
     if (level.size() % 2 == 1)
@@ -412,7 +414,7 @@ bool SolveLinearSystemRref(vec_ZZ_pE &x_out, mat_ZZ_pE &aug) {
 
     for (long c = col; c < n; ++c) {
       for (long r = row; r < m; ++r) {
-        if (TryInvertUnit(inv_pivot, aug[r][c])) {
+        if (TryInvertUnitInCurrentZZpEContext(inv_pivot, aug[r][c])) {
           pivot_row = r;
           pivot_col = c;
           break;
@@ -542,7 +544,7 @@ FieldElement EvalLineAt(const FieldElement &x, const FieldElement &x1,
   if (denom == 0)
     LogicError("EvalLineAt: x1 must not equal x2");
   ZZ_pE inv_denom;
-  if (!TryInvertUnit(inv_denom, denom)) {
+  if (!TryInvertUnitInCurrentZZpEContext(inv_denom, denom)) {
     LogicError("EvalLineAt: x2-x1 must be a unit");
   }
   return y1 + (x - x1) * (y2 - y1) * inv_denom;
@@ -583,12 +585,12 @@ void ProverCommitAll(IOPPOracles &oracles, const Oracle &pi_d,
   if (pi_d.length() != n_d)
     LogicError("ProverCommitAll: pi_d has wrong length");
 
-  oracles.pi.resize(static_cast<std::size_t>(params.d + 1));
-  oracles.pi[static_cast<std::size_t>(params.d)] = pi_d;
+  oracles.oracles_by_level.resize(static_cast<std::size_t>(params.d + 1));
+  oracles.oracles_by_level[static_cast<std::size_t>(params.d)] = pi_d;
 
   for (long i = params.d; i-- > 0;) {
-    ProverCommitRound(oracles.pi[static_cast<std::size_t>(i)],
-                      oracles.pi[static_cast<std::size_t>(i + 1)],
+    ProverCommitRound(oracles.oracles_by_level[static_cast<std::size_t>(i)],
+                      oracles.oracles_by_level[static_cast<std::size_t>(i + 1)],
                       challenges.alphas[static_cast<std::size_t>(i)], i,
                       params);
   }
@@ -630,11 +632,11 @@ bool VerifyQueryFromOpenings(const IOPPQueryPlan &plan,
     return false;
   if (static_cast<long>(plan.mu_by_level.size()) != params.d)
     return false;
-  if (static_cast<long>(openings.left.size()) != params.d)
+  if (static_cast<long>(openings.upper_left_by_level.size()) != params.d)
     return false;
-  if (static_cast<long>(openings.right.size()) != params.d)
+  if (static_cast<long>(openings.upper_right_by_level.size()) != params.d)
     return false;
-  if (static_cast<long>(openings.folded.size()) != params.d)
+  if (static_cast<long>(openings.folded_by_level.size()) != params.d)
     return false;
 
   for (long i = params.d; i-- > 0;) {
@@ -645,15 +647,17 @@ bool VerifyQueryFromOpenings(const IOPPQueryPlan &plan,
 
     FieldElement x1, x2;
     FoldingPoints(x1, x2, params, i, mu);
-    const FieldElement &y1 = openings.left[static_cast<std::size_t>(i)];
-    const FieldElement &y2 = openings.right[static_cast<std::size_t>(i)];
+    const FieldElement &y1 =
+        openings.upper_left_by_level[static_cast<std::size_t>(i)];
+    const FieldElement &y2 =
+        openings.upper_right_by_level[static_cast<std::size_t>(i)];
     const FieldElement expected = EvalLineAt(
         challenges.alphas[static_cast<std::size_t>(i)], x1, y1, x2, y2);
-    if (expected != openings.folded[static_cast<std::size_t>(i)])
+    if (expected != openings.folded_by_level[static_cast<std::size_t>(i)])
       return false;
   }
 
-  return IsCodewordC0(openings.pi0_full, params);
+  return IsCodewordC0(openings.pi0_codeword, params);
 }
 
 bool VerifyQueryFromOracles(const IOPPQueryPlan &plan,
@@ -665,11 +669,11 @@ bool VerifyQueryFromOracles(const IOPPQueryPlan &plan,
     return false;
   if (static_cast<long>(plan.mu_by_level.size()) != params.d)
     return false;
-  if (static_cast<long>(oracles.pi.size()) != params.d + 1)
+  if (static_cast<long>(oracles.oracles_by_level.size()) != params.d + 1)
     return false;
 
   for (long i = 0; i <= params.d; ++i) {
-    if (oracles.pi[static_cast<std::size_t>(i)].length() !=
+    if (oracles.oracles_by_level[static_cast<std::size_t>(i)].length() !=
         CodewordLengthAtLevel(params, i)) {
       return false;
     }
@@ -683,16 +687,17 @@ bool VerifyQueryFromOracles(const IOPPQueryPlan &plan,
 
     FieldElement x1, x2;
     FoldingPoints(x1, x2, params, i, mu);
-    const FieldElement &y1 = oracles.pi[static_cast<std::size_t>(i + 1)][mu];
+    const FieldElement &y1 =
+        oracles.oracles_by_level[static_cast<std::size_t>(i + 1)][mu];
     const FieldElement &y2 =
-        oracles.pi[static_cast<std::size_t>(i + 1)][mu + n_i];
+        oracles.oracles_by_level[static_cast<std::size_t>(i + 1)][mu + n_i];
     const FieldElement expected = EvalLineAt(
         challenges.alphas[static_cast<std::size_t>(i)], x1, y1, x2, y2);
-    if (expected != oracles.pi[static_cast<std::size_t>(i)][mu])
+    if (expected != oracles.oracles_by_level[static_cast<std::size_t>(i)][mu])
       return false;
   }
 
-  return IsCodewordC0(oracles.pi[0], params);
+  return IsCodewordC0(oracles.oracles_by_level[0], params);
 }
 
 MerkleRoot MerkleCommitOracle(const Oracle &oracle) {
@@ -704,7 +709,7 @@ MerkleRoot MerkleCommitOracle(const Oracle &oracle) {
   if (leaf_count < 0)
     LogicError("MerkleCommitOracle: invalid leaf count");
   if (leaf_count == 0)
-    return HashRootWithCount(0, HashWithPrefix(static_cast<Byte>(0x04)));
+    return HashRootWithCount(0, HashWithDomainTagByte(static_cast<Byte>(0x04)));
 
   std::vector<Digest> leaf_hashes;
   leaf_hashes.reserve(static_cast<std::size_t>(leaf_count));
@@ -745,7 +750,8 @@ bool MerkleVerifyMultiproofNoProfile(const MerkleRoot &root, long leaf_count,
         !proof.sibling_hashes.empty()) {
       return false;
     }
-    return root == HashRootWithCount(0, HashWithPrefix(static_cast<Byte>(0x04)));
+    return root ==
+           HashRootWithCount(0, HashWithDomainTagByte(static_cast<Byte>(0x04)));
   }
 
   if (!multiproof_planner::IsSortedUniqueIndicesInRange(
@@ -819,7 +825,7 @@ MerkleTree MerkleTree::Build(const Oracle &oracle) {
   t.raw_root_ = Digest{};
 
   if (leaf_count == 0) {
-    t.raw_root_ = HashWithPrefix(static_cast<Byte>(0x04));
+    t.raw_root_ = HashWithDomainTagByte(static_cast<Byte>(0x04));
     return t;
   }
 
@@ -1022,7 +1028,7 @@ bool DecodeC0(vec_ZZ_pE &msg0_out, const Oracle &pi0,
     ZZ_pE inv_g;
     long pivot = -1;
     for (long j = 0; j < n0; ++j) {
-      if (TryInvertUnit(inv_g, params.G0[0][j])) {
+      if (TryInvertUnitInCurrentZZpEContext(inv_g, params.G0[0][j])) {
         pivot = j;
         break;
       }

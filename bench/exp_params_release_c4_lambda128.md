@@ -11,7 +11,7 @@
 - 构建：`Release`
 - 指标：
   - `commit time`：`bench_pcs_commit` 的 `commit mean`
-  - `prover time`：`bench_pcs_eval` 的 `prover mean`
+  - `prover time`：`bench_pcs_eval` 的 `prove-phase mean`
   - `verifier time`：`bench_pcs_eval` 的 `verifier mean`
   - `proof size`：`bench_pcs_eval` 对真实 proof 走 fixed-width `CountingSink`
     得到的精确 payload 大小（省略 verifier 可从 transcript 重建的

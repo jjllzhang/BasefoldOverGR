@@ -34,7 +34,7 @@ using std::exception;
 using std::ostringstream;
 using std::string;
 
-int g_failures = 0;
+int g_test_failure_count = 0;
 
 namespace {
 
@@ -112,7 +112,8 @@ basefold::FoldableCodeParams BuildParamsGF4_k0_2(const ZZ &p, const ZZ_pE &alpha
   return params;
 }
 
-basefold::FoldableCodeParams BuildParamsGR42(const ZZ &p, const ZZ_pE &alpha) {
+basefold::FoldableCodeParams BuildParamsGR_4_2(const ZZ &p,
+                                               const ZZ_pE &alpha) {
   const long c = 2;
   const long k0 = 1;
   const long d = 2;
@@ -147,7 +148,8 @@ basefold::FoldableCodeParams BuildParamsGR42(const ZZ &p, const ZZ_pE &alpha) {
   return params;
 }
 
-basefold::FoldableCodeParams BuildParamsGR42_k0_2(const ZZ &p, const ZZ_pE &alpha) {
+basefold::FoldableCodeParams BuildParamsGR_4_2_k0_2(const ZZ &p,
+                                                    const ZZ_pE &alpha) {
   const long c = 2;
   const long k0 = 2;
   const long d = 2;
@@ -216,10 +218,11 @@ void TestPCS_EvalProof_GF4() {
   const std::vector<ZZ_pE> z = {alpha, alpha + testutil::ConstZZpE(1)};
   const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
 
-  const basefold::MerkleRoot C = basefold::BaseFoldPCSCommit(f_coeffs, params);
+  const basefold::MerkleRoot commitment_root =
+      basefold::BaseFoldPCSCommit(f_coeffs, params);
   const basefold::BaseFoldPCSCommitArtifacts commit_artifacts =
       basefold::BaseFoldPCSBuildCommitArtifacts(f_coeffs, params);
-  CHECK(commit_artifacts.root_d == C);
+  CHECK(commit_artifacts.root_d == commitment_root);
   const long num_queries = 3;
   const basefold::BaseFoldPCSEvalProof proof =
       basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries, params);
@@ -228,25 +231,27 @@ void TestPCS_EvalProof_GF4() {
           f_coeffs, z, y, num_queries, params, commit_artifacts);
 
   CHECK(static_cast<long>(proof.query_multiproofs.size()) == params.d + 1);
-  CHECK(basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params));
-  CHECK(basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries,
+  CHECK(basefold::BaseFoldPCSVerifyEval(commitment_root, z, y, num_queries,
+                                        proof, params));
+  CHECK(basefold::BaseFoldPCSVerifyEval(commitment_root, z, y, num_queries,
                                         proof_from_committed, params));
   basefold::BaseFoldPCSEvalProof proof_without_indices = proof;
   for (basefold::MerkleMultiproof &multiproof :
        proof_without_indices.query_multiproofs) {
     multiproof.queried_indices.clear();
   }
-  CHECK(basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries,
+  CHECK(basefold::BaseFoldPCSVerifyEval(commitment_root, z, y, num_queries,
                                         proof_without_indices, params));
 
   const ZZ_pE y_bad = y + testutil::ConstZZpE(1);
-  CHECK(!basefold::BaseFoldPCSVerifyEval(C, z, y_bad, num_queries, proof, params));
+  CHECK(!basefold::BaseFoldPCSVerifyEval(commitment_root, z, y_bad, num_queries,
+                                         proof, params));
 
   basefold::BaseFoldPCSEvalProof proof_tampered = proof;
   CHECK(proof_tampered.query_multiproofs[0].values.length() > 0);
   proof_tampered.query_multiproofs[0].values[0] += testutil::ConstZZpE(1);
-  CHECK(!basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof_tampered,
-                                         params));
+  CHECK(!basefold::BaseFoldPCSVerifyEval(commitment_root, z, y, num_queries,
+                                         proof_tampered, params));
 }
 
 void TestPCS_EvalProof_GF4_k0_2() {
@@ -277,15 +282,18 @@ void TestPCS_EvalProof_GF4_k0_2() {
   const std::vector<ZZ_pE> z = {alpha, alpha + testutil::ConstZZpE(1), alpha};
   const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
 
-  const basefold::MerkleRoot C = basefold::BaseFoldPCSCommit(f_coeffs, params);
+  const basefold::MerkleRoot commitment_root =
+      basefold::BaseFoldPCSCommit(f_coeffs, params);
   const long num_queries = 3;
   const basefold::BaseFoldPCSEvalProof proof =
       basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries, params);
 
-  CHECK(basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params));
+  CHECK(basefold::BaseFoldPCSVerifyEval(commitment_root, z, y, num_queries,
+                                        proof, params));
 
   const ZZ_pE y_bad = y + testutil::ConstZZpE(1);
-  CHECK(!basefold::BaseFoldPCSVerifyEval(C, z, y_bad, num_queries, proof, params));
+  CHECK(!basefold::BaseFoldPCSVerifyEval(commitment_root, z, y_bad, num_queries,
+                                         proof, params));
 }
 
 void TestPCS_EvalProof_GR42() {
@@ -306,7 +314,7 @@ void TestPCS_EvalProof_GR42() {
   ZZ_pE alpha;
   conv(alpha, xpoly);
 
-  const basefold::FoldableCodeParams params = BuildParamsGR42(p, alpha);
+  const basefold::FoldableCodeParams params = BuildParamsGR_4_2(p, alpha);
 
   vec_ZZ_pE f_coeffs;
   f_coeffs.SetLength(basefold::MessageLength(params));
@@ -318,16 +326,19 @@ void TestPCS_EvalProof_GR42() {
   const std::vector<ZZ_pE> z = {alpha + testutil::ConstZZpE(1), testutil::ConstZZpE(3)};
   const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
 
-  const basefold::MerkleRoot C = basefold::BaseFoldPCSCommit(f_coeffs, params);
+  const basefold::MerkleRoot commitment_root =
+      basefold::BaseFoldPCSCommit(f_coeffs, params);
   const long num_queries = 4;
   const basefold::BaseFoldPCSEvalProof proof =
       basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries, params);
 
   CHECK(static_cast<long>(proof.query_multiproofs.size()) == params.d + 1);
-  CHECK(basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params));
+  CHECK(basefold::BaseFoldPCSVerifyEval(commitment_root, z, y, num_queries,
+                                        proof, params));
 
   const ZZ_pE y_bad = y + testutil::ConstZZpE(1);
-  CHECK(!basefold::BaseFoldPCSVerifyEval(C, z, y_bad, num_queries, proof, params));
+  CHECK(!basefold::BaseFoldPCSVerifyEval(commitment_root, z, y_bad, num_queries,
+                                         proof, params));
 }
 
 void TestPCS_EvalProof_GR42_k0_2() {
@@ -348,7 +359,7 @@ void TestPCS_EvalProof_GR42_k0_2() {
   ZZ_pE alpha;
   conv(alpha, xpoly);
 
-  const basefold::FoldableCodeParams params = BuildParamsGR42_k0_2(p, alpha);
+  const basefold::FoldableCodeParams params = BuildParamsGR_4_2_k0_2(p, alpha);
 
   vec_ZZ_pE f_coeffs;
   f_coeffs.SetLength(basefold::MessageLength(params));
@@ -359,15 +370,18 @@ void TestPCS_EvalProof_GR42_k0_2() {
   const std::vector<ZZ_pE> z = {alpha + testutil::ConstZZpE(1), testutil::ConstZZpE(3), alpha};
   const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
 
-  const basefold::MerkleRoot C = basefold::BaseFoldPCSCommit(f_coeffs, params);
+  const basefold::MerkleRoot commitment_root =
+      basefold::BaseFoldPCSCommit(f_coeffs, params);
   const long num_queries = 4;
   const basefold::BaseFoldPCSEvalProof proof =
       basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries, params);
 
-  CHECK(basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params));
+  CHECK(basefold::BaseFoldPCSVerifyEval(commitment_root, z, y, num_queries,
+                                        proof, params));
 
   const ZZ_pE y_bad = y + testutil::ConstZZpE(1);
-  CHECK(!basefold::BaseFoldPCSVerifyEval(C, z, y_bad, num_queries, proof, params));
+  CHECK(!basefold::BaseFoldPCSVerifyEval(commitment_root, z, y_bad, num_queries,
+                                         proof, params));
 }
 
 void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
@@ -398,7 +412,8 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
 
   const std::vector<ZZ_pE> z = {alpha, alpha + testutil::ConstZZpE(1)};
   const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
-  const basefold::MerkleRoot C = basefold::BaseFoldPCSCommit(f_coeffs, params);
+  const basefold::MerkleRoot commitment_root =
+      basefold::BaseFoldPCSCommit(f_coeffs, params);
   const basefold::BaseFoldPCSCommitArtifacts commit_artifacts =
       basefold::BaseFoldPCSBuildCommitArtifacts(f_coeffs, params);
 
@@ -418,7 +433,7 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
       basefold::BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle(
           f_coeffs, z, y, num_queries, params, commit_artifacts, cfg);
 
-  CHECK(proof.extension.enabled);
+  CHECK(proof.extension.has_extension_payload);
   CHECK(proof.extension.r_by_level.empty());
   CHECK(static_cast<long>(proof.extension.roots_by_level.size()) == params.d);
   CHECK(static_cast<long>(proof.extension.query_multiproofs.size()) == params.d);
@@ -426,9 +441,9 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
   CHECK(proof.extension.base_top_query_multiproof.values.length() > 0);
 
   CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
-      C, z, y, num_queries, proof, params, cfg));
+      commitment_root, z, y, num_queries, proof, params, cfg));
   CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
-      C, z, y, num_queries, proof_from_committed, params, cfg));
+      commitment_root, z, y, num_queries, proof_from_committed, params, cfg));
   basefold::BaseFoldPCSEvalProof proof_without_metadata = proof;
   proof_without_metadata.extension.r_by_level.resize(
       static_cast<std::size_t>(params.d));
@@ -439,9 +454,10 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
     multiproof.queried_indices.clear();
   }
   CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
-      C, z, y, num_queries, proof_without_metadata, params, cfg));
+      commitment_root, z, y, num_queries, proof_without_metadata, params, cfg));
 
-  CHECK(!basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params));
+  CHECK(!basefold::BaseFoldPCSVerifyEval(commitment_root, z, y, num_queries,
+                                         proof, params));
 
   basefold::BaseFoldPCSEvalProof proof_ext_tampered = proof;
   CHECK(!proof_ext_tampered.extension.query_multiproofs.empty());
@@ -452,19 +468,19 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
   NTL::SetCoeff(proof_ext_tampered.extension.query_multiproofs[0].values[0], 1,
                 coeff1);
   CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
-      C, z, y, num_queries, proof_ext_tampered, params, cfg));
+      commitment_root, z, y, num_queries, proof_ext_tampered, params, cfg));
 
   basefold::BaseFoldPCSEvalProof proof_top_tampered = proof;
   CHECK(proof_top_tampered.extension.base_top_query_multiproof.values.length() > 0);
   proof_top_tampered.extension.base_top_query_multiproof.values[0] +=
       testutil::ConstZZpE(1);
   CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
-      C, z, y, num_queries, proof_top_tampered, params, cfg));
+      commitment_root, z, y, num_queries, proof_top_tampered, params, cfg));
 
   basefold::BaseFoldPCSEvalProof proof_root_tampered = proof;
   proof_root_tampered.extension.roots_by_level[0][0] ^= static_cast<basefold::Byte>(0x01);
   CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
-      C, z, y, num_queries, proof_root_tampered, params, cfg));
+      commitment_root, z, y, num_queries, proof_root_tampered, params, cfg));
 
   basefold::BaseFoldPCSEvalProof proof_h_tampered = proof;
   ZZ_pE h0_a0_coeff0 =
@@ -472,14 +488,14 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
   h0_a0_coeff0 += testutil::ConstZZpE(1);
   NTL::SetCoeff(proof_h_tampered.extension.h_by_level[0].a0, 0, h0_a0_coeff0);
   CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
-      C, z, y, num_queries, proof_h_tampered, params, cfg));
+      commitment_root, z, y, num_queries, proof_h_tampered, params, cfg));
 
   basefold::BaseFoldPCSEvalProof proof_msg0_tampered = proof;
   ZZ_pE msg0_coeff0 = NTL::coeff(proof_msg0_tampered.extension.msg0_coeffs[0], 0);
   msg0_coeff0 += testutil::ConstZZpE(1);
   NTL::SetCoeff(proof_msg0_tampered.extension.msg0_coeffs[0], 0, msg0_coeff0);
   CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
-      C, z, y, num_queries, proof_msg0_tampered, params, cfg));
+      commitment_root, z, y, num_queries, proof_msg0_tampered, params, cfg));
 
   basefold::BaseFoldPCSChallengeConfig cfg_bad = cfg;
   ZZ_pEX E_bad;
@@ -488,7 +504,7 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
   SetCoeff(E_bad, 2, testutil::ConstZZpE(1));
   cfg_bad.challenge_extension_modulus = E_bad;
   CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
-      C, z, y, num_queries, proof, params, cfg_bad));
+      commitment_root, z, y, num_queries, proof, params, cfg_bad));
 
 }
 
@@ -510,7 +526,7 @@ void TestPCS_EvalProof_ExtChallengeConfig_GR42() {
   ZZ_pE alpha;
   conv(alpha, xpoly);
 
-  const basefold::FoldableCodeParams params = BuildParamsGR42(p, alpha);
+  const basefold::FoldableCodeParams params = BuildParamsGR_4_2(p, alpha);
 
   vec_ZZ_pE f_coeffs;
   f_coeffs.SetLength(basefold::MessageLength(params));
@@ -522,7 +538,8 @@ void TestPCS_EvalProof_ExtChallengeConfig_GR42() {
   const std::vector<ZZ_pE> z = {alpha + testutil::ConstZZpE(1),
                                 testutil::ConstZZpE(3)};
   const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
-  const basefold::MerkleRoot C = basefold::BaseFoldPCSCommit(f_coeffs, params);
+  const basefold::MerkleRoot commitment_root =
+      basefold::BaseFoldPCSCommit(f_coeffs, params);
 
   basefold::BaseFoldPCSChallengeConfig cfg;
   cfg.use_extension_challenges = true;
@@ -537,14 +554,14 @@ void TestPCS_EvalProof_ExtChallengeConfig_GR42() {
       basefold::BaseFoldPCSProveEvalWithChallengeConfig(
           f_coeffs, z, y, num_queries, params, cfg);
 
-  CHECK(proof.extension.enabled);
+  CHECK(proof.extension.has_extension_payload);
   CHECK(proof.extension.r_by_level.empty());
   CHECK(static_cast<long>(proof.extension.roots_by_level.size()) == params.d);
   CHECK(static_cast<long>(proof.extension.query_multiproofs.size()) == params.d);
   CHECK(!proof.extension.base_top_query_multiproof.queried_indices.empty());
   CHECK(proof.extension.base_top_query_multiproof.values.length() > 0);
   CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
-      C, z, y, num_queries, proof, params, cfg));
+      commitment_root, z, y, num_queries, proof, params, cfg));
 
   basefold::BaseFoldPCSEvalProof proof_open_tampered = proof;
   CHECK(!proof_open_tampered.extension.query_multiproofs.empty());
@@ -555,20 +572,20 @@ void TestPCS_EvalProof_ExtChallengeConfig_GR42() {
   NTL::SetCoeff(proof_open_tampered.extension.query_multiproofs[0].values[0], 1,
                 coeff1);
   CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
-      C, z, y, num_queries, proof_open_tampered, params, cfg));
+      commitment_root, z, y, num_queries, proof_open_tampered, params, cfg));
 
   basefold::BaseFoldPCSEvalProof proof_top_tampered = proof;
   CHECK(proof_top_tampered.extension.base_top_query_multiproof.values.length() > 0);
   proof_top_tampered.extension.base_top_query_multiproof.values[0] +=
       testutil::ConstZZpE(1);
   CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
-      C, z, y, num_queries, proof_top_tampered, params, cfg));
+      commitment_root, z, y, num_queries, proof_top_tampered, params, cfg));
 
   basefold::BaseFoldPCSEvalProof proof_root_tampered = proof;
   proof_root_tampered.extension.roots_by_level[0][0] ^=
       static_cast<basefold::Byte>(0x01);
   CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
-      C, z, y, num_queries, proof_root_tampered, params, cfg));
+      commitment_root, z, y, num_queries, proof_root_tampered, params, cfg));
 
   basefold::BaseFoldPCSEvalProof proof_h_tampered = proof;
   ZZ_pE h0_a0_coeff0 =
@@ -576,14 +593,14 @@ void TestPCS_EvalProof_ExtChallengeConfig_GR42() {
   h0_a0_coeff0 += testutil::ConstZZpE(1);
   NTL::SetCoeff(proof_h_tampered.extension.h_by_level[0].a0, 0, h0_a0_coeff0);
   CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
-      C, z, y, num_queries, proof_h_tampered, params, cfg));
+      commitment_root, z, y, num_queries, proof_h_tampered, params, cfg));
 
   basefold::BaseFoldPCSEvalProof proof_msg0_tampered = proof;
   ZZ_pE msg0_coeff0 = NTL::coeff(proof_msg0_tampered.extension.msg0_coeffs[0], 0);
   msg0_coeff0 += testutil::ConstZZpE(1);
   NTL::SetCoeff(proof_msg0_tampered.extension.msg0_coeffs[0], 0, msg0_coeff0);
   CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
-      C, z, y, num_queries, proof_msg0_tampered, params, cfg));
+      commitment_root, z, y, num_queries, proof_msg0_tampered, params, cfg));
 
 }
 
@@ -602,12 +619,12 @@ void TestPCS_ProofSizeFixedWidth_GF4_HandCheck() {
   basefold::BaseFoldPCSEvalProof proof;
   proof.commitments.roots_by_level.resize(1);
   proof.h_by_level.resize(1);
-  proof.pi0_full.SetLength(2);
+  proof.pi0_codeword.SetLength(2);
   proof.query_multiproofs.resize(1);
   proof.query_multiproofs[0].queried_indices = {0, 1};
   proof.query_multiproofs[0].values.SetLength(2);
   proof.query_multiproofs[0].sibling_hashes.resize(3);
-  proof.extension.enabled = false;
+  proof.extension.has_extension_payload = false;
 
   const std::uint64_t expected_bytes = 192;
   const std::uint64_t actual_bytes =
@@ -635,7 +652,7 @@ void TestPCS_ProofSizeFixedWidth_ExtensionWidthDerivation() {
   ZZ_pEPush e_push(F);
 
   basefold::BaseFoldPCSEvalProof proof;
-  proof.extension.enabled = true;
+  proof.extension.has_extension_payload = true;
   proof.extension.msg0_coeffs.resize(1);
   proof.extension.r_by_level.resize(2);
 
@@ -676,11 +693,11 @@ int main() {
     return 2;
   }
 
-  if (g_failures == 0) {
+  if (g_test_failure_count == 0) {
     cout << "\nAll tests passed.\n";
     return 0;
   }
 
-  cerr << "\n" << g_failures << " test(s) failed.\n";
+  cerr << "\n" << g_test_failure_count << " test(s) failed.\n";
   return 1;
 }

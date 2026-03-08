@@ -90,7 +90,7 @@ Language versions:
 ### `src/GaloisRing/utils.cpp`
 
 - Implementations of the utilities in `utils.hpp`:
-  - Representation conversions (for example `VeczzpE2Veclong`, `Long2ZZpEX`).
+  - Representation conversions (for example `FlattenZZpEVectorToLongs`, `LongVecToZZpEX`).
   - `interpolate_for_GR`: uses NTL `interpolate` when `l==1`; uses custom `Inv()` for ring-unit inversion when `l>1`.
 
 ### `include/GaloisRing/Inverse.hpp`
@@ -179,7 +179,7 @@ Language versions:
     `BaseFoldPCSVerifyEvalWithChallengeConfig`
     - When `use_extension_challenges=false`: behavior matches legacy path.
     - When `use_extension_challenges=true`: Fiat-Shamir challenges are sampled in an outer extension over `ZZ_pE`, extension parameters are transcript-bound, and sumcheck/folding run in the extension; verifiable Merkle commitments are created for extension intermediate layers `pi_0..pi_{d-1}`, while top commitment (`pi_d` Merkle root) remains in the base ring.
-    - Extension-challenge proof payload is multiproof-only and compacted: no duplicated base-side `h_i / pi0_full`; base and extension query payloads use shared Merkle multiproofs; `extension.r_by_level` can be omitted and recovered by transcript re-sampling.
+    - Extension-challenge proof payload is multiproof-only and compacted: no duplicated base-side `h_i / pi0_codeword`; base and extension query payloads use shared Merkle multiproofs; `extension.r_by_level` can be omitted and recovered by transcript re-sampling.
     - `challenge_extension_modulus` now validates algebraic conditions: irreducible in field mode; basic irreducible after mod-`p` reduction in ring mode.
   - Supports `k0=2^kappa` (BaseFold paper, Remark 3): IOPP depth is `d`, polynomial point dimension is `d+kappa`; `kappa=0` degenerates to Protocol 4 in `Basefold_over_GR.pdf` (`k0==1`).
 
@@ -205,8 +205,8 @@ Language versions:
 
 - Top-commit benchmark:
   - `encode-only mean`: raw top-level encode time without validation (`EncodeFoldableUnchecked`)
-  - `top-commit mean`: `MerkleTree::Build` + root extraction on the encoded top oracle
-  - `commit mean`: headline top-commit stage = encode + top Merkle commit
+  - `top-merkle-build mean`: `MerkleTree::Build` + root extraction on the encoded top oracle
+  - `commit mean`: headline top-commit stage = encode + top Merkle build
 - Field and ring contexts can be configured from CLI separately.
 - Optional `--k0 <int>` (default `1`) to benchmark general `k0`.
 - Optional `--auto-zeta teich` derives Teichmuller generator from `(p,k,F)` as `zeta` (overrides `--field-zeta/--ring-zeta`).
@@ -300,7 +300,7 @@ Default output directory contains:
 Current `results.csv` header:
 
 ```text
-context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_ms,prover_mean_ms,verifier_mean_ms,proof_size_kb,proof_size_bytes,status,error
+context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_ms,prove_phase_mean_ms,verifier_mean_ms,proof_size_kb,proof_size_bytes,status,error
 ```
 
 Common columns:
@@ -405,28 +405,28 @@ RING_ZETA=0,1
 
 ```bash
 # Environment variables (effective for all benches)
-export BASEFOLD_MERKLE_LEAFS_PER_THREAD=32768
+export BASEFOLD_MERKLE_LEAVES_PER_THREAD=32768
 export BASEFOLD_MERKLE_PARALLEL_LEVEL_THRESHOLD=4096
 export BASEFOLD_MERKLE_MAX_THREADS=8
 
 # CLI (bench_pcs_eval only, higher priority than env vars)
-./build-release/bench_pcs_eval ... --merkle-leafs-per-thread 32768 --merkle-level-threshold 4096 --merkle-max-threads 8
+./build-release/bench_pcs_eval ... --merkle-leaves-per-thread 32768 --merkle-level-threshold 4096 --merkle-max-threads 8
 ```
 
 Auto-sweep example:
 
 ```bash
 csv=/tmp/merkle_threshold_sweep.csv
-echo "threshold,prover_mean_ms,merkle_build_total_ms" > "$csv"
+echo "threshold,prove_phase_mean_ms,merkle_build_total_ms" > "$csv"
 for t in 256 512 1024 2048 4096 8192 16384 32768 65536; do
   out=$(./build-release/bench_pcs_eval --mode field \
     --field-mod 326594724262804054738278293730872375507 \
     --field-F 1,0,1 --field-zeta 0,1 \
     --d 14 --queries 4 --warmup 1 --reps 2 --profile \
     --merkle-level-threshold "$t")
-  prover=$(printf '%s\n' "$out" | awk '/prover   mean/{print $3; exit}')
+  prove_phase=$(printf '%s\n' "$out" | awk '/prove-phase mean/{print $3; exit}')
   merkle=$(printf '%s\n' "$out" | awk '/MerkleTree::Build:/{print $2; exit}')
-  echo "$t,$prover,$merkle" | tee -a "$csv"
+  echo "$t,$prove_phase,$merkle" | tee -a "$csv"
 done
 cat "$csv"
 ```
@@ -452,7 +452,7 @@ Auto-sweep for best thread count:
 
 ```bash
 csv=/tmp/verifier_query_threads_sweep.csv
-echo "max_threads,verifier_mean_ms,prover_mean_ms" > "$csv"
+echo "max_threads,verifier_mean_ms,prove_phase_mean_ms" > "$csv"
 for t in 1 2 4 8 12 16 24 32; do
   out=$(./build-release/bench_pcs_eval --mode field \
     --field-mod 326594724262804054738278293730872375507 \
@@ -462,8 +462,8 @@ for t in 1 2 4 8 12 16 24 32; do
     --verifier-query-threshold 2 \
     --verifier-query-max-threads "$t")
   verifier=$(printf '%s\n' "$out" | awk '/verifier mean/{print $3; exit}')
-  prover=$(printf '%s\n' "$out" | awk '/prover   mean/{print $3; exit}')
-  echo "$t,$verifier,$prover" | tee -a "$csv"
+  prove_phase=$(printf '%s\n' "$out" | awk '/prove-phase mean/{print $3; exit}')
+  echo "$t,$verifier,$prove_phase" | tee -a "$csv"
 done
 cat "$csv"
 ```
@@ -474,7 +474,7 @@ cat "$csv"
 
 ```text
 [Ring] ...  queries=4  warmup=0 reps=1
-  prover   mean ... ms
+  prove-phase mean ... ms
   verifier mean ... ms
   [profile-prover]
     BaseFoldPCSProveEval total:  ... ms  (calls 1)

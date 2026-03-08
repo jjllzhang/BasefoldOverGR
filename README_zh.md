@@ -90,7 +90,7 @@
 ### `src/GaloisRing/utils.cpp`
 
 - `utils.hpp` 中工具函数的具体实现：
-  - 各类表示之间的转换实现（例如 `VeczzpE2Veclong`、`Long2ZZpEX` 等）。
+  - 各类表示之间的转换实现（例如 `FlattenZZpEVectorToLongs`、`LongVecToZZpEX` 等）。
   - `interpolate_for_GR`：当 `l==1` 直接调用 NTL 的 `interpolate`；当 `l>1` 使用自定义 `Inv()` 来处理环上的“可逆元求逆”，完成插值过程。
 
 ### `include/GaloisRing/Inverse.hpp`
@@ -169,7 +169,7 @@
   - 新增配置化入口（保持旧接口不变）：`BaseFoldPCSProveEvalWithChallengeConfig` / `BaseFoldPCSProveEvalWithChallengeConfigUnchecked` / `BaseFoldPCSVerifyEvalWithChallengeConfig`
     - 当 `use_extension_challenges=false` 时，行为与旧接口一致；
     - 当 `use_extension_challenges=true` 时，Fiat–Shamir challenge 在 `ZZ_pE` 的外层扩环上采样，并把扩环参数绑定到 transcript；sumcheck / folding 在扩环内执行，并对扩环中间层 `π_0..π_{d-1}` 做可验证 Merkle 承诺，同时顶层 commitment（`π_d` 的 Merkle root）仍保持在原环上。
-    - 扩环 challenge 路径的 proof payload 已收敛为 multiproof-only 且做了去冗余压缩：不再重复携带 base 侧 `h_i / pi0_full`，base 与 extension query payload 都使用共享的 Merkle multiproof；`extension.r_by_level` 允许省略（由 transcript 重采样恢复）。
+    - 扩环 challenge 路径的 proof payload 已收敛为 multiproof-only 且做了去冗余压缩：不再重复携带 base 侧 `h_i / pi0_codeword`，base 与 extension query payload 都使用共享的 Merkle multiproof；`extension.r_by_level` 允许省略（由 transcript 重采样恢复）。
     - `challenge_extension_modulus` 现在会校验代数条件：在域模式要求不可约；在环模式要求模 `p` 约化后不可约（basic irreducible）。
   - 支持 `k0=2^κ` 的情况（BaseFold 论文 Remark 3）：IOPP depth 为 `d`，多项式点维度为 `d+κ`；`κ=0` 时退化为 `Basefold_over_GR.pdf` 的 Protocol 4（`k0==1`）。
 
@@ -203,9 +203,8 @@
 
 ### `bench/bench_pcs_eval.cpp`
 
-- PCS eval proof 性能基准：测量 prover time 与 verifier time（顶层 commit 之下的
-  Merkle + Fiat–Shamir）。
-- 默认 prover 走 `BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked`；如需把校验也算进 prover time，可加 `--checked`。headline prover time 不包含顶层 encode + commit，而是从预计算的 `BaseFoldPCSCommitArtifacts` 开始计时。
+- PCS eval proof 性能基准：测量 prove-phase time 与 verifier time；其中 prove-phase 从预先构造好的顶层 commitment artifacts 开始，不包含顶层 encode + commit。
+- 默认 prover 走 `BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked`；如需把校验也算进 prove-phase time，可加 `--checked`。
 - 同一次运行会通过 fixed-width `CountingSink` 路径输出该 proof 的精确 payload 大小
   （`proof_size_bytes` / `proof_size_kb`，省略 verifier 可自行从 transcript 重建的
   indices/challenges）。
@@ -288,7 +287,7 @@ CONTEXTS=field-prime128-ext D_MIN=10 D_MAX=20 scripts/run_release_c4_lambda128.s
 `results.csv` 当前表头为：
 
 ```text
-context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_ms,prover_mean_ms,verifier_mean_ms,proof_size_kb,proof_size_bytes,status,error
+context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_ms,prove_phase_mean_ms,verifier_mean_ms,proof_size_kb,proof_size_bytes,status,error
 ```
 
 其中常用列含义：
@@ -393,28 +392,28 @@ RING_ZETA=0,1
 
 ```bash
 # 环境变量（对所有 bench 生效）
-export BASEFOLD_MERKLE_LEAFS_PER_THREAD=32768
+export BASEFOLD_MERKLE_LEAVES_PER_THREAD=32768
 export BASEFOLD_MERKLE_PARALLEL_LEVEL_THRESHOLD=4096
 export BASEFOLD_MERKLE_MAX_THREADS=8
 
 # CLI（仅 bench_pcs_eval，优先级高于环境变量）
-./build-release/bench_pcs_eval ... --merkle-leafs-per-thread 32768 --merkle-level-threshold 4096 --merkle-max-threads 8
+./build-release/bench_pcs_eval ... --merkle-leaves-per-thread 32768 --merkle-level-threshold 4096 --merkle-max-threads 8
 ```
 
 自动 sweep（示例）：
 
 ```bash
 csv=/tmp/merkle_threshold_sweep.csv
-echo "threshold,prover_mean_ms,merkle_build_total_ms" > "$csv"
+echo "threshold,prove_phase_mean_ms,merkle_build_total_ms" > "$csv"
 for t in 256 512 1024 2048 4096 8192 16384 32768 65536; do
   out=$(./build-release/bench_pcs_eval --mode field \
     --field-mod 326594724262804054738278293730872375507 \
     --field-F 1,0,1 --field-zeta 0,1 \
     --d 14 --queries 4 --warmup 1 --reps 2 --profile \
     --merkle-level-threshold "$t")
-  prover=$(printf '%s\n' "$out" | awk '/prover   mean/{print $3; exit}')
+  prove_phase=$(printf '%s\n' "$out" | awk '/prove-phase mean/{print $3; exit}')
   merkle=$(printf '%s\n' "$out" | awk '/MerkleTree::Build:/{print $2; exit}')
-  echo "$t,$prover,$merkle" | tee -a "$csv"
+  echo "$t,$prove_phase,$merkle" | tee -a "$csv"
 done
 cat "$csv"
 ```
@@ -440,7 +439,7 @@ export BASEFOLD_VERIFY_QUERY_MAX_THREADS=8
 
 ```bash
 csv=/tmp/verifier_query_threads_sweep.csv
-echo "max_threads,verifier_mean_ms,prover_mean_ms" > "$csv"
+echo "max_threads,verifier_mean_ms,prove_phase_mean_ms" > "$csv"
 for t in 1 2 4 8 12 16 24 32; do
   out=$(./build-release/bench_pcs_eval --mode field \
     --field-mod 326594724262804054738278293730872375507 \
@@ -450,8 +449,8 @@ for t in 1 2 4 8 12 16 24 32; do
     --verifier-query-threshold 2 \
     --verifier-query-max-threads "$t")
   verifier=$(printf '%s\n' "$out" | awk '/verifier mean/{print $3; exit}')
-  prover=$(printf '%s\n' "$out" | awk '/prover   mean/{print $3; exit}')
-  echo "$t,$verifier,$prover" | tee -a "$csv"
+  prove_phase=$(printf '%s\n' "$out" | awk '/prove-phase mean/{print $3; exit}')
+  echo "$t,$verifier,$prove_phase" | tee -a "$csv"
 done
 cat "$csv"
 ```
@@ -462,11 +461,10 @@ cat "$csv"
 
 ```text
 [Ring] ...  queries=4  warmup=0 reps=1
-  prover   mean ... ms
+  prove-phase mean ... ms
   verifier mean ... ms
   [profile-prover]
     BaseFoldPCSProveEval total:  ... ms  (calls 1)
-    EncodeFoldableUnchecked:     ... ms  (calls 1)
     MerkleTree::Build:           ... ms  (calls ...)
     ...
   [profile-verifier]

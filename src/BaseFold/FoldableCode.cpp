@@ -157,7 +157,8 @@ void ValidateParams(const FoldableCodeParams &params) {
   cache_p = params.p;
 }
 
-vec_ZZ_pE Encode0(const vec_ZZ_pE &msg, const FoldableCodeParams &params) {
+vec_ZZ_pE EncodeLevel0WithG0(const vec_ZZ_pE &msg,
+                             const FoldableCodeParams &params) {
   vec_ZZ_pE out;
   mul(out, msg, params.G0);  // row-vector * matrix
   return out;
@@ -295,10 +296,10 @@ void EncodeFoldable_k0_1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
         const long left = base;
         const long right = base + block_len;
         for (long i = 0; i < block_len; ++i) {
-          const ZZ_pE l = out[left + i];
-          const ZZ_pE r = out[right + i];
-          out[left + i] = l + r;
-          out[right + i] = l + zeta * r;
+          const ZZ_pE code_left = out[left + i];
+          const ZZ_pE code_right = out[right + i];
+          out[left + i] = code_left + code_right;
+          out[right + i] = code_left + zeta * code_right;
         }
       });
     } else {
@@ -308,10 +309,10 @@ void EncodeFoldable_k0_1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
         const long left = base;
         const long right = base + block_len;
         for (long i = 0; i < block_len; ++i) {
-          const ZZ_pE l = out[left + i];
-          const ZZ_pE tr = t[i] * out[right + i];
-          out[left + i] = l + tr;
-          out[right + i] = l + zeta * tr;
+          const ZZ_pE code_left = out[left + i];
+          const ZZ_pE twisted_right = t[i] * out[right + i];
+          out[left + i] = code_left + twisted_right;
+          out[right + i] = code_left + zeta * twisted_right;
         }
       });
     }
@@ -397,10 +398,10 @@ void EncodeFoldable_k0_gt1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
         const long left = base;
         const long right = base + block_len;
         for (long i = 0; i < block_len; ++i) {
-          const ZZ_pE l = out[left + i];
-          const ZZ_pE r = out[right + i];
-          out[left + i] = l + r;
-          out[right + i] = l + zeta * r;
+          const ZZ_pE code_left = out[left + i];
+          const ZZ_pE code_right = out[right + i];
+          out[left + i] = code_left + code_right;
+          out[right + i] = code_left + zeta * code_right;
         }
       });
     } else {
@@ -410,10 +411,10 @@ void EncodeFoldable_k0_gt1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
         const long left = base;
         const long right = base + block_len;
         for (long i = 0; i < block_len; ++i) {
-          const ZZ_pE l = out[left + i];
-          const ZZ_pE tr = t[i] * out[right + i];
-          out[left + i] = l + tr;
-          out[right + i] = l + zeta * tr;
+          const ZZ_pE code_left = out[left + i];
+          const ZZ_pE twisted_right = t[i] * out[right + i];
+          out[left + i] = code_left + twisted_right;
+          out[right + i] = code_left + zeta * twisted_right;
         }
       });
     }
@@ -426,7 +427,7 @@ void EncodeFoldable_k0_gt1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
 void EncodeRec(vec_ZZ_pE &out, const vec_ZZ_pE &msg, long level,
                const FoldableCodeParams &params) {
   if (level == 0) {
-    out = Encode0(msg, params);
+    out = EncodeLevel0WithG0(msg, params);
     return;
   }
 
@@ -435,30 +436,30 @@ void EncodeRec(vec_ZZ_pE &out, const vec_ZZ_pE &msg, long level,
     LogicError("EncodeFoldable: message length mismatch at recursion level");
   }
 
-  vec_ZZ_pE ml, mr;
-  ml.SetLength(half_k);
-  mr.SetLength(half_k);
+  vec_ZZ_pE msg_left, msg_right;
+  msg_left.SetLength(half_k);
+  msg_right.SetLength(half_k);
   for (long i = 0; i < half_k; ++i) {
-    ml[i] = msg[i];
-    mr[i] = msg[i + half_k];
+    msg_left[i] = msg[i];
+    msg_right[i] = msg[i + half_k];
   }
 
-  vec_ZZ_pE l, r;
-  EncodeRec(l, ml, level - 1, params);
-  EncodeRec(r, mr, level - 1, params);
+  vec_ZZ_pE code_left, code_right;
+  EncodeRec(code_left, msg_left, level - 1, params);
+  EncodeRec(code_right, msg_right, level - 1, params);
 
   const vec_ZZ_pE &t =
       params.diag_T[static_cast<std::size_t>(level - 1)];  // length n_{level-1}
-  const long half_n = l.length();
-  if (t.length() != half_n || r.length() != half_n) {
+  const long half_n = code_left.length();
+  if (t.length() != half_n || code_right.length() != half_n) {
     LogicError("EncodeFoldable: internal codeword length mismatch");
   }
 
   out.SetLength(2 * half_n);
   for (long i = 0; i < half_n; ++i) {
-    const NTL::ZZ_pE tr = t[i] * r[i];
-    out[i] = l[i] + tr;
-    out[i + half_n] = l[i] + params.zeta * tr;
+    const NTL::ZZ_pE twisted_right = t[i] * code_right[i];
+    out[i] = code_left[i] + twisted_right;
+    out[i + half_n] = code_left[i] + params.zeta * twisted_right;
   }
 }
 
@@ -471,27 +472,27 @@ void EncodeRecUnchecked(vec_ZZ_pE &out, const vec_ZZ_pE &msg, long level,
 
   const long half_k = msg.length() / 2;
 
-  vec_ZZ_pE ml, mr;
-  ml.SetLength(half_k);
-  mr.SetLength(half_k);
+  vec_ZZ_pE msg_left, msg_right;
+  msg_left.SetLength(half_k);
+  msg_right.SetLength(half_k);
   for (long i = 0; i < half_k; ++i) {
-    ml[i] = msg[i];
-    mr[i] = msg[i + half_k];
+    msg_left[i] = msg[i];
+    msg_right[i] = msg[i + half_k];
   }
 
-  vec_ZZ_pE l, r;
-  EncodeRecUnchecked(l, ml, level - 1, params);
-  EncodeRecUnchecked(r, mr, level - 1, params);
+  vec_ZZ_pE code_left, code_right;
+  EncodeRecUnchecked(code_left, msg_left, level - 1, params);
+  EncodeRecUnchecked(code_right, msg_right, level - 1, params);
 
   const vec_ZZ_pE &t =
       params.diag_T[static_cast<std::size_t>(level - 1)];  // length n_{level-1}
-  const long half_n = l.length();
+  const long half_n = code_left.length();
 
   out.SetLength(2 * half_n);
   for (long i = 0; i < half_n; ++i) {
-    const NTL::ZZ_pE tr = t[i] * r[i];
-    out[i] = l[i] + tr;
-    out[i + half_n] = l[i] + params.zeta * tr;
+    const NTL::ZZ_pE twisted_right = t[i] * code_right[i];
+    out[i] = code_left[i] + twisted_right;
+    out[i + half_n] = code_left[i] + params.zeta * twisted_right;
   }
 }
 

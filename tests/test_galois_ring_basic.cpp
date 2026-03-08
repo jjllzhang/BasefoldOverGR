@@ -41,25 +41,25 @@ using std::exception;
 using std::string;
 using std::vector;
 
-int g_failures = 0;
+int g_test_failure_count = 0;
 
 namespace {
 
 vector<long> ToLongVec(const ZZ_pX &poly) {
   vector<long> out;
-  ZZpX2long(poly, out);
+  ZZpXToLongCoeffs(poly, out);
   return out;
 }
 
 vector<long> ToLongVec(const ZZ_pE &element, long s) {
   vector<long> out;
-  ZzpE2Veclong(element, out, s);
+  ZZpEToLongCoeffs(element, out, s);
   return out;
 }
 
 vector<long> ToLongVec(const ZZ_pEX &poly, long s) {
   vector<long> out;
-  ZZpEX2long(poly, out, s);
+  ZZpEXToLongCoeffs(poly, out, s);
   return out;
 }
 
@@ -79,7 +79,7 @@ void TestUtilsBasics() {
   CHECK_EQ(nextPowerOf2(8), 8);
   CHECK_EQ(nextPowerOf2(0), 1);
 
-  CHECK_EQ(Veclong2String({1, 0, 23}), string("1023"));
+  CHECK_EQ(LongVecToConcatenatedString({1, 0, 23}), string("1023"));
 
   CHECK_EQ(PadVectorToLength({1, 2, 3}, 5), (vector<long>{1, 2, 3, 0, 0}));
   CHECK_EQ(PadVectorToLength({1, 2, 3}, 2), (vector<long>{1, 2}));
@@ -117,28 +117,28 @@ void TestConversionsAndPolyOps_Field() {
 
   {
     const vector<long> coeffs = {1, 2, 6};
-    const ZZ_pX poly = long2ZZpX(coeffs);
+    const ZZ_pX poly = LongVecToZZpX(coeffs);
     CHECK_EQ(ToLongVec(poly), coeffs);
   }
 
   {
     const vector<long> coeffs = {3, 5}; // 3 + 5*x
-    const ZZ_pE a = long2ZZpE(coeffs);
+    const ZZ_pE a = LongVecToZZpE(coeffs);
     CHECK_EQ(ToLongVec(a, s), coeffs);
   }
 
   {
     vec_ZZ_pE v;
     v.SetLength(2);
-    v[0] = long2ZZpE({1, 2});
-    v[1] = long2ZZpE({3, 4});
+    v[0] = LongVecToZZpE({1, 2});
+    v[1] = LongVecToZZpE({3, 4});
 
     vector<long> packed;
-    VeczzpE2Veclong(v, packed, s);
+    FlattenZZpEVectorToLongs(v, packed, s);
     CHECK_EQ(packed, (vector<long>{1, 2, 3, 4}));
 
     vector<string> packed_str;
-    VeczzpE2Vecstring(v, packed_str, s);
+    ZZpEVectorToConcatenatedStrings(v, packed_str, s);
     CHECK_EQ(packed_str, (vector<string>{"12", "34"}));
 
     CHECK(allNonZero(v));
@@ -150,12 +150,12 @@ void TestConversionsAndPolyOps_Field() {
     const vector<long> packed = {1, 2, 3, 4, 5, 6};
     ZZ_pEX poly;
     clear(poly);
-    Long2ZZpEX(packed, poly, s);
+    LongVecToZZpEX(packed, poly, s);
     CHECK_EQ(ToLongVec(poly, s), packed);
 
     ZZ_pEX poly2;
     clear(poly2);
-    Long2ZZpEX2(packed, poly2, s, /*n=*/3);
+    LongVecToZZpEXWithCoeffCount(packed, poly2, s, /*n=*/3);
     CHECK_EQ(ToLongVec(poly2, s), packed);
   }
 
@@ -166,7 +166,7 @@ void TestConversionsAndPolyOps_Field() {
     SetCoeff(poly, 3, 4);
 
     vector<long> v1;
-    ZZpX2long(poly, v1);
+    ZZpXToLongCoeffs(poly, v1);
 
     vector<long> v2;
     fillIrred(poly, v2);
@@ -174,11 +174,11 @@ void TestConversionsAndPolyOps_Field() {
 
     vec_ZZ_pE pts;
     pts.SetLength(2);
-    pts[0] = long2ZZpE({1, 0});
-    pts[1] = long2ZZpE({2, 0});
+    pts[0] = LongVecToZZpE({1, 0});
+    pts[1] = LongVecToZZpE({2, 0});
 
     vector<long> w1;
-    VeczzpE2Veclong(pts, w1, s);
+    FlattenZZpEVectorToLongs(pts, w1, s);
 
     vector<long> w2;
     fillInterpolation(pts, w2, s);
@@ -239,14 +239,14 @@ void TestInverse_Ring() {
   ZZ_pE one;
   set(one);
 
-  const ZZ_pE sample_unit = long2ZZpE({1, 1});
+  const ZZ_pE sample_unit = LongVecToZZpE({1, 1});
   const ZZ_pE sample_inv = Inv(sample_unit, s);
   CHECK(sample_inv != 0);
   CHECK_EQ(sample_unit * sample_inv, one);
 
   for (long c0 = 0; c0 < 4; ++c0) {
     for (long c1 = 0; c1 < 4; ++c1) {
-      const ZZ_pE a = long2ZZpE({c0, c1});
+      const ZZ_pE a = LongVecToZZpE({c0, c1});
       const ZZ_pE a_inv = Inv(a, s);
       const bool is_unit = ((c0 & 1) == 1) || ((c1 & 1) == 1);
       if (is_unit) {
@@ -277,14 +277,14 @@ void TestInverse_CacheSafetyAcrossContexts() {
 
   ZZ_pE one_a;
   set(one_a);
-  const ZZ_pE unit_a = long2ZZpE({1, 1});
+  const ZZ_pE unit_a = LongVecToZZpE({1, 1});
   const ZZ_pE inv_a_1 = Inv(unit_a, s2);
   const ZZ_pE inv_a_2 = Inv(unit_a, s2);
   CHECK(inv_a_1 != 0);
   CHECK_EQ(inv_a_1, inv_a_2);
   CHECK_EQ(unit_a * inv_a_2, one_a);
 
-  const ZZ_pE non_unit_a = long2ZZpE({0, 2});
+  const ZZ_pE non_unit_a = LongVecToZZpE({0, 2});
   CHECK_EQ(Inv(non_unit_a, s2), ZZ_pE(0));
 
   {
@@ -300,7 +300,7 @@ void TestInverse_CacheSafetyAcrossContexts() {
 
     ZZ_pE one_b;
     set(one_b);
-    const ZZ_pE unit_b = long2ZZpE({1, 1});
+    const ZZ_pE unit_b = LongVecToZZpE({1, 1});
     const ZZ_pE inv_b = Inv(unit_b, s2);
     CHECK(inv_b != 0);
     CHECK_EQ(unit_b * inv_b, one_b);
@@ -319,14 +319,14 @@ void TestInverse_CacheSafetyAcrossContexts() {
 
     ZZ_pE one_alt;
     set(one_alt);
-    const ZZ_pE unit_alt = long2ZZpE({1, 1});
+    const ZZ_pE unit_alt = LongVecToZZpE({1, 1});
     const ZZ_pE inv_alt_1 = Inv(unit_alt, s2);
     const ZZ_pE inv_alt_2 = Inv(unit_alt, s2);
     CHECK(inv_alt_1 != 0);
     CHECK_EQ(inv_alt_1, inv_alt_2);
     CHECK_EQ(unit_alt * inv_alt_2, one_alt);
 
-    const ZZ_pE non_unit_alt = long2ZZpE({2, 0});
+    const ZZ_pE non_unit_alt = LongVecToZZpE({2, 0});
     CHECK_EQ(Inv(non_unit_alt, s2), ZZ_pE(0));
   }
 
@@ -354,8 +354,8 @@ void TestInverse_MatrixSolveFallbackCache() {
   ZZ_pE one;
   set(one);
 
-  const ZZ_pE a = long2ZZpE({1, 1});
-  const ZZ_pE b = long2ZZpE({2, 1});
+  const ZZ_pE a = LongVecToZZpE({1, 1});
+  const ZZ_pE b = LongVecToZZpE({2, 1});
   const ZZ_pE inv_a_1 = Inv(a, s);
   const ZZ_pE inv_a_2 = Inv(a, s);
   const ZZ_pE inv_b_1 = Inv(b, s);
@@ -378,7 +378,7 @@ void TestInverse_MatrixSolveFallbackCache() {
     SetCoeff(F_small, 0, 1);
     ZZ_pEPush e_push_small(F_small);
 
-    const ZZ_pE sample = long2ZZpE({1, 1});
+    const ZZ_pE sample = LongVecToZZpE({1, 1});
     const ZZ_pE sample_inv = Inv(sample, s);
     ZZ_pE one_small;
     set(one_small);
@@ -620,11 +620,11 @@ int main() {
     return 2;
   }
 
-  if (g_failures == 0) {
+  if (g_test_failure_count == 0) {
     cout << "\nAll tests passed.\n";
     return 0;
   }
 
-  cerr << "\n" << g_failures << " test(s) failed.\n";
+  cerr << "\n" << g_test_failure_count << " test(s) failed.\n";
   return 1;
 }

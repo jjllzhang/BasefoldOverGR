@@ -85,7 +85,7 @@ struct IOPPChallenges {
 // Convention: pi[i] stores π_i, so pi.size() == params.d + 1 and pi[d] is the
 // input oracle π_d.
 struct IOPPOracles {
-  std::vector<Oracle> pi;
+  std::vector<Oracle> oracles_by_level;
 };
 
 // -----------------------------------------------------------------------------
@@ -103,9 +103,9 @@ void ProverCommitRound(Oracle &pi_i, const Oracle &pi_ip1,
 
 // Computes the full commit phase for a fixed π_d and challenges α_0..α_{d-1}.
 // Expected output layout:
-// - oracles.pi has size params.d + 1
-// - oracles.pi[d] == pi_d
-// - oracles.pi[i] is the prover's derived oracle π_i for all i<d.
+// - oracles.oracles_by_level has size params.d + 1
+// - oracles.oracles_by_level[d] == pi_d
+// - oracles.oracles_by_level[i] is the prover's derived oracle π_i for all i<d.
 void ProverCommitAll(IOPPOracles &oracles, const Oracle &pi_d,
                      const IOPPChallenges &challenges,
                      const FoldableCodeParams &params);
@@ -139,16 +139,16 @@ IOPPQueryPlan MakeQueryPlan(long initial_mu, const FoldableCodeParams &params);
 // random-access to the oracles (useful when you later Merkle-commit to oracles).
 struct IOPPQueryOpenings {
   // For each i in [0, d):
-  //   left[i]   = π_{i+1}[µ_i]
-  //   right[i]  = π_{i+1}[µ_i + n_i]
-  //   folded[i] = π_i[µ_i]
-  std::vector<FieldElement> left;
-  std::vector<FieldElement> right;
-  std::vector<FieldElement> folded;
+  //   upper_left_by_level[i]  = π_{i+1}[µ_i]
+  //   upper_right_by_level[i] = π_{i+1}[µ_i + n_i]
+  //   folded_by_level[i]      = π_i[µ_i]
+  std::vector<FieldElement> upper_left_by_level;
+  std::vector<FieldElement> upper_right_by_level;
+  std::vector<FieldElement> folded_by_level;
 
   // Final oracle π_0 (typically small enough that the verifier reads all entries
   // to check π_0 ∈ C_0).
-  Oracle pi0_full;
+  Oracle pi0_codeword;
 };
 
 // Verifies a single IOPP.query repetition from explicit openings.
@@ -207,11 +207,11 @@ using MerkleRoot = Digest;
 
 // Runtime tuning knobs for MerkleTree::Build parallelization.
 // Defaults can also be provided via environment variables:
-// - BASEFOLD_MERKLE_LEAFS_PER_THREAD
+// - BASEFOLD_MERKLE_LEAVES_PER_THREAD
 // - BASEFOLD_MERKLE_PARALLEL_LEVEL_THRESHOLD
 // - BASEFOLD_MERKLE_MAX_THREADS
 struct MerkleBuildParallelConfig {
-  long leafs_per_thread = 32768;
+  long leaves_per_thread = 32768;
   long parallel_level_threshold = 8192;
   int max_threads = 8;
 };

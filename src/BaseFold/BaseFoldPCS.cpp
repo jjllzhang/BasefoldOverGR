@@ -75,8 +75,9 @@ VerifierQueryParallelConfig ParseVerifierQueryParallelConfigFromEnv() {
   VerifierQueryParallelConfig cfg;
   cfg.queries_per_thread = ParsePositiveEnvLong(
       "BASEFOLD_VERIFY_QUERY_QUERIES_PER_THREAD", cfg.queries_per_thread);
-  cfg.parallel_query_threshold = ParsePositiveEnvLong(
-      "BASEFOLD_VERIFY_QUERY_PARALLEL_THRESHOLD", cfg.parallel_query_threshold);
+  cfg.min_queries_for_parallelism =
+      ParsePositiveEnvLong("BASEFOLD_VERIFY_QUERY_PARALLEL_THRESHOLD",
+                           cfg.min_queries_for_parallelism);
   cfg.max_threads =
       ParsePositiveEnvInt("BASEFOLD_VERIFY_QUERY_MAX_THREADS", cfg.max_threads);
   return cfg;
@@ -92,8 +93,8 @@ VerifierQueryParallelConfig LoadVerifierQueryParallelConfig() {
   VerifierQueryParallelConfig cfg = MutableVerifierQueryParallelConfig();
   if (cfg.queries_per_thread <= 0)
     cfg.queries_per_thread = 1;
-  if (cfg.parallel_query_threshold <= 0)
-    cfg.parallel_query_threshold = 2;
+  if (cfg.min_queries_for_parallelism <= 0)
+    cfg.min_queries_for_parallelism = 2;
   if (cfg.max_threads <= 0)
     cfg.max_threads = 8;
   return cfg;
@@ -194,7 +195,7 @@ void ForEachIndexMaybeParallel(long begin, long end, long parallel_threshold,
 int ChooseQueryVerifyThreads(long num_queries) {
 #if defined(BASEFOLD_USE_OPENMP)
   const VerifierQueryParallelConfig cfg = LoadVerifierQueryParallelConfig();
-  if (num_queries < cfg.parallel_query_threshold)
+  if (num_queries < cfg.min_queries_for_parallelism)
     return 1;
   const long blocks =
       (num_queries + cfg.queries_per_thread - 1) / cfg.queries_per_thread;
@@ -629,7 +630,7 @@ void ValidateParamsOrThrow(const FoldableCodeParams &params) {
   (void)MessageLength(params);
 }
 
-ZZ PositiveMod(const ZZ &a, const ZZ &m) {
+ZZ NormalizeModNonNegative(const ZZ &a, const ZZ &m) {
   ZZ r = a % m;
   if (r < 0) {
     r += m;
@@ -660,7 +661,7 @@ ZZ_pX ReduceZZpXModPrime(const ZZ_pX &poly_over_pk, const ZZ &p) {
   const long d = NTL::deg(poly_over_pk);
   for (long i = 0; i <= d; ++i) {
     ZZ_p c_mod_p;
-    NTL::conv(c_mod_p, PositiveMod(rep(coeff(poly_over_pk, i)), p));
+    NTL::conv(c_mod_p, NormalizeModNonNegative(rep(coeff(poly_over_pk, i)), p));
     if (c_mod_p != 0) {
       NTL::SetCoeff(out, i, c_mod_p);
     }
@@ -669,8 +670,9 @@ ZZ_pX ReduceZZpXModPrime(const ZZ_pX &poly_over_pk, const ZZ &p) {
   return out;
 }
 
-ZZ_pEX ReduceZZ_pEXToResidueField(const ZZ_pEX &poly_over_pk_ext, const ZZ &p,
-                                  long base_degree) {
+ZZ_pEX ReduceExtensionPolynomialToResidueField(const ZZ_pEX &poly_over_pk_ext,
+                                               const ZZ &p,
+                                               long base_degree) {
   ZZ_pEX out;
   NTL::clear(out);
   const long d = NTL::deg(poly_over_pk_ext);
@@ -680,7 +682,8 @@ ZZ_pEX ReduceZZ_pEXToResidueField(const ZZ_pEX &poly_over_pk_ext, const ZZ &p,
     NTL::clear(coeff_poly_mod_p);
     for (long j = 0; j < base_degree; ++j) {
       ZZ_p c_mod_p;
-      NTL::conv(c_mod_p, PositiveMod(rep(coeff(coeff_poly_over_pk, j)), p));
+      NTL::conv(c_mod_p,
+                NormalizeModNonNegative(rep(coeff(coeff_poly_over_pk, j)), p));
       if (c_mod_p != 0) {
         NTL::SetCoeff(coeff_poly_mod_p, j, c_mod_p);
       }
@@ -775,7 +778,7 @@ void ValidateChallengeConfigOrThrow(
   }
   ZZ_pE::init(base_modulus_over_p);
 
-  const ZZ_pEX ext_modulus_over_p = ReduceZZ_pEXToResidueField(
+  const ZZ_pEX ext_modulus_over_p = ReduceExtensionPolynomialToResidueField(
       challenge_cfg.challenge_extension_modulus, base_prime, base_degree);
 
   if (NTL::deg(ext_modulus_over_p) != ext_degree) {
@@ -875,7 +878,7 @@ ZZ_pEX LiftBaseToExtension(const FieldElement &x) {
   return out;
 }
 
-FieldElement ProjectExtensionToBaseConstant(const ZZ_pEX &x) {
+FieldElement ExtractBaseConstantCoefficient(const ZZ_pEX &x) {
   return coeff(x, 0);
 }
 
@@ -1356,7 +1359,7 @@ public:
 
     const FieldElement one_base = BaseRingOne();
     const FieldElement z_k_base =
-        ProjectExtensionToBaseConstant(z_[static_cast<std::size_t>(k - 1)]);
+        ExtractBaseConstantCoefficient(z_[static_cast<std::size_t>(k - 1)]);
     const FieldElement factor0_base = one_base - z_k_base;
     const FieldElement delta_factor_base = z_k_base - factor0_base;
 
@@ -1368,7 +1371,7 @@ public:
     for (long mask = 0; mask < half; ++mask) {
       const ZZ_pEX &prefix_mask = prefix[static_cast<std::size_t>(mask)];
       const FieldElement prefix_mask_base =
-          ProjectExtensionToBaseConstant(prefix_mask);
+          ExtractBaseConstantCoefficient(prefix_mask);
       const ZZ_pEX common =
           MulExtensionByBaseConstant(suffix_eq_prod_, prefix_mask_base);
 
@@ -1783,7 +1786,7 @@ BaseFoldPCSEvalProof ProveEvalFromCommittedTopOracleUnchecked(
   AbsorbPublicInput(transcript, commit_artifacts.root_d, z, claimed_y);
 
   if (params.d == 0) {
-    proof.pi0_full = commit_artifacts.pi_d;
+    proof.pi0_codeword = commit_artifacts.pi_d;
     return proof;
   }
 
@@ -1824,7 +1827,7 @@ BaseFoldPCSEvalProof ProveEvalFromCommittedTopOracleUnchecked(
     }
   }
 
-  proof.pi0_full = oracles[0];
+  proof.pi0_codeword = oracles[0];
 
   const long n_last = CodewordLengthAtLevelNoValidate(params, params.d - 1);
   std::vector<IOPPQueryPlan> query_plans(static_cast<std::size_t>(num_queries));
@@ -1875,7 +1878,7 @@ BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesFromCommittedTopOracleUnche
       "BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked");
 
   BaseFoldPCSEvalProof proof;
-  proof.extension.enabled = true;
+  proof.extension.has_extension_payload = true;
   proof.commitments.roots_by_level.clear();
   proof.extension.roots_by_level.resize(static_cast<std::size_t>(params.d));
   proof.commitments.roots_by_level.push_back(commit_artifacts.root_d);
@@ -1924,14 +1927,14 @@ BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesFromCommittedTopOracleUnche
     }
   }
 
-  proof.extension.pi0_full = ext_oracles[0];
+  proof.extension.pi0_codeword = ext_oracles[0];
 
   const long kappa = Log2ExactPowerOfTwoLong(params.k0);
   proof.extension.msg0_coeffs = Msg0CoeffsAtSuffixChallenges(
       f_coeffs, kappa, r_by_level, extension_modulus);
   const std::vector<ZZ_pEX> expected_pi0 =
       EncodeC0Extension(proof.extension.msg0_coeffs, params, extension_modulus);
-  if (expected_pi0 != proof.extension.pi0_full) {
+  if (expected_pi0 != proof.extension.pi0_codeword) {
     LogicError(
         "BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked: internal pi0 mismatch");
   }
@@ -1992,7 +1995,7 @@ bool VerifyEvalWithExtensionChallenges(
     return false;
   if (num_queries < 0)
     return false;
-  if (!proof.extension.enabled)
+  if (!proof.extension.has_extension_payload)
     return false;
   if (static_cast<long>(proof.extension.roots_by_level.size()) != params.d)
     return false;
@@ -2003,7 +2006,7 @@ bool VerifyEvalWithExtensionChallenges(
   if (!proof.query_multiproofs.empty())
     return false;
   const long n0 = CodewordLengthAtLevel(params, 0);
-  if (static_cast<long>(proof.extension.pi0_full.size()) != n0)
+  if (static_cast<long>(proof.extension.pi0_codeword.size()) != n0)
     return false;
   if (num_queries > 0 &&
       !HasMerkleMultiproofPayload(proof.extension.base_top_query_multiproof)) {
@@ -2113,11 +2116,11 @@ bool VerifyEvalWithExtensionChallenges(
 
   const std::vector<ZZ_pEX> expected_pi0 =
       EncodeC0Extension(proof.extension.msg0_coeffs, params, extension_modulus);
-  if (expected_pi0 != proof.extension.pi0_full) {
+  if (expected_pi0 != proof.extension.pi0_codeword) {
     return false;
   }
   if (proof.extension.roots_by_level[0] !=
-      ExtensionMerkleTree::Build(proof.extension.pi0_full, extension_modulus)
+      ExtensionMerkleTree::Build(proof.extension.pi0_codeword, extension_modulus)
           .Root()) {
     return false;
   }
@@ -2268,7 +2271,7 @@ bool VerifyEvalWithExtensionChallenges(
         }
       } else {
         if (folded_ext_value !=
-            proof.extension.pi0_full[static_cast<std::size_t>(mu_i)]) {
+            proof.extension.pi0_codeword[static_cast<std::size_t>(mu_i)]) {
           return false;
         }
       }
@@ -2440,7 +2443,7 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
   }
 
   const long n0 = CodewordLengthAtLevel(params, 0);
-  if (proof.pi0_full.length() != n0)
+  if (proof.pi0_codeword.length() != n0)
     return false;
 
   if (params.d == 0) {
@@ -2448,11 +2451,11 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
       return false;
     if (!proof.query_multiproofs.empty())
       return false;
-    if (MerkleCommitOracle(proof.pi0_full) != commitment_C)
+    if (MerkleCommitOracle(proof.pi0_codeword) != commitment_C)
       return false;
 
     vec_ZZ_pE msg0;
-    if (!DecodeC0(msg0, proof.pi0_full, params))
+    if (!DecodeC0(msg0, proof.pi0_codeword, params))
       return false;
     if (msg0.length() != params.k0)
       return false;
@@ -2460,7 +2463,7 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
     return EvalMultilinearMonomialCoeffs(msg0, z) == claimed_y;
   }
 
-  if (MerkleCommitOracle(proof.pi0_full) !=
+  if (MerkleCommitOracle(proof.pi0_codeword) !=
       proof.commitments.roots_by_level[0]) {
     return false;
   }
@@ -2495,7 +2498,7 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
   const FieldElement h1_r0 = proof.h_by_level[0].Eval(r0);
 
   vec_ZZ_pE msg0;
-  if (!DecodeC0(msg0, proof.pi0_full, params))
+  if (!DecodeC0(msg0, proof.pi0_codeword, params))
     return false;
   if (msg0.length() != params.k0)
     return false;
