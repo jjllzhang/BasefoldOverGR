@@ -49,7 +49,7 @@ METRIC_CATALOG = {
         output_tag="commit_time_vs_d",
     ),
     "prover": MetricSpec(
-        key="prover_mean_ms",
+        key="prove_phase_mean_ms",
         y_label="Prover time (ms)",
         output_tag="prover_time_vs_d",
     ),
@@ -129,6 +129,9 @@ def load_series_from_csv(csv_path: Path, metric_keys: Iterable[str]) -> SeriesDa
         key: defaultdict(list) for key in metric_keys
     }
     labels: set[str] = set()
+    metric_aliases = {
+        "prove_phase_mean_ms": ("prove_phase_mean_ms", "prover_mean_ms"),
+    }
 
     with csv_path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
@@ -153,7 +156,12 @@ def load_series_from_csv(csv_path: Path, metric_keys: Iterable[str]) -> SeriesDa
                 continue
 
             for metric_key in metric_keys:
-                metric_value = _parse_float(row.get(metric_key))
+                raw_value = None
+                for candidate_key in metric_aliases.get(metric_key, (metric_key,)):
+                    raw_value = row.get(candidate_key)
+                    if raw_value not in (None, "", "-"):
+                        break
+                metric_value = _parse_float(raw_value)
                 if metric_value is not None:
                     metric_values[metric_key][d].append(metric_value)
 

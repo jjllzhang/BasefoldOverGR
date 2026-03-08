@@ -171,7 +171,7 @@
     - 当 `use_extension_challenges=true` 时，Fiat–Shamir challenge 在 `ZZ_pE` 的外层扩环上采样，并把扩环参数绑定到 transcript；sumcheck / folding 在扩环内执行，并对扩环中间层 `π_0..π_{d-1}` 做可验证 Merkle 承诺，同时顶层 commitment（`π_d` 的 Merkle root）仍保持在原环上。
     - 扩环 challenge 路径的 proof payload 已收敛为 multiproof-only 且做了去冗余压缩：不再重复携带 base 侧 `h_i / pi0_codeword`，base 与 extension query payload 都使用共享的 Merkle multiproof；`extension.r_by_level` 允许省略（由 transcript 重采样恢复）。
     - `challenge_extension_modulus` 现在会校验代数条件：在域模式要求不可约；在环模式要求模 `p` 约化后不可约（basic irreducible）。
-  - 支持 `k0=2^κ` 的情况（BaseFold 论文 Remark 3）：IOPP depth 为 `d`，多项式点维度为 `d+κ`；`κ=0` 时退化为 `Basefold_over_GR.pdf` 的 Protocol 4（`k0==1`）。
+  - 支持 `k0=2^κ` 的情况（BaseFold 论文 Remark 3）：IOPP depth 为 `d`，多项式点维度为 `d+κ`；`κ=0` 时退化为 BaseFold 论文中的 Protocol 4（`k0==1`）。
 
 ### `include/BaseFold/ProofSerialize.hpp` / `src/BaseFold/ProofSerialize.cpp`
 
@@ -298,22 +298,23 @@ context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_m
 - `proof_size_kb/proof_size_bytes`：来自 `bench_pcs_eval` 的精确 payload 大小
   （fixed-width counting 路径，省略 verifier 可从 transcript 重建的
   indices/challenges，KiB / bytes）。
+- 当前 release sweep 不会再从单独的 formula-only benchmark 二进制填这两列。
 - `status,error`：该 `(context,d)` 点是否成功及失败原因（若有）。
 
 ### 结果文件与绘图
 
-- 单次 profile 拆分（如 `--profile --reps 1`）可放在 `results/single_runs/*_profile_breakdown.md`（例如 `results/single_runs/ring-gr-2p16-64-ext_d15_profile_breakdown.md`）。
-- 手工整理/对比用 CSV 可放在 `result/results-*.csv`（例如 `result/results-F_2^256.csv`）。
+- 单次 profile 拆分（如 `--profile --reps 1`）可放在 `results/single_runs/*_profile_breakdown.md`（例如 `results/single_runs/<context>_d<d>_profile_breakdown.md`）。
+- 当前跟踪的对比 CSV 位于 `results-legacy/results-*.csv`（例如 `results-legacy/results-F_2^256.csv`）。
 - 使用 `scripts/plot_benchmark_results.py` 从 CSV 生成图：
 
 ```bash
 # 单个 CSV 出图
-python3 scripts/plot_benchmark_results.py result/results-F_2^256.csv --prefix f2_256
+python3 scripts/plot_benchmark_results.py results-legacy/results-F_2^256.csv --prefix f2_256
 
 # 多个 CSV 叠加对比
 python3 scripts/plot_benchmark_results.py \
-  result/results-F_2^256.csv \
-  'result/results-GR(2^16;128).csv' \
+  results-legacy/results-F_2^256.csv \
+  'results-legacy/results-GR(2^16;128).csv' \
   --prefix compare_f2_256_vs_gr2p16_128
 
 # 直接使用某次 sweep 的 results.csv

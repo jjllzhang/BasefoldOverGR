@@ -401,6 +401,7 @@ mkdir -p "$OUT_DIR/logs"
 RESULT_CSV="$OUT_DIR/results.csv"
 RESULT_MD="$OUT_DIR/RESULTS.md"
 RUN_AT_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+PROOF_SIZE_SOURCE="bench_pcs_eval fixed-width payload count"
 
 cat > "$RESULT_CSV" <<CSV
 context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_ms,prove_phase_mean_ms,verifier_mean_ms,proof_size_kb,proof_size_bytes,status,error
@@ -810,6 +811,7 @@ echo "[4/4] Build markdown summary"
   echo "- d_range: [$D_MIN, $D_MAX] (poly_dim = k_d = ${K0}*2^d)"
   echo "- contexts: $CONTEXTS"
   echo "- bench_threads: $BENCH_THREADS (set 0 to use runtime default)"
+  echo "- proof_size_source: $PROOF_SIZE_SOURCE"
   echo "- cpu_pin_mode: $CPU_PIN_MODE"
   if [[ -n "$EFFECTIVE_CPU_SET" ]]; then
     echo "- cpu_set: $EFFECTIVE_CPU_SET"

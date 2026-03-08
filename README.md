@@ -181,7 +181,7 @@ Language versions:
     - When `use_extension_challenges=true`: Fiat-Shamir challenges are sampled in an outer extension over `ZZ_pE`, extension parameters are transcript-bound, and sumcheck/folding run in the extension; verifiable Merkle commitments are created for extension intermediate layers `pi_0..pi_{d-1}`, while top commitment (`pi_d` Merkle root) remains in the base ring.
     - Extension-challenge proof payload is multiproof-only and compacted: no duplicated base-side `h_i / pi0_codeword`; base and extension query payloads use shared Merkle multiproofs; `extension.r_by_level` can be omitted and recovered by transcript re-sampling.
     - `challenge_extension_modulus` now validates algebraic conditions: irreducible in field mode; basic irreducible after mod-`p` reduction in ring mode.
-  - Supports `k0=2^kappa` (BaseFold paper, Remark 3): IOPP depth is `d`, polynomial point dimension is `d+kappa`; `kappa=0` degenerates to Protocol 4 in `Basefold_over_GR.pdf` (`k0==1`).
+  - Supports `k0=2^kappa` (BaseFold paper, Remark 3): IOPP depth is `d`, polynomial point dimension is `d+kappa`; `kappa=0` degenerates to Protocol 4 in the BaseFold paper (`k0==1`).
 
 ### `include/BaseFold/ProofSerialize.hpp` / `src/BaseFold/ProofSerialize.cpp`
 
@@ -312,22 +312,24 @@ Common columns:
 - `proof_size_kb/proof_size_bytes`: exact fixed-width proof payload size
   reported by `bench_pcs_eval`, omitting transcript-recoverable
   indices/challenges (KiB / bytes).
+- Current release sweeps do not populate these columns from a separate
+  formula-only benchmark binary.
 - `status,error`: per-point success status and error message (if any).
 
 ### Result Files and Plotting
 
-- Single-run profile breakdowns (for example `--profile --reps 1`) can be stored under `results/single_runs/*_profile_breakdown.md` (for example `results/single_runs/ring-gr-2p16-64-ext_d15_profile_breakdown.md`).
-- Manually curated/comparison CSVs can be stored under `result/results-*.csv` (for example `result/results-F_2^256.csv`).
+- Single-run profile breakdowns (for example `--profile --reps 1`) can be stored under `results/single_runs/*_profile_breakdown.md` (for example `results/single_runs/<context>_d<d>_profile_breakdown.md`).
+- Tracked comparison CSVs currently live under `results-legacy/results-*.csv` (for example `results-legacy/results-F_2^256.csv`).
 - Generate plots from CSV via `scripts/plot_benchmark_results.py`:
 
 ```bash
 # Plot one CSV
-python3 scripts/plot_benchmark_results.py result/results-F_2^256.csv --prefix f2_256
+python3 scripts/plot_benchmark_results.py results-legacy/results-F_2^256.csv --prefix f2_256
 
 # Overlay multiple CSVs
 python3 scripts/plot_benchmark_results.py \
-  result/results-F_2^256.csv \
-  'result/results-GR(2^16;128).csv' \
+  results-legacy/results-F_2^256.csv \
+  'results-legacy/results-GR(2^16;128).csv' \
   --prefix compare_f2_256_vs_gr2p16_128
 
 # Plot directly from one sweep's results.csv
