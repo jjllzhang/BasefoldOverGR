@@ -35,8 +35,8 @@ namespace {
 
 struct ContextSpec {
   std::string label;
-  ZZ mod = ZZ(0);      // ZZ_p modulus (p for fields, p^s for rings)
-  ZZ prime_p = ZZ(0);  // optional: the prime p (only used by checked paths)
+  ZZ scalar_modulus = ZZ(0);  // ZZ_p modulus (p for fields, p^s for rings)
+  ZZ base_prime = ZZ(0);      // optional: the prime p (only used by checked paths)
   std::vector<ZZ> F_coeffs;     // extension modulus polynomial coefficients
   std::vector<ZZ> zeta_coeffs;  // ζ element coefficients
 };
@@ -144,24 +144,27 @@ ZZ NormalizeMod(const ZZ &x, const ZZ &mod) {
 }
 
 void DeduceBasePrimeAndExponent(const ContextSpec &spec, ZZ &p_out, long &k_out) {
-  if (spec.mod <= 1) LogicError("DeduceBasePrimeAndExponent: mod must be > 1");
+  if (spec.scalar_modulus <= 1) {
+    LogicError("DeduceBasePrimeAndExponent: scalar_modulus must be > 1");
+  }
 
-  if (spec.prime_p > 1) {
-    ZZ m = spec.mod;
+  if (spec.base_prime > 1) {
+    ZZ m = spec.scalar_modulus;
     long k = 0;
-    while ((m % spec.prime_p) == 0) {
-      m /= spec.prime_p;
+    while ((m % spec.base_prime) == 0) {
+      m /= spec.base_prime;
       ++k;
     }
     if (k <= 0 || m != 1) {
-      LogicError("DeduceBasePrimeAndExponent: mod must equal prime_p^k");
+      LogicError(
+          "DeduceBasePrimeAndExponent: scalar_modulus must equal base_prime^k");
     }
-    p_out = spec.prime_p;
+    p_out = spec.base_prime;
     k_out = k;
     return;
   }
 
-  p_out = spec.mod;
+  p_out = spec.scalar_modulus;
   k_out = 1;
 }
 
@@ -227,9 +230,9 @@ basefold::FoldableCodeParams BuildParams_k0_1(long c, long d, const ZZ &prime_p,
 
 struct BenchResult {
   Stats encode;
-  Stats top_commit;
+  Stats top_merkle_build;
   Stats commit;
-  std::uint64_t sink = 0;
+  std::uint64_t anti_opt_checksum = 0;
 };
 
 std::uint64_t SplitMix64(std::uint64_t x) {
@@ -355,13 +358,13 @@ BenchResult RunCommitBenchmark(const vec_ZZ_pE &f_coeffs,
   if (reps <= 0) LogicError("RunCommitBenchmark: reps must be > 0");
 
   std::vector<double> encode_ms;
-  std::vector<double> top_commit_ms;
+  std::vector<double> top_merkle_build_ms;
   std::vector<double> commit_ms;
   encode_ms.reserve(static_cast<std::size_t>(reps));
-  top_commit_ms.reserve(static_cast<std::size_t>(reps));
+  top_merkle_build_ms.reserve(static_cast<std::size_t>(reps));
   commit_ms.reserve(static_cast<std::size_t>(reps));
 
-  std::uint64_t sink = 0;
+  std::uint64_t anti_opt_checksum = 0;
   vec_ZZ_pE pi_d;
   basefold::MerkleTree merkle_d;
 
@@ -376,42 +379,44 @@ BenchResult RunCommitBenchmark(const vec_ZZ_pE &f_coeffs,
     if (pi_d.length() > 0) {
       // Touch a single output element to discourage aggressive dead-code
       // elimination without adding heavy conversions that slow the benchmark.
-      sink ^= static_cast<std::uint64_t>(pi_d[0] != ZZ_pE(0));
+      anti_opt_checksum ^= static_cast<std::uint64_t>(pi_d[0] != ZZ_pE(0));
     }
     if (!root_d.empty()) {
-      sink ^= static_cast<std::uint64_t>(root_d[0]);
+      anti_opt_checksum ^= static_cast<std::uint64_t>(root_d[0]);
     }
 
     if (iter >= 0) {
       encode_ms.push_back(MsSince(t0, t1));
-      top_commit_ms.push_back(MsSince(t1, t2));
+      top_merkle_build_ms.push_back(MsSince(t1, t2));
       commit_ms.push_back(MsSince(t0, t2));
     }
   }
 
   BenchResult out;
   out.encode = ComputeStats(encode_ms);
-  out.top_commit = ComputeStats(top_commit_ms);
+  out.top_merkle_build = ComputeStats(top_merkle_build_ms);
   out.commit = ComputeStats(commit_ms);
-  out.sink = sink;
+  out.anti_opt_checksum = anti_opt_checksum;
   return out;
 }
 
-void PrintResult(const std::string &label, const ZZ &mod, long c, long k0, long d,
-                 long k_d, long n_d, int warmup, int reps,
+void PrintResult(const std::string &label, const ZZ &scalar_modulus, long c,
+                 long k0, long d, long k_d, long n_d, int warmup, int reps,
                  const BenchResult &r) {
   std::cout << "\n[" << label << "] c=" << c << " k0=" << k0 << " d=" << d
-            << "  mod=" << mod << "  k_d=" << k_d << "  n_d=" << n_d
+            << "  mod=" << scalar_modulus << "  k_d=" << k_d
+            << "  n_d=" << n_d
             << "  warmup=" << warmup << " reps=" << reps << "\n";
   std::cout << std::fixed << std::setprecision(3);
   std::cout << "  hash backend " << basefold::SelectedHashBackendName() << "\n";
   std::cout << "  encode-only mean " << r.encode.mean_ms << " ms  (min "
             << r.encode.min_ms << ", max " << r.encode.max_ms << ")\n";
-  std::cout << "  top-commit mean " << r.top_commit.mean_ms << " ms  (min "
-            << r.top_commit.min_ms << ", max " << r.top_commit.max_ms << ")\n";
+  std::cout << "  top-merkle-build mean " << r.top_merkle_build.mean_ms
+            << " ms  (min " << r.top_merkle_build.min_ms << ", max "
+            << r.top_merkle_build.max_ms << ")\n";
   std::cout << "  commit     mean " << r.commit.mean_ms << " ms  (min "
             << r.commit.min_ms << ", max " << r.commit.max_ms << ")\n";
-  std::cout << "  sink    " << r.sink << "\n";
+  std::cout << "  anti-opt checksum " << r.anti_opt_checksum << "\n";
 }
 
 bool ParseLong(const char *s, long &out) {
@@ -452,7 +457,7 @@ void PrintHelp() {
       << "                 [--ring-mod <decimal-int>]  [--ring-p <decimal-int>] [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
       << "Notes:\n"
       << "  Headline commit time includes top-level EncodeFoldable + MerkleTree::Build.\n"
-      << "  Auxiliary lines print encode-only and top-commit-only splits.\n\n"
+      << "  Auxiliary lines print encode-only and top-merkle-build-only splits.\n\n"
       << "  With --auto-zeta teich, zeta is derived as a Teichmuller generator from (p,k,F);\n"
       << "  then --field-zeta/--ring-zeta are ignored.\n\n"
       << "Examples:\n"
@@ -483,12 +488,14 @@ std::uint64_t ParseU64OrDie(const char *s, const char *flag) {
 
 void RunOneContext(const ContextSpec &spec, long c, long k0, long d, int warmup,
                    int reps, bool auto_zeta_teich, std::uint64_t seed) {
-  if (spec.mod <= 1) LogicError("RunOneContext: modulus must be > 1");
+  if (spec.scalar_modulus <= 1) {
+    LogicError("RunOneContext: modulus must be > 1");
+  }
 
-  const ZZ modulus = spec.mod;
+  const ZZ modulus = spec.scalar_modulus;
   ZZ_pPush mod_push(modulus);
 
-  ValidateMonic(spec.F_coeffs, spec.mod, "F");
+  ValidateMonic(spec.F_coeffs, spec.scalar_modulus, "F");
   const ZZ_pX F = BuildZZpX(spec.F_coeffs);
   ZZ_pEPush e_push(F);
 
@@ -507,10 +514,13 @@ void RunOneContext(const ContextSpec &spec, long c, long k0, long d, int warmup,
   const basefold::FoldableCodeParams params = [&] {
     if (k0 == 1) {
       return BuildParams_k0_1(
-          c, d, (spec.prime_p > 1) ? spec.prime_p : spec.mod, zeta);
+          c, d, (spec.base_prime > 1) ? spec.base_prime : spec.scalar_modulus,
+          zeta);
     }
     return BuildParams_k0_gt1(
-        c, k0, d, (spec.prime_p > 1) ? spec.prime_p : spec.mod, zeta, seed);
+        c, k0, d,
+        (spec.base_prime > 1) ? spec.base_prime : spec.scalar_modulus, zeta,
+        seed);
   }();
 
   const long pow2_d = Pow2Checked(d);
@@ -525,7 +535,8 @@ void RunOneContext(const ContextSpec &spec, long c, long k0, long d, int warmup,
 
   const vec_ZZ_pE f_coeffs = MakeDeterministicCoefficients(k_d, seed);
   const BenchResult r = RunCommitBenchmark(f_coeffs, params, warmup, reps);
-  PrintResult(spec.label, spec.mod, c, k0, d, k_d, n_d, warmup, reps, r);
+  PrintResult(spec.label, spec.scalar_modulus, c, k0, d, k_d, n_d, warmup,
+              reps, r);
 }
 
 }  // namespace
@@ -544,21 +555,21 @@ int main(int argc, char **argv) {
 
   ContextSpec field;
   field.label = "Field";
-  field.mod = to_ZZ(2);
-  field.prime_p = ZZ(0);
+  field.scalar_modulus = to_ZZ(2);
+  field.base_prime = ZZ(0);
   field.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};      // x^2 + x + 1
   field.zeta_coeffs = {to_ZZ(0), to_ZZ(1)};      // x
 
   ContextSpec ring;
   ring.label = "Ring";
-  ring.mod = to_ZZ(4);
-  ring.prime_p = to_ZZ(2);
+  ring.scalar_modulus = to_ZZ(4);
+  ring.base_prime = to_ZZ(2);
   ring.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};       // x^2 + x + 1
   ring.zeta_coeffs = {to_ZZ(0), to_ZZ(1)};       // x
 
   for (int i = 1; i < argc; ++i) {
     const std::string arg(argv[i]);
-    auto NeedValue = [&](const char *flag) -> const char * {
+    auto RequireNextArgValue = [&](const char *flag) -> const char * {
       if (i + 1 >= argc) {
         std::cerr << "Missing value for " << flag << "\n";
         std::exit(2);
@@ -567,7 +578,7 @@ int main(int argc, char **argv) {
     };
 
     if (arg == "--mode") {
-      const std::string m = NeedValue("--mode");
+      const std::string m = RequireNextArgValue("--mode");
       if (m == "field") {
         do_field = true;
         do_ring = false;
@@ -582,34 +593,34 @@ int main(int argc, char **argv) {
         return 2;
       }
     } else if (arg == "--d") {
-      if (!ParseLong(NeedValue("--d"), d) || d < 0) {
+      if (!ParseLong(RequireNextArgValue("--d"), d) || d < 0) {
         std::cerr << "Invalid --d\n";
         return 2;
       }
     } else if (arg == "--c") {
-      if (!ParseLong(NeedValue("--c"), c) || c <= 0) {
+      if (!ParseLong(RequireNextArgValue("--c"), c) || c <= 0) {
         std::cerr << "Invalid --c\n";
         return 2;
       }
     } else if (arg == "--k0") {
-      if (!ParseLong(NeedValue("--k0"), k0) || k0 <= 0) {
+      if (!ParseLong(RequireNextArgValue("--k0"), k0) || k0 <= 0) {
         std::cerr << "Invalid --k0\n";
         return 2;
       }
     } else if (arg == "--warmup") {
-      if (!ParseInt(NeedValue("--warmup"), warmup) || warmup < 0) {
+      if (!ParseInt(RequireNextArgValue("--warmup"), warmup) || warmup < 0) {
         std::cerr << "Invalid --warmup\n";
         return 2;
       }
     } else if (arg == "--reps") {
-      if (!ParseInt(NeedValue("--reps"), reps) || reps <= 0) {
+      if (!ParseInt(RequireNextArgValue("--reps"), reps) || reps <= 0) {
         std::cerr << "Invalid --reps\n";
         return 2;
       }
     } else if (arg == "--seed") {
-      seed = ParseU64OrDie(NeedValue("--seed"), "--seed");
+      seed = ParseU64OrDie(RequireNextArgValue("--seed"), "--seed");
     } else if (arg == "--auto-zeta") {
-      const std::string mode = NeedValue("--auto-zeta");
+      const std::string mode = RequireNextArgValue("--auto-zeta");
       if (mode == "teich") {
         auto_zeta_teich = true;
       } else {
@@ -617,28 +628,31 @@ int main(int argc, char **argv) {
         return 2;
       }
     } else if (arg == "--field-mod") {
-      if (!ParseZZ(NeedValue("--field-mod"), field.mod) || field.mod <= 1) {
+      if (!ParseZZ(RequireNextArgValue("--field-mod"), field.scalar_modulus) ||
+          field.scalar_modulus <= 1) {
         std::cerr << "Invalid --field-mod\n";
         return 2;
       }
     } else if (arg == "--field-F") {
-      field.F_coeffs = ParseCoeffList(NeedValue("--field-F"));
+      field.F_coeffs = ParseCoeffList(RequireNextArgValue("--field-F"));
     } else if (arg == "--field-zeta") {
-      field.zeta_coeffs = ParseCoeffList(NeedValue("--field-zeta"));
+      field.zeta_coeffs = ParseCoeffList(RequireNextArgValue("--field-zeta"));
     } else if (arg == "--ring-mod") {
-      if (!ParseZZ(NeedValue("--ring-mod"), ring.mod) || ring.mod <= 1) {
+      if (!ParseZZ(RequireNextArgValue("--ring-mod"), ring.scalar_modulus) ||
+          ring.scalar_modulus <= 1) {
         std::cerr << "Invalid --ring-mod\n";
         return 2;
       }
     } else if (arg == "--ring-p") {
-      if (!ParseZZ(NeedValue("--ring-p"), ring.prime_p) || ring.prime_p <= 1) {
+      if (!ParseZZ(RequireNextArgValue("--ring-p"), ring.base_prime) ||
+          ring.base_prime <= 1) {
         std::cerr << "Invalid --ring-p\n";
         return 2;
       }
     } else if (arg == "--ring-F") {
-      ring.F_coeffs = ParseCoeffList(NeedValue("--ring-F"));
+      ring.F_coeffs = ParseCoeffList(RequireNextArgValue("--ring-F"));
     } else if (arg == "--ring-zeta") {
-      ring.zeta_coeffs = ParseCoeffList(NeedValue("--ring-zeta"));
+      ring.zeta_coeffs = ParseCoeffList(RequireNextArgValue("--ring-zeta"));
     } else if (arg == "--help" || arg == "-h") {
       PrintHelp();
       return 0;

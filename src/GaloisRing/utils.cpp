@@ -57,9 +57,9 @@ vector<long> FindFactor(long n) {
 /*
     Converts coefficients (low degree -> high degree) into a ZZ_pX over the
    current ZZ_p modulus. Precondition: ZZ_p::init(modulus) has been called.
-    Usage: ZZ_pX f = long2ZZpX({1,2,3});  // 1 + 2*x + 3*x^2
+    Usage: ZZ_pX f = LongVecToZZpX({1,2,3});  // 1 + 2*x + 3*x^2
 */
-ZZ_pX long2ZZpX(const vector<long> &coefficients) {
+ZZ_pX LongVecToZZpX(const vector<long> &coefficients) {
   ZZ_pX poly;
   for (size_t i = 0; i < coefficients.size(); i++) {
     SetCoeff(poly, i, to_ZZ_p(coefficients[i]));
@@ -71,9 +71,9 @@ ZZ_pX long2ZZpX(const vector<long> &coefficients) {
 /*
     Converts coefficients into a ZZ_pE element (via ZZ_pX) reduced modulo the
    current ZZ_pE modulus. Preconditions: ZZ_p::init(modulus) and ZZ_pE::init(F)
-   have been called. Usage: ZZ_pE a = long2ZZpE({3,5});  // 3 + 5*x in ZZ_pE
+   have been called. Usage: ZZ_pE a = LongVecToZZpE({3,5});  // 3 + 5*x in ZZ_pE
 */
-ZZ_pE long2ZZpE(const vector<long> &coefficients) {
+ZZ_pE LongVecToZZpE(const vector<long> &coefficients) {
   ZZ_pX poly;
   for (size_t i = 0; i < coefficients.size(); i++) {
     SetCoeff(poly, i, to_ZZ_p(coefficients[i]));
@@ -94,32 +94,33 @@ bool isPowerOfTwo(long n) { return n > 0 && (n & (n - 1)) == 0; }
 /*
     Flattens a vec_ZZ_pE into a vector<long> by expanding each element into s
    coefficients. Parameter s is the extension degree (basis size). Usage:
-   VeczzpE2Veclong(v, out, s);
+   FlattenZZpEVectorToLongs(v, out, s);
 */
-void VeczzpE2Veclong(const vec_ZZ_pE &v1, vector<long> &m, long s) {
-  m.clear();
-  const long len = v1.length();
-  m.reserve(static_cast<size_t>(len) * static_cast<size_t>(s));
+void FlattenZZpEVectorToLongs(const vec_ZZ_pE &values,
+                              vector<long> &coeffs_out, long s) {
+  coeffs_out.clear();
+  const long len = values.length();
+  coeffs_out.reserve(static_cast<size_t>(len) * static_cast<size_t>(s));
 
   for (long i = 0; i < len; i++) {
-    const ZZ_pX &polyRep = rep(v1[i]);
+    const ZZ_pX &polyRep = rep(values[i]);
 
     for (long j = 0; j < s; j++) {
       long c;
       conv(c, coeff(polyRep, j));
-      m.push_back(c);
+      coeffs_out.push_back(c);
     }
   }
 }
 
 /*
     Concatenates the decimal representations of entries without any separator.
-    Usage: string s = Veclong2String({1,0,23});  // "1023"
+    Usage: string s = LongVecToConcatenatedString({1,0,23});  // "1023"
 */
-string Veclong2String(const std::vector<long> &vec) {
+string LongVecToConcatenatedString(const std::vector<long> &values) {
   stringstream ss;
-  for (size_t i = 0; i < vec.size(); ++i) {
-    ss << vec[i];
+  for (size_t i = 0; i < values.size(); ++i) {
+    ss << values[i];
   }
   return ss.str();
 }
@@ -127,75 +128,76 @@ string Veclong2String(const std::vector<long> &vec) {
 /*
     Expands a ZZ_pE element into a vector<long> of length s (coefficients of
    rep(F)). Parameter s is the extension degree (basis size). Usage:
-   ZzpE2Veclong(a, out, s);
+   ZZpEToLongCoeffs(a, out, s);
 */
-void ZzpE2Veclong(const ZZ_pE &F, vector<long> &m, long s) {
-  m.clear();
-  m.reserve(static_cast<size_t>(s));
+void ZZpEToLongCoeffs(const ZZ_pE &element, vector<long> &coeffs_out, long s) {
+  coeffs_out.clear();
+  coeffs_out.reserve(static_cast<size_t>(s));
 
-  const ZZ_pX &polyRep = rep(F);
+  const ZZ_pX &polyRep = rep(element);
   for (long i = 0; i < s; i++) {
     long c;
     conv(c, (coeff(polyRep, i)));
-    m.push_back(c);
+    coeffs_out.push_back(c);
   }
 }
 
 /*
-    Converts each ZZ_pE element in v1 into a coefficient string (see
-   Veclong2String). Parameter s is the extension degree (basis size). Usage:
-   VeczzpE2Vecstring(v, out, s);
+    Converts each ZZ_pE element in values into a coefficient string (see
+   LongVecToConcatenatedString). Parameter s is the extension degree (basis
+   size). Usage: ZZpEVectorToConcatenatedStrings(v, out, s);
 */
-void VeczzpE2Vecstring(const vec_ZZ_pE &v1, vector<string> &m, long s) {
-  m.clear();
-  m.reserve(static_cast<size_t>(v1.length()));
+void ZZpEVectorToConcatenatedStrings(const vec_ZZ_pE &values,
+                                     vector<string> &strings_out, long s) {
+  strings_out.clear();
+  strings_out.reserve(static_cast<size_t>(values.length()));
   vector<long> b;
   b.reserve(static_cast<size_t>(s));
 
-  for (long i = 0; i < v1.length(); i++) {
-    ZzpE2Veclong(v1[i], b, s);
-    string a = Veclong2String(b);
-    m.push_back(a);
+  for (long i = 0; i < values.length(); i++) {
+    ZZpEToLongCoeffs(values[i], b, s);
+    string a = LongVecToConcatenatedString(b);
+    strings_out.push_back(a);
   }
 }
 
 /*
     Extracts ZZ_pX coefficients into vector<long> (degrees 0..deg(F)).
-    Usage: ZZpX2long(poly, out);
+    Usage: ZZpXToLongCoeffs(poly, out);
 */
-void ZZpX2long(const ZZ_pX &F, vector<long> &Irred) {
-  Irred.clear();
-  const long degree = deg(F);
-  Irred.reserve(static_cast<size_t>(degree + 1));
+void ZZpXToLongCoeffs(const ZZ_pX &poly, vector<long> &coeffs_out) {
+  coeffs_out.clear();
+  const long degree = deg(poly);
+  coeffs_out.reserve(static_cast<size_t>(degree + 1));
 
   for (long i = 0; i <= degree; i++) {
     long c;
-    conv(c, (coeff(F, i)));
-    Irred.push_back(c);
+    conv(c, (coeff(poly, i)));
+    coeffs_out.push_back(c);
   }
 }
 
 /*
     Flattens a ZZ_pEX into vector<long> by expanding each ZZ_pE coefficient into
    s longs. Parameter s is the extension degree (basis size). Usage:
-   ZZpEX2long(f, out, s);
+   ZZpEXToLongCoeffs(f, out, s);
 */
-void ZZpEX2long(const ZZ_pEX &v1, vector<long> &m, long s) {
-  m.clear();
-  const long degree = deg(v1);
+void ZZpEXToLongCoeffs(const ZZ_pEX &poly, vector<long> &coeffs_out, long s) {
+  coeffs_out.clear();
+  const long degree = deg(poly);
   if (degree < 0) {
     return;
   }
-  m.reserve(static_cast<size_t>(degree + 1) * static_cast<size_t>(s));
+  coeffs_out.reserve(static_cast<size_t>(degree + 1) * static_cast<size_t>(s));
 
   for (long i = 0; i <= degree; i++) {
-    const ZZ_pE element = coeff(v1, i);
+    const ZZ_pE element = coeff(poly, i);
     const ZZ_pX &polyRep = rep(element);
 
     for (long j = 0; j < s; j++) {
       long c;
       conv(c, coeff(polyRep, j));
-      m.push_back(c);
+      coeffs_out.push_back(c);
     }
   }
 }
@@ -300,41 +302,42 @@ vector<long> SplitAndPadVector(const vector<long> &input, long segmentLength,
 /*
     Converts a flattened vector<long> into a ZZ_pEX by grouping every s entries
    as one ZZ_pE coefficient. Precondition: result.size() is a multiple of s;
-   ZZ_p/ZZ_pE contexts are initialized. Usage: Long2ZZpEX(flat, poly, s);
+   ZZ_p/ZZ_pE contexts are initialized. Usage: LongVecToZZpEX(flat, poly, s);
 */
-void Long2ZZpEX(const vector<long> &result, ZZ_pEX &V, long s) {
+void LongVecToZZpEX(const vector<long> &coeffs, ZZ_pEX &poly_out, long s) {
   long index = 0;
 
-  long n = result.size() / s;
+  long n = coeffs.size() / s;
   for (long j = 0; j < n; j++) {
     ZZ_pX polyRep;
     for (long k = 0; k < s; k++) {
-      SetCoeff(polyRep, k, to_ZZ_p(result[index++]));
+      SetCoeff(polyRep, k, to_ZZ_p(coeffs[index++]));
     }
     ZZ_pE a;
     conv(a, polyRep);
 
-    SetCoeff(V, j, a);
+    SetCoeff(poly_out, j, a);
   }
 }
 
 /*
-    Same as Long2ZZpEX, but only reads n ZZ_pE coefficients from result.
-    Precondition: result.size() >= n*s; ZZ_p/ZZ_pE contexts are initialized.
-    Usage: Long2ZZpEX2(flat, poly, s, n);
+    Same as LongVecToZZpEX, but only reads n ZZ_pE coefficients from coeffs.
+    Precondition: coeffs.size() >= n*s; ZZ_p/ZZ_pE contexts are initialized.
+    Usage: LongVecToZZpEXWithCoeffCount(flat, poly, s, n);
 */
-void Long2ZZpEX2(const vector<long> &result, ZZ_pEX &V, long s, long n) {
+void LongVecToZZpEXWithCoeffCount(const vector<long> &coeffs, ZZ_pEX &poly_out,
+                                  long s, long n) {
   long index = 0;
 
   for (long j = 0; j < n; j++) {
     ZZ_pX polyRep;
     for (long k = 0; k < s; k++) {
-      SetCoeff(polyRep, k, to_ZZ_p(result[index++]));
+      SetCoeff(polyRep, k, to_ZZ_p(coeffs[index++]));
     }
     ZZ_pE a;
     conv(a, polyRep);
 
-    SetCoeff(V, j, a);
+    SetCoeff(poly_out, j, a);
   }
 }
 

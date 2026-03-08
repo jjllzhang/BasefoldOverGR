@@ -207,11 +207,11 @@ using MerkleRoot = Digest;
 
 // Runtime tuning knobs for MerkleTree::Build parallelization.
 // Defaults can also be provided via environment variables:
-// - BASEFOLD_MERKLE_LEAFS_PER_THREAD
+// - BASEFOLD_MERKLE_LEAVES_PER_THREAD
 // - BASEFOLD_MERKLE_PARALLEL_LEVEL_THRESHOLD
 // - BASEFOLD_MERKLE_MAX_THREADS
 struct MerkleBuildParallelConfig {
-  long leafs_per_thread = 32768;
+  long leaves_per_thread = 32768;
   long parallel_level_threshold = 8192;
   int max_threads = 8;
 };

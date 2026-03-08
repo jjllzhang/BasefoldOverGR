@@ -389,7 +389,7 @@ RESULT_MD="$OUT_DIR/RESULTS.md"
 RUN_AT_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 cat > "$RESULT_CSV" <<CSV
-context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_ms,prover_mean_ms,verifier_mean_ms,proof_size_kb,proof_size_bytes,status,error
+context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_ms,prove_phase_mean_ms,verifier_mean_ms,proof_size_kb,proof_size_bytes,status,error
 CSV
 
 run_and_log() {
@@ -457,7 +457,7 @@ write_row() {
   local gamma="$6"
   local queries="$7"
   local commit_ms="$8"
-  local prover_ms="$9"
+  local prove_phase_ms="$9"
   local verifier_ms="${10}"
   local proof_kb="${11}"
   local proof_bytes="${12}"
@@ -466,7 +466,7 @@ write_row() {
   local context_label_csv="${context_label//,/;}"
   local error_csv="${error//,/;}"
 
-  echo "${context_id},${context_label_csv},${mode},${d},${poly_dim},${C},${K0},${LAMBDA},${gamma},${queries},${commit_ms},${prover_ms},${verifier_ms},${proof_kb},${proof_bytes},${status},${error_csv}" >> "$RESULT_CSV"
+  echo "${context_id},${context_label_csv},${mode},${d},${poly_dim},${C},${K0},${LAMBDA},${gamma},${queries},${commit_ms},${prove_phase_ms},${verifier_ms},${proof_kb},${proof_bytes},${status},${error_csv}" >> "$RESULT_CSV"
 }
 
 run_one_context_d() {
@@ -483,7 +483,7 @@ run_one_context_d() {
   local gamma="NA"
   local queries="NA"
   local commit_ms="NA"
-  local prover_ms="NA"
+  local prove_phase_ms="NA"
   local verifier_ms="NA"
   local proof_kb="NA"
   local proof_bytes="NA"
@@ -572,7 +572,7 @@ run_one_context_d() {
     *)
       status="context_config_error"
       error="unknown context"
-      write_row "$context_id" "$context_label" "$mode" "$d" "$poly_dim" "$gamma" "$queries" "$commit_ms" "$prover_ms" "$verifier_ms" "$proof_kb" "$proof_bytes" "$status" "$error"
+      write_row "$context_id" "$context_label" "$mode" "$d" "$poly_dim" "$gamma" "$queries" "$commit_ms" "$prove_phase_ms" "$verifier_ms" "$proof_kb" "$proof_bytes" "$status" "$error"
       maybe_abort "$status" "unknown context_id=$context_id"
       return
       ;;
@@ -633,10 +633,10 @@ run_one_context_d() {
       status="eval_failed"
       error="$(first_error_line "$eval_log")"
     else
-      prover_ms="$(parse_first "prover   mean" 3 "$eval_log")"
+      prove_phase_ms="$(parse_first "prove-phase mean" 3 "$eval_log")"
       verifier_ms="$(parse_first "verifier mean" 3 "$eval_log")"
-      if [[ -z "$prover_ms" ]]; then
-        prover_ms="NA"
+      if [[ -z "$prove_phase_ms" ]]; then
+        prove_phase_ms="NA"
       fi
       if [[ -z "$verifier_ms" ]]; then
         verifier_ms="NA"
@@ -653,7 +653,7 @@ run_one_context_d() {
   if [[ -z "$error" ]]; then
     error="-"
   fi
-  write_row "$context_id" "$context_label" "$mode" "$d" "$poly_dim" "$gamma" "$queries" "$commit_ms" "$prover_ms" "$verifier_ms" "$proof_kb" "$proof_bytes" "$status" "$error"
+  write_row "$context_id" "$context_label" "$mode" "$d" "$poly_dim" "$gamma" "$queries" "$commit_ms" "$prove_phase_ms" "$verifier_ms" "$proof_kb" "$proof_bytes" "$status" "$error"
   maybe_abort "$status" "${context_label} d=${d} status=${status}"
 }
 
@@ -809,7 +809,7 @@ echo "[4/4] Build markdown summary"
   echo ""
   echo "## Results"
   echo ""
-  echo "| context | d | poly_dim | gamma | queries | commit mean ms | prover mean ms | verifier mean ms | proof size KB | status |"
+  echo "| context | d | poly_dim | gamma | queries | commit mean ms | prove-phase mean ms | verifier mean ms | proof size KB | status |"
   echo "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
   tail -n +2 "$RESULT_CSV" | awk -F',' '{printf "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", $2, $4, $5, $9, $10, $11, $12, $13, $14, $16}'
   echo ""

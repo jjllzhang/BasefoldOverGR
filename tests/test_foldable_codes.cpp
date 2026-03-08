@@ -31,11 +31,11 @@ using std::string;
 using std::size_t;
 using std::vector;
 
-int g_failures = 0;
+int g_test_failure_count = 0;
 
 namespace {
 
-ZZ_pE ElemFromIndexGF4(int idx, const ZZ_pE &alpha) {
+ZZ_pE LookupGF4ElementByCode(int idx, const ZZ_pE &alpha) {
   const ZZ_pE one = testutil::ConstZZpE(1);
   if (idx == 0) return ZZ_pE(0);
   if (idx == 1) return one;
@@ -43,7 +43,7 @@ ZZ_pE ElemFromIndexGF4(int idx, const ZZ_pE &alpha) {
   return alpha + one;
 }
 
-ZZ_pE NonZeroElemFromIndexGF4(int idx, const ZZ_pE &alpha) {
+ZZ_pE LookupNonZeroGF4ElementByCode(int idx, const ZZ_pE &alpha) {
   const ZZ_pE one = testutil::ConstZZpE(1);
   if (idx == 0) return one;
   if (idx == 1) return alpha;
@@ -112,7 +112,7 @@ vector<vec_ZZ_pE> SampleDiagT(long c, long k0, long d, const ZZ_pE &alpha,
     for (long i = 0; i < ni; ++i) {
       const int choice = dist_nonzero(rng);
       diag_T[static_cast<size_t>(level)][i] =
-          NonZeroElemFromIndexGF4(choice, alpha);
+          LookupNonZeroGF4ElementByCode(choice, alpha);
     }
   }
 
@@ -124,7 +124,7 @@ vec_ZZ_pE SampleMessage(long k0, long d, const ZZ_pE &alpha, mt19937 &rng) {
   vec_ZZ_pE msg;
   msg.SetLength(k0 * (1L << d));
   for (long i = 0; i < msg.length(); ++i) {
-    msg[i] = ElemFromIndexGF4(dist_any(rng), alpha);
+    msg[i] = LookupGF4ElementByCode(dist_any(rng), alpha);
   }
   return msg;
 }
@@ -136,7 +136,7 @@ ZZ_pE SampleElementGR42(mt19937 &rng) {
   return ElemFromCoeffs({c0, c1});
 }
 
-ZZ_pE SampleUnitGR42(mt19937 &rng) {
+ZZ_pE SampleUnitGR_4_2(mt19937 &rng) {
   uniform_int_distribution<int> dist_coeff(0, 3);
   while (true) {
     const long c0 = dist_coeff(rng);
@@ -154,7 +154,7 @@ vector<vec_ZZ_pE> SampleDiagT_GR42(long c, long k0, long d, mt19937 &rng) {
     const long ni = c * k0 * (1L << level);
     diag_T[static_cast<size_t>(level)].SetLength(ni);
     for (long i = 0; i < ni; ++i) {
-      diag_T[static_cast<size_t>(level)][i] = SampleUnitGR42(rng);
+      diag_T[static_cast<size_t>(level)][i] = SampleUnitGR_4_2(rng);
     }
   }
 
@@ -440,7 +440,7 @@ void TestFoldableEncode_Randomized() {
     vec_ZZ_pE points;
     points.SetLength(n0);
     for (long j = 0; j < n0; ++j) {
-      points[j] = ElemFromIndexGF4(static_cast<int>(j), alpha);
+      points[j] = LookupGF4ElementByCode(static_cast<int>(j), alpha);
     }
 
     const mat_ZZ_pE G0 = BuildVandermondeG0(cs.k0, points);
@@ -541,7 +541,7 @@ void TestFoldableEncode_Randomized_GR42() {
     vec_ZZ_pE points;
     points.SetLength(n0);
     for (long j = 0; j < n0; ++j) {
-      points[j] = ElemFromIndexGF4(static_cast<int>(j), alpha);
+      points[j] = LookupGF4ElementByCode(static_cast<int>(j), alpha);
     }
 
     const mat_ZZ_pE G0 = BuildVandermondeG0(cs.k0, points);
@@ -607,11 +607,11 @@ int main() {
     return 2;
   }
 
-  if (g_failures == 0) {
+  if (g_test_failure_count == 0) {
     cout << "\nAll tests passed.\n";
     return 0;
   }
 
-  cerr << "\n" << g_failures << " test(s) failed.\n";
+  cerr << "\n" << g_test_failure_count << " test(s) failed.\n";
   return 1;
 }

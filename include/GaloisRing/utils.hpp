@@ -37,42 +37,47 @@ std::vector<long> FindFactor(long n);
 
 // Converts coefficients (low degree -> high degree) into an NTL polynomial over
 // ZZ_p. Precondition: ZZ_p::init(modulus) has been called. Call: ZZ_pX f =
-// long2ZZpX({1,2,3});  // 1 + 2*x + 3*x^2
-NTL::ZZ_pX long2ZZpX(const std::vector<long> &coefficients);
+// LongVecToZZpX({1,2,3});  // 1 + 2*x + 3*x^2
+NTL::ZZ_pX LongVecToZZpX(const std::vector<long> &coefficients);
 
 // Converts coefficients into a ZZ_pE element by reducing a ZZ_pX representation
 // modulo the current ZZ_pE modulus. Preconditions: ZZ_p::init(modulus) and
-// ZZ_pE::init(F) have been called. Call: ZZ_pE a = long2ZZpE({3,5});  // 3 +
-// 5*x in the current ZZ_pE
-NTL::ZZ_pE long2ZZpE(const std::vector<long> &coefficients);
+// ZZ_pE::init(F) have been called. Call: ZZ_pE a = LongVecToZZpE({3,5});  // 3
+// + 5*x in the current ZZ_pE
+NTL::ZZ_pE LongVecToZZpE(const std::vector<long> &coefficients);
 
 // Returns true iff n is a power of two (and n > 0).
 bool isPowerOfTwo(long n);
 
 // Flattens a vec_ZZ_pE into vector<long> by expanding each element into s
-// coefficients (basis 1..x^(s-1)). Call: VeczzpE2Veclong(v, out, s);
-void VeczzpE2Veclong(const NTL::vec_ZZ_pE &v1, std::vector<long> &m, long s);
+// coefficients (basis 1..x^(s-1)). Call: FlattenZZpEVectorToLongs(v, out, s);
+void FlattenZZpEVectorToLongs(const NTL::vec_ZZ_pE &values,
+                              std::vector<long> &coeffs_out, long s);
 
 // Concatenates the decimal representations of the entries without separators.
-// Call: string s = Veclong2String({1,0,23});  // "1023"
-std::string Veclong2String(const std::vector<long> &vec);
+// Call: string s = LongVecToConcatenatedString({1,0,23});  // "1023"
+std::string LongVecToConcatenatedString(const std::vector<long> &values);
 
 // Expands one ZZ_pE element into vector<long> of length s (coefficients of
-// rep(a) for degrees 0..s-1). Call: ZzpE2Veclong(a, out, s);
-void ZzpE2Veclong(const NTL::ZZ_pE &F, std::vector<long> &m, long s);
+// rep(a) for degrees 0..s-1). Call: ZZpEToLongCoeffs(a, out, s);
+void ZZpEToLongCoeffs(const NTL::ZZ_pE &element,
+                      std::vector<long> &coeffs_out, long s);
 
-// Same as VeczzpE2Veclong, but each element is converted to a concatenated
-// string (see Veclong2String). Call: VeczzpE2Vecstring(v, out, s);
-void VeczzpE2Vecstring(const NTL::vec_ZZ_pE &v1, std::vector<std::string> &m,
-                       long s);
+// Same as FlattenZZpEVectorToLongs, but each element is converted to a
+// concatenated string (see LongVecToConcatenatedString). Call:
+// ZZpEVectorToConcatenatedStrings(v, out, s);
+void ZZpEVectorToConcatenatedStrings(
+    const NTL::vec_ZZ_pE &values, std::vector<std::string> &strings_out,
+    long s);
 
 // Extracts coefficients of a ZZ_pX into vector<long> (degrees 0..deg(F)).
-// Call: ZZpX2long(poly, out);
-void ZZpX2long(const NTL::ZZ_pX &F, std::vector<long> &Irred);
+// Call: ZZpXToLongCoeffs(poly, out);
+void ZZpXToLongCoeffs(const NTL::ZZ_pX &poly, std::vector<long> &coeffs_out);
 
 // Flattens a ZZ_pEX (polynomial with ZZ_pE coefficients) into vector<long>,
-// expanding each coefficient into s longs. Call: ZZpEX2long(f, out, s);
-void ZZpEX2long(const NTL::ZZ_pEX &v1, std::vector<long> &m, long s);
+// expanding each coefficient into s longs. Call: ZZpEXToLongCoeffs(f, out, s);
+void ZZpEXToLongCoeffs(const NTL::ZZ_pEX &poly,
+                       std::vector<long> &coeffs_out, long s);
 
 // Returns true if all elements in vec are non-zero.
 bool allNonZero(const NTL::vec_ZZ_pE &vec);
@@ -102,13 +107,14 @@ std::vector<long> SplitAndPadVector(const std::vector<long> &input,
 
 // Converts a flattened vector<long> into a ZZ_pEX by grouping every s entries
 // as one ZZ_pE coefficient. Preconditions: ZZ_p/ZZ_pE contexts are initialized;
-// result.size() must be a multiple of s. Call: Long2ZZpEX(flat, poly, s);
-void Long2ZZpEX(const std::vector<long> &result, NTL::ZZ_pEX &V, long s);
+// result.size() must be a multiple of s. Call: LongVecToZZpEX(flat, poly, s);
+void LongVecToZZpEX(const std::vector<long> &coeffs,
+                    NTL::ZZ_pEX &poly_out, long s);
 
-// Same as Long2ZZpEX, but explicitly specifies the number of ZZ_pE coefficients
-// (n). Preconditions: result.size() == n*s.
-void Long2ZZpEX2(const std::vector<long> &result, NTL::ZZ_pEX &V, long s,
-                 long n);
+// Same as LongVecToZZpEX, but explicitly specifies the number of ZZ_pE
+// coefficients (n). Preconditions: coeffs.size() == n*s.
+void LongVecToZZpEXWithCoeffCount(const std::vector<long> &coeffs,
+                                  NTL::ZZ_pEX &poly_out, long s, long n);
 
 // Returns the smallest perfect square strictly greater than num.
 // Precondition: num >= 0.

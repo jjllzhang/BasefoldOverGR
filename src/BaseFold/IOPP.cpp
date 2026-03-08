@@ -77,8 +77,8 @@ int ParsePositiveEnvInt(const char *name, int fallback) {
 
 MerkleBuildParallelConfig ParseMerkleBuildParallelConfigFromEnv() {
   MerkleBuildParallelConfig cfg;
-  cfg.leafs_per_thread = ParsePositiveEnvLong(
-      "BASEFOLD_MERKLE_LEAFS_PER_THREAD", cfg.leafs_per_thread);
+  cfg.leaves_per_thread = ParsePositiveEnvLong(
+      "BASEFOLD_MERKLE_LEAVES_PER_THREAD", cfg.leaves_per_thread);
   cfg.parallel_level_threshold = ParsePositiveEnvLong(
       "BASEFOLD_MERKLE_PARALLEL_LEVEL_THRESHOLD",
       cfg.parallel_level_threshold);
@@ -94,7 +94,7 @@ MerkleBuildParallelConfig &MutableMerkleBuildParallelConfig() {
 
 MerkleBuildParallelConfig LoadMerkleBuildParallelConfig() {
   MerkleBuildParallelConfig cfg = MutableMerkleBuildParallelConfig();
-  if (cfg.leafs_per_thread <= 0) cfg.leafs_per_thread = 32768;
+  if (cfg.leaves_per_thread <= 0) cfg.leaves_per_thread = 32768;
   if (cfg.parallel_level_threshold <= 0) cfg.parallel_level_threshold = 8192;
   if (cfg.max_threads <= 0) cfg.max_threads = 8;
   return cfg;
@@ -103,9 +103,9 @@ MerkleBuildParallelConfig LoadMerkleBuildParallelConfig() {
 int ChooseMerkleBuildThreads(long leaf_count,
                              const MerkleBuildParallelConfig &cfg) {
 #if defined(BASEFOLD_USE_OPENMP)
-  if (leaf_count < cfg.leafs_per_thread) return 1;
+  if (leaf_count < cfg.leaves_per_thread) return 1;
   const int max_threads = omp_get_max_threads();
-  int threads_to_use = static_cast<int>(leaf_count / cfg.leafs_per_thread);
+  int threads_to_use = static_cast<int>(leaf_count / cfg.leaves_per_thread);
   if (threads_to_use > cfg.max_threads) threads_to_use = cfg.max_threads;
   if (threads_to_use > max_threads) threads_to_use = max_threads;
   if (threads_to_use < 1) threads_to_use = 1;

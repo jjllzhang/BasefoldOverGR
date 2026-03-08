@@ -32,11 +32,11 @@ using std::exception;
 using std::ostringstream;
 using std::string;
 
-int g_failures = 0;
+int g_test_failure_count = 0;
 
 namespace {
 
-ZZ_pE ElemFromIndexGF4(int idx, const ZZ_pE &alpha) {
+ZZ_pE LookupGF4ElementByCode(int idx, const ZZ_pE &alpha) {
   const ZZ_pE one = testutil::ConstZZpE(1);
   if (idx == 0) return ZZ_pE(0);
   if (idx == 1) return one;
@@ -83,7 +83,8 @@ basefold::FoldableCodeParams BuildParamsGF4(const ZZ &p, const ZZ_pE &alpha) {
   return params;
 }
 
-basefold::FoldableCodeParams BuildParamsGR42(const ZZ &p, const ZZ_pE &alpha) {
+basefold::FoldableCodeParams BuildParamsGR_4_2(const ZZ &p,
+                                               const ZZ_pE &alpha) {
   const long c = 2;
   const long k0 = 1;
   const long d = 2;
@@ -140,7 +141,7 @@ void TestIOPP_CommitAndQuery() {
   vec_ZZ_pE msg;
   msg.SetLength(basefold::MessageLength(params));
   for (long i = 0; i < msg.length(); ++i) {
-    msg[i] = ElemFromIndexGF4(static_cast<int>(i % 4), alpha);
+    msg[i] = LookupGF4ElementByCode(static_cast<int>(i % 4), alpha);
   }
 
   vec_ZZ_pE pi_d;
@@ -196,7 +197,7 @@ void TestIOPP_GR42_CommitAndQuery() {
   ZZ_pE alpha;
   conv(alpha, xpoly);
 
-  const basefold::FoldableCodeParams params = BuildParamsGR42(p, alpha);
+  const basefold::FoldableCodeParams params = BuildParamsGR_4_2(p, alpha);
 
   vec_ZZ_pE msg;
   msg.SetLength(basefold::MessageLength(params));
@@ -317,7 +318,7 @@ void TestIOPP_DecodeC0() {
   vec_ZZ_pE msg;
   msg.SetLength(basefold::MessageLength(params));
   for (long i = 0; i < msg.length(); ++i) {
-    msg[i] = ElemFromIndexGF4(static_cast<int>((i + 2) % 4), alpha);
+    msg[i] = LookupGF4ElementByCode(static_cast<int>((i + 2) % 4), alpha);
   }
 
   vec_ZZ_pE pi_d;
@@ -357,7 +358,7 @@ void TestIOPP_GR42_DecodeC0() {
   ZZ_pE alpha;
   conv(alpha, xpoly);
 
-  const basefold::FoldableCodeParams params = BuildParamsGR42(p, alpha);
+  const basefold::FoldableCodeParams params = BuildParamsGR_4_2(p, alpha);
 
   vec_ZZ_pE msg;
   msg.SetLength(basefold::MessageLength(params));
@@ -402,11 +403,11 @@ int main() {
     return 2;
   }
 
-  if (g_failures == 0) {
+  if (g_test_failure_count == 0) {
     cout << "\nAll tests passed.\n";
     return 0;
   }
 
-  cerr << "\n" << g_failures << " test(s) failed.\n";
+  cerr << "\n" << g_test_failure_count << " test(s) failed.\n";
   return 1;
 }

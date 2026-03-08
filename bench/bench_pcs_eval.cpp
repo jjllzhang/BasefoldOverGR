@@ -40,8 +40,8 @@ namespace {
 
 struct ContextSpec {
   std::string label;
-  ZZ mod = ZZ(0);      // ZZ_p modulus (p for fields, p^s for rings)
-  ZZ prime_p = ZZ(0);  // optional: the prime p (only used by unit checks)
+  ZZ scalar_modulus = ZZ(0);  // ZZ_p modulus (p for fields, p^s for rings)
+  ZZ base_prime = ZZ(0);      // optional: the prime p (only used by unit checks)
   std::vector<ZZ> F_coeffs;     // extension modulus polynomial coefficients
   std::vector<ZZ> zeta_coeffs;  // ζ element coefficients
   // Coefficients for challenge extension modulus E(U), represented as
@@ -215,24 +215,27 @@ ZZ NormalizeMod(const ZZ &x, const ZZ &mod) {
 }
 
 void DeduceBasePrimeAndExponent(const ContextSpec &spec, ZZ &p_out, long &k_out) {
-  if (spec.mod <= 1) LogicError("DeduceBasePrimeAndExponent: mod must be > 1");
+  if (spec.scalar_modulus <= 1) {
+    LogicError("DeduceBasePrimeAndExponent: scalar_modulus must be > 1");
+  }
 
-  if (spec.prime_p > 1) {
-    ZZ m = spec.mod;
+  if (spec.base_prime > 1) {
+    ZZ m = spec.scalar_modulus;
     long k = 0;
-    while ((m % spec.prime_p) == 0) {
-      m /= spec.prime_p;
+    while ((m % spec.base_prime) == 0) {
+      m /= spec.base_prime;
       ++k;
     }
     if (k <= 0 || m != 1) {
-      LogicError("DeduceBasePrimeAndExponent: mod must equal prime_p^k");
+      LogicError(
+          "DeduceBasePrimeAndExponent: scalar_modulus must equal base_prime^k");
     }
-    p_out = spec.prime_p;
+    p_out = spec.base_prime;
     k_out = k;
     return;
   }
 
-  p_out = spec.mod;
+  p_out = spec.scalar_modulus;
   k_out = 1;
 }
 
@@ -428,9 +431,9 @@ std::vector<ZZ_pE> MakeDeterministicPoint(long d, std::uint64_t seed) {
 }
 
 struct BenchResult {
-  Stats prover;
+  Stats prove_phase;
   Stats verifier;
-  std::uint64_t sink = 0;
+  std::uint64_t anti_opt_checksum = 0;
   std::uint64_t proof_size_bytes = 0;
   double proof_size_kb = 0.0;
   basefold::Profile prover_profile;
@@ -440,11 +443,11 @@ struct BenchResult {
 
 std::uint64_t ComputeProofSizeBytes(
     const basefold::BaseFoldPCSEvalProof &proof,
-    bool use_extension_challenges, long challenge_degree) {
+    bool use_extension_challenges, long challenge_ext_degree) {
   basefold::BaseFoldProofSizeOptions options;
   options.include_version_byte = true;
   if (use_extension_challenges || proof.extension.enabled) {
-    options.challenge_ext_degree = challenge_degree;
+    options.challenge_ext_degree = challenge_ext_degree;
   }
   return basefold::BaseFoldPCSEvalProofSizeBytes(proof, options);
 }
@@ -455,17 +458,17 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
                              long num_queries,
                              const basefold::FoldableCodeParams &params,
                              const basefold::BaseFoldPCSChallengeConfig *challenge_cfg,
-                             long challenge_degree,
-                             bool checked_prover,
+                             long challenge_ext_degree,
+                             bool use_checked_prover_path,
                              bool enable_profile,
                              int warmup, int reps) {
   if (warmup < 0) LogicError("RunEvalBenchmark: warmup must be >= 0");
   if (reps <= 0) LogicError("RunEvalBenchmark: reps must be > 0");
   if (num_queries < 0) LogicError("RunEvalBenchmark: num_queries must be >= 0");
 
-  std::vector<double> prover_ms;
+  std::vector<double> prove_phase_ms;
   std::vector<double> verifier_ms;
-  prover_ms.reserve(static_cast<std::size_t>(reps));
+  prove_phase_ms.reserve(static_cast<std::size_t>(reps));
   verifier_ms.reserve(static_cast<std::size_t>(reps));
 
   basefold::Profile prover_prof;
@@ -473,14 +476,14 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
   basefold::ResetProfile(prover_prof);
   basefold::ResetProfile(verifier_prof);
 
-  std::uint64_t sink = 0;
+  std::uint64_t anti_opt_checksum = 0;
   std::uint64_t proof_size_bytes_last = 0;
   double proof_size_kb_last = 0.0;
 
   for (int iter = -warmup; iter < reps; ++iter) {
     const basefold::BaseFoldPCSCommitArtifacts commit_artifacts =
         basefold::BaseFoldPCSBuildCommitArtifactsUnchecked(f_coeffs, params);
-    const basefold::MerkleRoot &C = commit_artifacts.root_d;
+    const basefold::MerkleRoot &commitment_root = commit_artifacts.root_d;
 
     const auto t0 = std::chrono::steady_clock::now();
     const basefold::BaseFoldPCSEvalProof proof = [&] {
@@ -489,7 +492,7 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
         basefold::ScopedTimer timer(&prover_prof.pcs_prove_ns,
                                     &prover_prof.pcs_prove_calls);
         if (challenge_cfg != nullptr) {
-          return checked_prover
+          return use_checked_prover_path
                      ? basefold::BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle(
                            f_coeffs, z, y, num_queries, params,
                            commit_artifacts, *challenge_cfg)
@@ -497,14 +500,14 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
                            f_coeffs, z, y, num_queries, params,
                            commit_artifacts, *challenge_cfg);
         }
-        return checked_prover
+        return use_checked_prover_path
                    ? basefold::BaseFoldPCSProveEvalFromCommittedTopOracle(
                          f_coeffs, z, y, num_queries, params, commit_artifacts)
                    : basefold::BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked(
                          f_coeffs, z, y, num_queries, params, commit_artifacts);
       }
       if (challenge_cfg != nullptr) {
-        return checked_prover
+        return use_checked_prover_path
                    ? basefold::BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle(
                          f_coeffs, z, y, num_queries, params,
                          commit_artifacts, *challenge_cfg)
@@ -512,7 +515,7 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
                          f_coeffs, z, y, num_queries, params,
                          commit_artifacts, *challenge_cfg);
       }
-      return checked_prover
+      return use_checked_prover_path
                  ? basefold::BaseFoldPCSProveEvalFromCommittedTopOracle(
                        f_coeffs, z, y, num_queries, params, commit_artifacts)
                  : basefold::BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked(
@@ -521,7 +524,7 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
     const auto t1 = std::chrono::steady_clock::now();
 
     const std::uint64_t proof_size_bytes = ComputeProofSizeBytes(
-        proof, challenge_cfg != nullptr, challenge_degree);
+        proof, challenge_cfg != nullptr, challenge_ext_degree);
     const double proof_size_kb =
         static_cast<double>(proof_size_bytes) / 1024.0;
 
@@ -531,15 +534,17 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
       basefold::ProfileGuard guard(&verifier_prof);
       ok = (challenge_cfg != nullptr)
                ? basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
-                     C, z, y, num_queries, proof, params, *challenge_cfg)
-               : basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof,
-                                                 params);
+                     commitment_root, z, y, num_queries, proof, params,
+                     *challenge_cfg)
+               : basefold::BaseFoldPCSVerifyEval(commitment_root, z, y,
+                                                 num_queries, proof, params);
     } else {
       ok = (challenge_cfg != nullptr)
                ? basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
-                     C, z, y, num_queries, proof, params, *challenge_cfg)
-               : basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof,
-                                                 params);
+                     commitment_root, z, y, num_queries, proof, params,
+                     *challenge_cfg)
+               : basefold::BaseFoldPCSVerifyEval(commitment_root, z, y,
+                                                 num_queries, proof, params);
     }
     const auto t3 = std::chrono::steady_clock::now();
 
@@ -548,12 +553,12 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
     }
 
     // Prevent over-optimization: fold in a few bytes.
-    if (!C.empty())
-      sink ^= static_cast<std::uint64_t>(C[0]);
-    sink ^= static_cast<std::uint64_t>(ok);
+    if (!commitment_root.empty())
+      anti_opt_checksum ^= static_cast<std::uint64_t>(commitment_root[0]);
+    anti_opt_checksum ^= static_cast<std::uint64_t>(ok);
 
     if (iter >= 0) {
-      prover_ms.push_back(MsSince(t0, t1));
+      prove_phase_ms.push_back(MsSince(t0, t1));
       verifier_ms.push_back(MsSince(t2, t3));
       proof_size_bytes_last = proof_size_bytes;
       proof_size_kb_last = proof_size_kb;
@@ -561,9 +566,9 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
   }
 
   BenchResult out;
-  out.prover = ComputeStats(prover_ms);
+  out.prove_phase = ComputeStats(prove_phase_ms);
   out.verifier = ComputeStats(verifier_ms);
-  out.sink = sink;
+  out.anti_opt_checksum = anti_opt_checksum;
   out.proof_size_bytes = proof_size_bytes_last;
   out.proof_size_kb = proof_size_kb_last;
   out.prover_profile = prover_prof;
@@ -572,11 +577,10 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
   return out;
 }
 
-void PrintResult(const std::string &label, const ZZ &mod, long c, long d,
-                 long k0,
-                 long num_queries, int warmup, int reps,
+void PrintResult(const std::string &label, const ZZ &scalar_modulus, long c,
+                 long d, long k0, long num_queries, int warmup, int reps,
                  const BenchResult &r, bool use_extension_challenges,
-                 long challenge_degree) {
+                 long challenge_ext_degree) {
   const long pow2_d = Pow2Checked(d);
   if (k0 > std::numeric_limits<long>::max() / pow2_d) {
     LogicError("PrintResult: overflow in k_d");
@@ -588,26 +592,28 @@ void PrintResult(const std::string &label, const ZZ &mod, long c, long d,
   const long n_d = c * k_d;
 
   std::cout << "\n[" << label << "] c=" << c << " k0=" << k0 << " d=" << d
-            << "  mod=" << mod << "  k_d=" << k_d << "  n_d=" << n_d
+            << "  mod=" << scalar_modulus << "  k_d=" << k_d
+            << "  n_d=" << n_d
             << "  queries=" << num_queries << "  warmup=" << warmup
             << " reps=" << reps;
   if (use_extension_challenges) {
     std::cout << "  ext_challenges=on"
-              << "  ext_deg=" << challenge_degree;
+              << "  ext_deg=" << challenge_ext_degree;
   } else {
     std::cout << "  ext_challenges=off";
   }
   std::cout << "\n";
   std::cout << std::fixed << std::setprecision(3);
   std::cout << "  hash backend " << basefold::SelectedHashBackendName() << "\n";
-  std::cout << "  prover   mean " << r.prover.mean_ms << " ms  (min "
-            << r.prover.min_ms << ", max " << r.prover.max_ms << ")\n";
+  std::cout << "  prove-phase mean " << r.prove_phase.mean_ms << " ms  (min "
+            << r.prove_phase.min_ms << ", max " << r.prove_phase.max_ms
+            << ")\n";
   std::cout << "  verifier mean " << r.verifier.mean_ms << " ms  (min "
             << r.verifier.min_ms << ", max " << r.verifier.max_ms << ")\n";
   std::cout << "  proof size  " << r.proof_size_kb << " KB  ("
             << r.proof_size_bytes << " B)\n";
 
-  std::cout << "  sink    " << r.sink << "\n";
+  std::cout << "  anti-opt checksum " << r.anti_opt_checksum << "\n";
   if (r.has_profile) {
     basefold::PrintProfile(std::cout, r.prover_profile);
     basefold::PrintProfile(std::cout, r.verifier_profile);
@@ -662,7 +668,7 @@ void PrintHelp() {
       << "Usage:\n"
       << "  bench_pcs_eval [--mode field|ring|both] [--c <int>] [--k0 <int>] [--d <int>]\n"
       << "               [--queries <int>] [--checked] [--profile] [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
-      << "               [--merkle-leafs-per-thread <int>] [--merkle-level-threshold <int>] [--merkle-max-threads <int>]\n"
+      << "               [--merkle-leaves-per-thread <int>] [--merkle-level-threshold <int>] [--merkle-max-threads <int>]\n"
       << "               [--verifier-query-per-thread <int>] [--verifier-query-threshold <int>] [--verifier-query-max-threads <int>]\n"
       << "               [--use-extension-challenges]\n"
       << "               [--field-challenge-ext <a0;a1;...>] [--ring-challenge-ext <a0;a1;...>]\n"
@@ -685,7 +691,7 @@ void PrintHelp() {
       << "  together with prover/verifier timing.\n\n"
       << "  If --*-challenge-ext is omitted, default is E(U)=zeta + U + U^2.\n\n"
       << "  Merkle build parallel tuning can be configured by env vars:\n"
-      << "    BASEFOLD_MERKLE_LEAFS_PER_THREAD\n"
+      << "    BASEFOLD_MERKLE_LEAVES_PER_THREAD\n"
       << "    BASEFOLD_MERKLE_PARALLEL_LEVEL_THRESHOLD\n"
       << "    BASEFOLD_MERKLE_MAX_THREADS\n"
       << "  Verifier query parallel tuning can be configured by env vars:\n"
@@ -709,17 +715,17 @@ void PrintHelp() {
 void RunOneContext(const ContextSpec &spec, long c, long k0, long d,
                    long num_queries,
                    bool use_extension_challenges,
-                   bool checked_prover, bool enable_profile, int warmup,
+                   bool use_checked_prover_path, bool enable_profile, int warmup,
                    int reps, bool auto_zeta_teich,
                    std::uint64_t seed) {
-  if (spec.mod <= 1) LogicError("RunOneContext: modulus must be > 1");
+  if (spec.scalar_modulus <= 1) LogicError("RunOneContext: modulus must be > 1");
   if (k0 <= 0) LogicError("RunOneContext: k0 must be positive");
   if (!IsPowerOfTwoLong(k0)) LogicError("RunOneContext: k0 must be a power of two");
 
-  const ZZ modulus = spec.mod;
+  const ZZ modulus = spec.scalar_modulus;
   ZZ_pPush mod_push(modulus);
 
-  ValidateMonic(spec.F_coeffs, spec.mod, "F");
+  ValidateMonic(spec.F_coeffs, spec.scalar_modulus, "F");
   const ZZ_pX F = BuildZZpX(spec.F_coeffs);
   ZZ_pEPush e_push(F);
 
@@ -738,15 +744,15 @@ void RunOneContext(const ContextSpec &spec, long c, long k0, long d,
   const basefold::FoldableCodeParams params = (k0 == 1)
                                                   ? BuildParams_k0_1(
                                                         c, d,
-                                                        (spec.prime_p > 1)
-                                                            ? spec.prime_p
-                                                            : spec.mod,
+                                                        (spec.base_prime > 1)
+                                                            ? spec.base_prime
+                                                            : spec.scalar_modulus,
                                                         zeta)
                                                   : BuildParams_k0_pow2(
                                                         c, k0, d,
-                                                        (spec.prime_p > 1)
-                                                            ? spec.prime_p
-                                                            : spec.mod,
+                                                        (spec.base_prime > 1)
+                                                            ? spec.base_prime
+                                                            : spec.scalar_modulus,
                                                         zeta);
 
   const long pow2_d = Pow2Checked(d);
@@ -761,7 +767,7 @@ void RunOneContext(const ContextSpec &spec, long c, long k0, long d,
   const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
 
   basefold::BaseFoldPCSChallengeConfig challenge_cfg;
-  long challenge_degree = 0;
+  long challenge_ext_degree = 0;
   const basefold::BaseFoldPCSChallengeConfig *challenge_cfg_ptr = nullptr;
   if (use_extension_challenges) {
     ZZ_pEX challenge_modulus;
@@ -775,16 +781,16 @@ void RunOneContext(const ContextSpec &spec, long c, long k0, long d,
     }
     challenge_cfg.use_extension_challenges = true;
     challenge_cfg.challenge_extension_modulus = challenge_modulus;
-    challenge_degree = NTL::deg(challenge_modulus);
+    challenge_ext_degree = NTL::deg(challenge_modulus);
     challenge_cfg_ptr = &challenge_cfg;
   }
 
   const BenchResult r = RunEvalBenchmark(f_coeffs, z, y, num_queries, params,
-                                         challenge_cfg_ptr, challenge_degree,
-                                         checked_prover,
+                                         challenge_cfg_ptr, challenge_ext_degree,
+                                         use_checked_prover_path,
                                          enable_profile, warmup, reps);
-  PrintResult(spec.label, spec.mod, c, d, k0, num_queries, warmup, reps, r,
-              use_extension_challenges, challenge_degree);
+  PrintResult(spec.label, spec.scalar_modulus, c, d, k0, num_queries, warmup,
+              reps, r, use_extension_challenges, challenge_ext_degree);
 }
 
 }  // namespace
@@ -795,7 +801,7 @@ int main(int argc, char **argv) {
   long k0 = 1;
   long num_queries = 4;
   bool use_extension_challenges = false;
-  bool checked_prover = false;
+  bool use_checked_prover_path = false;
   bool enable_profile = false;
   int warmup = 1;
   int reps = 3;
@@ -813,21 +819,21 @@ int main(int argc, char **argv) {
 
   ContextSpec field;
   field.label = "Field";
-  field.mod = to_ZZ(2);
-  field.prime_p = ZZ(0);
+  field.scalar_modulus = to_ZZ(2);
+  field.base_prime = ZZ(0);
   field.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};   // x^2 + x + 1
   field.zeta_coeffs = {to_ZZ(0), to_ZZ(1)};   // x
 
   ContextSpec ring;
   ring.label = "Ring";
-  ring.mod = to_ZZ(4);
-  ring.prime_p = to_ZZ(2);
+  ring.scalar_modulus = to_ZZ(4);
+  ring.base_prime = to_ZZ(2);
   ring.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};    // x^2 + x + 1
   ring.zeta_coeffs = {to_ZZ(0), to_ZZ(1)};    // x
 
   for (int i = 1; i < argc; ++i) {
     const std::string arg(argv[i]);
-    auto NeedValue = [&](const char *flag) -> const char * {
+    auto RequireNextArgValue = [&](const char *flag) -> const char * {
       if (i + 1 >= argc) {
         std::cerr << "Missing value for " << flag << "\n";
         std::exit(2);
@@ -836,7 +842,7 @@ int main(int argc, char **argv) {
     };
 
     if (arg == "--mode") {
-      const std::string m = NeedValue("--mode");
+      const std::string m = RequireNextArgValue("--mode");
       if (m == "field") {
         do_field = true;
         do_ring = false;
@@ -851,86 +857,88 @@ int main(int argc, char **argv) {
         return 2;
       }
     } else if (arg == "--d") {
-      if (!ParseLong(NeedValue("--d"), d) || d < 0) {
+      if (!ParseLong(RequireNextArgValue("--d"), d) || d < 0) {
         std::cerr << "Invalid --d\n";
         return 2;
       }
     } else if (arg == "--c") {
-      if (!ParseLong(NeedValue("--c"), c) || c <= 0) {
+      if (!ParseLong(RequireNextArgValue("--c"), c) || c <= 0) {
         std::cerr << "Invalid --c\n";
         return 2;
       }
     } else if (arg == "--k0") {
-      if (!ParseLong(NeedValue("--k0"), k0) || k0 <= 0) {
+      if (!ParseLong(RequireNextArgValue("--k0"), k0) || k0 <= 0) {
         std::cerr << "Invalid --k0\n";
         return 2;
       }
     } else if (arg == "--queries") {
-      if (!ParseLong(NeedValue("--queries"), num_queries) || num_queries < 0) {
+      if (!ParseLong(RequireNextArgValue("--queries"), num_queries) ||
+          num_queries < 0) {
         std::cerr << "Invalid --queries\n";
         return 2;
       }
     } else if (arg == "--checked") {
-      checked_prover = true;
+      use_checked_prover_path = true;
     } else if (arg == "--use-extension-challenges") {
       use_extension_challenges = true;
     } else if (arg == "--profile") {
       enable_profile = true;
     } else if (arg == "--warmup") {
-      if (!ParseInt(NeedValue("--warmup"), warmup) || warmup < 0) {
+      if (!ParseInt(RequireNextArgValue("--warmup"), warmup) || warmup < 0) {
         std::cerr << "Invalid --warmup\n";
         return 2;
       }
-    } else if (arg == "--merkle-leafs-per-thread") {
-      if (!ParseLong(NeedValue("--merkle-leafs-per-thread"),
-                     merkle_cfg.leafs_per_thread) ||
-          merkle_cfg.leafs_per_thread <= 0) {
-        std::cerr << "Invalid --merkle-leafs-per-thread\n";
+    } else if (arg == "--merkle-leaves-per-thread") {
+      if (!ParseLong(RequireNextArgValue("--merkle-leaves-per-thread"),
+                     merkle_cfg.leaves_per_thread) ||
+          merkle_cfg.leaves_per_thread <= 0) {
+        std::cerr << "Invalid --merkle-leaves-per-thread\n";
         return 2;
       }
     } else if (arg == "--merkle-level-threshold") {
-      if (!ParseLong(NeedValue("--merkle-level-threshold"),
+      if (!ParseLong(RequireNextArgValue("--merkle-level-threshold"),
                      merkle_cfg.parallel_level_threshold) ||
           merkle_cfg.parallel_level_threshold <= 0) {
         std::cerr << "Invalid --merkle-level-threshold\n";
         return 2;
       }
     } else if (arg == "--merkle-max-threads") {
-      if (!ParseInt(NeedValue("--merkle-max-threads"), merkle_cfg.max_threads) ||
+      if (!ParseInt(RequireNextArgValue("--merkle-max-threads"),
+                    merkle_cfg.max_threads) ||
           merkle_cfg.max_threads <= 0) {
         std::cerr << "Invalid --merkle-max-threads\n";
         return 2;
       }
     } else if (arg == "--verifier-query-per-thread") {
-      if (!ParseLong(NeedValue("--verifier-query-per-thread"),
+      if (!ParseLong(RequireNextArgValue("--verifier-query-per-thread"),
                      verifier_query_cfg.queries_per_thread) ||
           verifier_query_cfg.queries_per_thread <= 0) {
         std::cerr << "Invalid --verifier-query-per-thread\n";
         return 2;
       }
     } else if (arg == "--verifier-query-threshold") {
-      if (!ParseLong(NeedValue("--verifier-query-threshold"),
+      if (!ParseLong(RequireNextArgValue("--verifier-query-threshold"),
                      verifier_query_cfg.parallel_query_threshold) ||
           verifier_query_cfg.parallel_query_threshold <= 0) {
         std::cerr << "Invalid --verifier-query-threshold\n";
         return 2;
       }
     } else if (arg == "--verifier-query-max-threads") {
-      if (!ParseInt(NeedValue("--verifier-query-max-threads"),
+      if (!ParseInt(RequireNextArgValue("--verifier-query-max-threads"),
                     verifier_query_cfg.max_threads) ||
           verifier_query_cfg.max_threads <= 0) {
         std::cerr << "Invalid --verifier-query-max-threads\n";
         return 2;
       }
     } else if (arg == "--reps") {
-      if (!ParseInt(NeedValue("--reps"), reps) || reps <= 0) {
+      if (!ParseInt(RequireNextArgValue("--reps"), reps) || reps <= 0) {
         std::cerr << "Invalid --reps\n";
         return 2;
       }
     } else if (arg == "--seed") {
-      seed = ParseU64OrDie(NeedValue("--seed"), "--seed");
+      seed = ParseU64OrDie(RequireNextArgValue("--seed"), "--seed");
     } else if (arg == "--auto-zeta") {
-      const std::string mode = NeedValue("--auto-zeta");
+      const std::string mode = RequireNextArgValue("--auto-zeta");
       if (mode == "teich") {
         auto_zeta_teich = true;
       } else {
@@ -938,34 +946,39 @@ int main(int argc, char **argv) {
         return 2;
       }
     } else if (arg == "--field-mod") {
-      if (!ParseZZ(NeedValue("--field-mod"), field.mod) || field.mod <= 1) {
+      if (!ParseZZ(RequireNextArgValue("--field-mod"),
+                   field.scalar_modulus) ||
+          field.scalar_modulus <= 1) {
         std::cerr << "Invalid --field-mod\n";
         return 2;
       }
     } else if (arg == "--field-F") {
-      field.F_coeffs = ParseCoeffList(NeedValue("--field-F"));
+      field.F_coeffs = ParseCoeffList(RequireNextArgValue("--field-F"));
     } else if (arg == "--field-zeta") {
-      field.zeta_coeffs = ParseCoeffList(NeedValue("--field-zeta"));
+      field.zeta_coeffs = ParseCoeffList(RequireNextArgValue("--field-zeta"));
     } else if (arg == "--field-challenge-ext") {
       field.challenge_ext_coeffs =
-          ParseNestedCoeffList(NeedValue("--field-challenge-ext"));
+          ParseNestedCoeffList(RequireNextArgValue("--field-challenge-ext"));
     } else if (arg == "--ring-mod") {
-      if (!ParseZZ(NeedValue("--ring-mod"), ring.mod) || ring.mod <= 1) {
+      if (!ParseZZ(RequireNextArgValue("--ring-mod"),
+                   ring.scalar_modulus) ||
+          ring.scalar_modulus <= 1) {
         std::cerr << "Invalid --ring-mod\n";
         return 2;
       }
     } else if (arg == "--ring-p") {
-      if (!ParseZZ(NeedValue("--ring-p"), ring.prime_p) || ring.prime_p <= 1) {
+      if (!ParseZZ(RequireNextArgValue("--ring-p"), ring.base_prime) ||
+          ring.base_prime <= 1) {
         std::cerr << "Invalid --ring-p\n";
         return 2;
       }
     } else if (arg == "--ring-F") {
-      ring.F_coeffs = ParseCoeffList(NeedValue("--ring-F"));
+      ring.F_coeffs = ParseCoeffList(RequireNextArgValue("--ring-F"));
     } else if (arg == "--ring-zeta") {
-      ring.zeta_coeffs = ParseCoeffList(NeedValue("--ring-zeta"));
+      ring.zeta_coeffs = ParseCoeffList(RequireNextArgValue("--ring-zeta"));
     } else if (arg == "--ring-challenge-ext") {
       ring.challenge_ext_coeffs =
-          ParseNestedCoeffList(NeedValue("--ring-challenge-ext"));
+          ParseNestedCoeffList(RequireNextArgValue("--ring-challenge-ext"));
     } else if (arg == "--help" || arg == "-h") {
       PrintHelp();
       return 0;
@@ -984,11 +997,11 @@ int main(int argc, char **argv) {
     }
     if (do_field)
       RunOneContext(field, c, k0, d, num_queries, use_extension_challenges,
-                    checked_prover, enable_profile,
+                    use_checked_prover_path, enable_profile,
                     warmup, reps, auto_zeta_teich, seed);
     if (do_ring)
       RunOneContext(ring, c, k0, d, num_queries, use_extension_challenges,
-                    checked_prover, enable_profile,
+                    use_checked_prover_path, enable_profile,
                     warmup, reps, auto_zeta_teich, seed);
   } catch (const std::exception &e) {
     std::cerr << "Unhandled std::exception: " << e.what() << "\n";
