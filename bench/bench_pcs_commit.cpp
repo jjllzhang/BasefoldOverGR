@@ -15,7 +15,8 @@
 #include <string>
 #include <vector>
 
-#include "BaseFold/FoldableCode.hpp"
+#include "BaseFold/BaseFoldPCS.hpp"
+#include "BaseFold/Hash.hpp"
 #include "GaloisRing/PrimitiveElement.hpp"
 
 using NTL::conv;
@@ -226,6 +227,8 @@ basefold::FoldableCodeParams BuildParams_k0_1(long c, long d, const ZZ &prime_p,
 
 struct BenchResult {
   Stats encode;
+  Stats top_commit;
+  Stats commit;
   std::uint64_t sink = 0;
 };
 
@@ -345,36 +348,51 @@ basefold::FoldableCodeParams BuildParams_k0_gt1(long c, long k0, long d,
   return params;
 }
 
-BenchResult RunEncodeBenchmark(const vec_ZZ_pE &f_coeffs,
+BenchResult RunCommitBenchmark(const vec_ZZ_pE &f_coeffs,
                                const basefold::FoldableCodeParams &params,
                                int warmup, int reps) {
-  if (warmup < 0) LogicError("RunEncodeBenchmark: warmup must be >= 0");
-  if (reps <= 0) LogicError("RunEncodeBenchmark: reps must be > 0");
+  if (warmup < 0) LogicError("RunCommitBenchmark: warmup must be >= 0");
+  if (reps <= 0) LogicError("RunCommitBenchmark: reps must be > 0");
 
   std::vector<double> encode_ms;
+  std::vector<double> top_commit_ms;
+  std::vector<double> commit_ms;
   encode_ms.reserve(static_cast<std::size_t>(reps));
+  top_commit_ms.reserve(static_cast<std::size_t>(reps));
+  commit_ms.reserve(static_cast<std::size_t>(reps));
 
   std::uint64_t sink = 0;
   vec_ZZ_pE pi_d;
+  basefold::MerkleTree merkle_d;
 
   for (int iter = -warmup; iter < reps; ++iter) {
     const auto t0 = std::chrono::steady_clock::now();
     basefold::EncodeFoldableUnchecked(pi_d, f_coeffs, params);
     const auto t1 = std::chrono::steady_clock::now();
+    merkle_d = basefold::MerkleTree::Build(pi_d);
+    const basefold::MerkleRoot root_d = merkle_d.Root();
+    const auto t2 = std::chrono::steady_clock::now();
 
     if (pi_d.length() > 0) {
       // Touch a single output element to discourage aggressive dead-code
       // elimination without adding heavy conversions that slow the benchmark.
       sink ^= static_cast<std::uint64_t>(pi_d[0] != ZZ_pE(0));
     }
+    if (!root_d.empty()) {
+      sink ^= static_cast<std::uint64_t>(root_d[0]);
+    }
 
     if (iter >= 0) {
       encode_ms.push_back(MsSince(t0, t1));
+      top_commit_ms.push_back(MsSince(t1, t2));
+      commit_ms.push_back(MsSince(t0, t2));
     }
   }
 
   BenchResult out;
   out.encode = ComputeStats(encode_ms);
+  out.top_commit = ComputeStats(top_commit_ms);
+  out.commit = ComputeStats(commit_ms);
   out.sink = sink;
   return out;
 }
@@ -386,8 +404,13 @@ void PrintResult(const std::string &label, const ZZ &mod, long c, long k0, long 
             << "  mod=" << mod << "  k_d=" << k_d << "  n_d=" << n_d
             << "  warmup=" << warmup << " reps=" << reps << "\n";
   std::cout << std::fixed << std::setprecision(3);
+  std::cout << "  hash backend " << basefold::SelectedHashBackendName() << "\n";
   std::cout << "  encode-only mean " << r.encode.mean_ms << " ms  (min "
             << r.encode.min_ms << ", max " << r.encode.max_ms << ")\n";
+  std::cout << "  top-commit mean " << r.top_commit.mean_ms << " ms  (min "
+            << r.top_commit.min_ms << ", max " << r.top_commit.max_ms << ")\n";
+  std::cout << "  commit     mean " << r.commit.mean_ms << " ms  (min "
+            << r.commit.min_ms << ", max " << r.commit.max_ms << ")\n";
   std::cout << "  sink    " << r.sink << "\n";
 }
 
@@ -420,7 +443,7 @@ bool ParseInt(const char *s, int &out) {
 
 void PrintHelp() {
   std::cout
-      << "bench_pcs_commit (encode-only, unchecked)\n\n"
+      << "bench_pcs_commit (top commit benchmark, unchecked)\n\n"
       << "Usage:\n"
       << "  bench_pcs_commit [--mode field|ring|both] [--c <int>] [--k0 <int>] [--d <int>]\n"
       << "                 [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
@@ -428,6 +451,8 @@ void PrintHelp() {
       << "                 [--field-mod <decimal-int>] [--field-F <a0,a1,...>] [--field-zeta <b0,b1,...>]\n"
       << "                 [--ring-mod <decimal-int>]  [--ring-p <decimal-int>] [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
       << "Notes:\n"
+      << "  Headline commit time includes top-level EncodeFoldable + MerkleTree::Build.\n"
+      << "  Auxiliary lines print encode-only and top-commit-only splits.\n\n"
       << "  With --auto-zeta teich, zeta is derived as a Teichmuller generator from (p,k,F);\n"
       << "  then --field-zeta/--ring-zeta are ignored.\n\n"
       << "Examples:\n"
@@ -499,7 +524,7 @@ void RunOneContext(const ContextSpec &spec, long c, long k0, long d, int warmup,
   const long n_d = c * k_d;
 
   const vec_ZZ_pE f_coeffs = MakeDeterministicCoefficients(k_d, seed);
-  const BenchResult r = RunEncodeBenchmark(f_coeffs, params, warmup, reps);
+  const BenchResult r = RunCommitBenchmark(f_coeffs, params, warmup, reps);
   PrintResult(spec.label, spec.mod, c, k0, d, k_d, n_d, warmup, reps, r);
 }
 

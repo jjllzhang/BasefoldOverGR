@@ -478,6 +478,10 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
   double proof_size_kb_last = 0.0;
 
   for (int iter = -warmup; iter < reps; ++iter) {
+    const basefold::BaseFoldPCSCommitArtifacts commit_artifacts =
+        basefold::BaseFoldPCSBuildCommitArtifactsUnchecked(f_coeffs, params);
+    const basefold::MerkleRoot &C = commit_artifacts.root_d;
+
     const auto t0 = std::chrono::steady_clock::now();
     const basefold::BaseFoldPCSEvalProof proof = [&] {
       if (enable_profile && iter >= 0) {
@@ -486,29 +490,33 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
                                     &prover_prof.pcs_prove_calls);
         if (challenge_cfg != nullptr) {
           return checked_prover
-                     ? basefold::BaseFoldPCSProveEvalWithChallengeConfig(
-                           f_coeffs, z, y, num_queries, params, *challenge_cfg)
-                     : basefold::BaseFoldPCSProveEvalWithChallengeConfigUnchecked(
-                           f_coeffs, z, y, num_queries, params, *challenge_cfg);
+                     ? basefold::BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle(
+                           f_coeffs, z, y, num_queries, params,
+                           commit_artifacts, *challenge_cfg)
+                     : basefold::BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked(
+                           f_coeffs, z, y, num_queries, params,
+                           commit_artifacts, *challenge_cfg);
         }
         return checked_prover
-                   ? basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries,
-                                                   params)
-                   : basefold::BaseFoldPCSProveEvalUnchecked(
-                         f_coeffs, z, y, num_queries, params);
+                   ? basefold::BaseFoldPCSProveEvalFromCommittedTopOracle(
+                         f_coeffs, z, y, num_queries, params, commit_artifacts)
+                   : basefold::BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked(
+                         f_coeffs, z, y, num_queries, params, commit_artifacts);
       }
       if (challenge_cfg != nullptr) {
         return checked_prover
-                   ? basefold::BaseFoldPCSProveEvalWithChallengeConfig(
-                         f_coeffs, z, y, num_queries, params, *challenge_cfg)
-                   : basefold::BaseFoldPCSProveEvalWithChallengeConfigUnchecked(
-                         f_coeffs, z, y, num_queries, params, *challenge_cfg);
+                   ? basefold::BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle(
+                         f_coeffs, z, y, num_queries, params,
+                         commit_artifacts, *challenge_cfg)
+                   : basefold::BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked(
+                         f_coeffs, z, y, num_queries, params,
+                         commit_artifacts, *challenge_cfg);
       }
       return checked_prover
-                 ? basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries,
-                                                 params)
-                 : basefold::BaseFoldPCSProveEvalUnchecked(f_coeffs, z, y,
-                                                           num_queries, params);
+                 ? basefold::BaseFoldPCSProveEvalFromCommittedTopOracle(
+                       f_coeffs, z, y, num_queries, params, commit_artifacts)
+                 : basefold::BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked(
+                       f_coeffs, z, y, num_queries, params, commit_artifacts);
     }();
     const auto t1 = std::chrono::steady_clock::now();
 
@@ -516,13 +524,6 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
         proof, challenge_cfg != nullptr, challenge_degree);
     const double proof_size_kb =
         static_cast<double>(proof_size_bytes) / 1024.0;
-
-    basefold::MerkleRoot C{};
-    if (!proof.commitments.roots_by_level.empty()) {
-      C = proof.commitments.roots_by_level.back();
-    } else {
-      C = basefold::BaseFoldPCSCommit(f_coeffs, params);
-    }
 
     const auto t2 = std::chrono::steady_clock::now();
     bool ok = false;
@@ -657,7 +658,7 @@ std::uint64_t ParseU64OrDie(const char *s, const char *flag) {
 
 void PrintHelp() {
   std::cout
-      << "bench_pcs_eval (PCS prove+verify, includes Merkle+FS)\n\n"
+      << "bench_pcs_eval (PCS prove+verify; prover excludes top encode+commit)\n\n"
       << "Usage:\n"
       << "  bench_pcs_eval [--mode field|ring|both] [--c <int>] [--k0 <int>] [--d <int>]\n"
       << "               [--queries <int>] [--checked] [--profile] [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
@@ -669,7 +670,9 @@ void PrintHelp() {
       << "               [--field-mod <decimal-int>] [--field-F <a0,a1,...>] [--field-zeta <b0,b1,...>]\n"
       << "               [--ring-mod <decimal-int>]  [--ring-p <decimal-int>] [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
       << "Notes:\n"
-      << "  By default, prover uses BaseFoldPCSProveEvalUnchecked (skips validation and claimed_y check).\n\n"
+      << "  By default, prover uses BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked\n"
+      << "  (skips validation and claimed_y check), so headline prover time excludes\n"
+      << "  the top-level EncodeFoldable + Merkle commit stage.\n\n"
       << "  With --auto-zeta teich, zeta is derived as a Teichmuller generator from (p,k,F);\n"
       << "  then --field-zeta/--ring-zeta are ignored.\n\n"
       << "  With --use-extension-challenges, prove/verify uses the extension-challenge\n"
@@ -677,8 +680,9 @@ void PrintHelp() {
       << "  --field-challenge-ext / --ring-challenge-ext use ';' to separate ZZ_pE\n"
       << "  coefficients and ',' for each ZZ_pE coefficient polynomial.\n"
       << "  Example: '0,1;1;1' means E(U)=x + U + U^2.\n\n"
-      << "  Exact fixed-width proof size is computed from the generated proof and\n"
-      << "  printed together with prover/verifier timing.\n\n"
+      << "  Exact fixed-width proof payload size is computed from the generated proof\n"
+      << "  with transcript-recoverable indices/challenges omitted, and printed\n"
+      << "  together with prover/verifier timing.\n\n"
       << "  If --*-challenge-ext is omitted, default is E(U)=zeta + U + U^2.\n\n"
       << "  Merkle build parallel tuning can be configured by env vars:\n"
       << "    BASEFOLD_MERKLE_LEAFS_PER_THREAD\n"
