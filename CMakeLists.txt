@@ -1,12 +1,44 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(BasefoldOverGR LANGUAGES CXX)
+project(BasefoldOverGR LANGUAGES C CXX ASM)
+
+set(BASEFOLD_BLAKE3_SOURCES
+  third_party/blake3/blake3.c
+  third_party/blake3/blake3_dispatch.c
+  third_party/blake3/blake3_portable.c
+)
+
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|X86_64|amd64|AMD64)$" AND UNIX AND
+   (CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID MATCHES "Clang"))
+  list(APPEND BASEFOLD_BLAKE3_SOURCES
+       third_party/blake3/blake3_avx2_x86-64_unix.S
+       third_party/blake3/blake3_avx512_x86-64_unix.S
+       third_party/blake3/blake3_sse2_x86-64_unix.S
+       third_party/blake3/blake3_sse41_x86-64_unix.S)
+endif()
+
+add_library(basefold_blake3 STATIC ${BASEFOLD_BLAKE3_SOURCES})
+target_include_directories(basefold_blake3 PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/blake3
+)
+target_compile_features(basefold_blake3 PUBLIC c_std_99)
+if(NOT (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|X86_64|amd64|AMD64)$" AND UNIX AND
+        (CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID MATCHES "Clang")))
+  target_compile_definitions(basefold_blake3 PRIVATE
+    BLAKE3_USE_NEON=0
+    BLAKE3_NO_SSE2
+    BLAKE3_NO_SSE41
+    BLAKE3_NO_AVX2
+    BLAKE3_NO_AVX512
+  )
+endif()
 
 add_library(galoisring
   src/GaloisRing/utils.cpp
   src/GaloisRing/Inverse.cpp
   src/GaloisRing/HenselLift.cpp
   src/GaloisRing/PrimitiveElement.cpp
+  src/BaseFold/Hash.cpp
   src/BaseFold/FoldableCode.cpp
   src/BaseFold/IOPP.cpp
   src/BaseFold/Multilinear.cpp
@@ -31,14 +63,13 @@ endif()
 find_library(NTL_LIBRARY NAMES ntl REQUIRED)
 find_library(GMP_LIBRARY NAMES gmp REQUIRED)
 find_library(M_LIBRARY NAMES m)
-find_package(OpenSSL REQUIRED)
 find_package(OpenMP)
 
 target_link_libraries(galoisring PUBLIC
   ${NTL_LIBRARY}
   ${GMP_LIBRARY}
-  OpenSSL::Crypto
 )
+target_link_libraries(galoisring PUBLIC basefold_blake3)
 if(OpenMP_CXX_FOUND)
   target_link_libraries(galoisring PUBLIC OpenMP::OpenMP_CXX)
   target_compile_definitions(galoisring PUBLIC BASEFOLD_USE_OPENMP=1)

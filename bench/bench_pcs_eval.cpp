@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "BaseFold/BaseFoldPCS.hpp"
+#include "BaseFold/Hash.hpp"
 #include "BaseFold/Multilinear.hpp"
 #include "BaseFold/ProofSize.hpp"
 #include "BaseFold/Profile.hpp"
@@ -597,6 +598,7 @@ void PrintResult(const std::string &label, const ZZ &mod, long c, long d,
   }
   std::cout << "\n";
   std::cout << std::fixed << std::setprecision(3);
+  std::cout << "  hash backend " << basefold::SelectedHashBackendName() << "\n";
   std::cout << "  prover   mean " << r.prover.mean_ms << " ms  (min "
             << r.prover.min_ms << ", max " << r.prover.max_ms << ")\n";
   std::cout << "  verifier mean " << r.verifier.mean_ms << " ms  (min "

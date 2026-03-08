@@ -244,6 +244,12 @@ cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 cmake --build build-release
 ```
 
+哈希固定使用 `BLAKE3`：
+
+```bash
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+```
+
 构建后可运行：
 
 ```bash

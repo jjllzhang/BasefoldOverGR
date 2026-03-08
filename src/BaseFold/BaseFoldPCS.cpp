@@ -1,4 +1,5 @@
 #include "BaseFold/BaseFoldPCS.hpp"
+#include "BaseFold/Hash.hpp"
 
 #include <NTL/ZZ.h>
 #include <NTL/ZZ_p.h>
@@ -6,8 +7,6 @@
 #include <NTL/ZZ_pEXFactoring.h>
 #include <NTL/ZZ_pX.h>
 #include <NTL/mat_ZZ_pE.h>
-
-#include <openssl/evp.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -447,41 +446,6 @@ Bytes SerializeFieldElement(const FieldElement &x) {
   return out;
 }
 
-Bytes Sha256(const Byte *data, std::size_t len) {
-  Bytes digest;
-  digest.resize(32);
-  unsigned int out_len = 0;
-  const int ok = EVP_Digest(static_cast<const void *>(data), len,
-                            reinterpret_cast<unsigned char *>(digest.data()),
-                            &out_len, EVP_sha256(), nullptr);
-  if (ok != 1) {
-    LogicError("Sha256: EVP_Digest failed");
-  }
-  if (out_len != digest.size()) {
-    LogicError("Sha256: unexpected digest size");
-  }
-  return digest;
-}
-
-Bytes Sha256(const Bytes &data) { return Sha256(data.data(), data.size()); }
-
-Digest Sha256Digest(const Byte *data, std::size_t len, const char *func_name) {
-  Digest out{};
-  unsigned int out_len = 0;
-  const int ok = EVP_Digest(static_cast<const void *>(data), len,
-                            reinterpret_cast<unsigned char *>(out.data()),
-                            &out_len, EVP_sha256(), nullptr);
-  if (ok != 1) {
-    const std::string msg = std::string(func_name) + ": EVP_Digest failed";
-    LogicError(msg.c_str());
-  }
-  if (out_len != out.size()) {
-    const std::string msg = std::string(func_name) + ": unexpected digest size";
-    LogicError(msg.c_str());
-  }
-  return out;
-}
-
 Bytes TaggedHash(Byte tag, const Bytes &state, const Bytes &payload) {
   Bytes in;
   in.reserve(1 + state.size() + 8 + payload.size());
@@ -489,7 +453,7 @@ Bytes TaggedHash(Byte tag, const Bytes &state, const Bytes &payload) {
   in.insert(in.end(), state.begin(), state.end());
   AppendU64(in, static_cast<std::uint64_t>(payload.size()));
   in.insert(in.end(), payload.begin(), payload.end());
-  return Sha256(in);
+  return HashBytes(in);
 }
 
 Bytes TaggedHash(Byte tag, const Bytes &state, const std::string &payload) {
@@ -499,9 +463,9 @@ Bytes TaggedHash(Byte tag, const Bytes &state, const std::string &payload) {
   return TaggedHash(tag, state, p);
 }
 
-class Sha256Transcript {
+class HashTranscript {
 public:
-  Sha256Transcript() {
+  HashTranscript() {
     Profile *prof = ActiveProfile();
     ScopedTimer timer(prof ? &prof->transcript_absorb_ns : nullptr,
                       prof ? &prof->transcript_absorb_calls : nullptr);
@@ -831,7 +795,7 @@ void ValidateChallengeConfigOrThrow(
   }
 }
 
-void AbsorbPublicInput(Sha256Transcript &transcript,
+void AbsorbPublicInput(HashTranscript &transcript,
                        const MerkleRoot &commitment,
                        const std::vector<FieldElement> &z,
                        const FieldElement &y);
@@ -850,7 +814,7 @@ Bytes SerializeExtensionPolynomial(const ZZ_pEX &poly) {
   return out;
 }
 
-void AbsorbChallengeConfig(Sha256Transcript &transcript,
+void AbsorbChallengeConfig(HashTranscript &transcript,
                            const BaseFoldPCSChallengeConfig &challenge_cfg) {
   Bytes tag;
   tag.push_back(
@@ -1056,12 +1020,12 @@ Bytes SerializeExtensionElement(const ZZ_pEX &x,
   return out;
 }
 
-void AbsorbExtensionElement(Sha256Transcript &transcript, const ZZ_pEX &x,
+void AbsorbExtensionElement(HashTranscript &transcript, const ZZ_pEX &x,
                             const ZZ_pEX &extension_modulus) {
   transcript.AbsorbBytes(SerializeExtensionElement(x, extension_modulus));
 }
 
-void AbsorbExtensionQuadraticPoly(Sha256Transcript &transcript,
+void AbsorbExtensionQuadraticPoly(HashTranscript &transcript,
                                   const ExtensionQuadraticPoly &p,
                                   const ZZ_pEX &extension_modulus) {
   AbsorbExtensionElement(transcript, p.a0, extension_modulus);
@@ -1069,7 +1033,7 @@ void AbsorbExtensionQuadraticPoly(Sha256Transcript &transcript,
   AbsorbExtensionElement(transcript, p.a2, extension_modulus);
 }
 
-ZZ_pEX SampleExtensionChallenge(const Sha256Transcript &transcript,
+ZZ_pEX SampleExtensionChallenge(const HashTranscript &transcript,
                                 const std::string &label,
                                 const ZZ_pEX &extension_modulus) {
   const long ext_degree =
@@ -1622,7 +1586,7 @@ Digest HashExtensionLeaf(long index, const ZZ_pEX &value,
       static_cast<std::uint64_t>(payload.size() - encoded_start);
   StoreU64BigEndian(payload.data() + encoded_len_pos, encoded_len);
 
-  return Sha256Digest(payload.data(), payload.size(), "HashExtensionLeaf");
+  return HashDigest(payload.data(), payload.size(), "HashExtensionLeaf");
 }
 
 Digest HashExtensionNode(const Digest &left, const Digest &right) {
@@ -1630,12 +1594,12 @@ Digest HashExtensionNode(const Digest &left, const Digest &right) {
   payload[0] = static_cast<Byte>(0x31);
   std::copy(left.begin(), left.end(), payload.begin() + 1);
   std::copy(right.begin(), right.end(), payload.begin() + 1 + left.size());
-  return Sha256Digest(payload.data(), payload.size(), "HashExtensionNode");
+  return HashDigest(payload.data(), payload.size(), "HashExtensionNode");
 }
 
 Digest HashExtensionRawRootEmpty() {
   const Byte payload[1] = {static_cast<Byte>(0x32)};
-  return Sha256Digest(payload, sizeof(payload), "HashExtensionRawRootEmpty");
+  return HashDigest(payload, sizeof(payload), "HashExtensionRawRootEmpty");
 }
 
 Digest HashExtensionRootWithCount(long leaf_count, const Digest &raw_root) {
@@ -1646,7 +1610,7 @@ Digest HashExtensionRootWithCount(long leaf_count, const Digest &raw_root) {
   payload[0] = static_cast<Byte>(0x33);
   StoreU64BigEndian(payload.data() + 1, static_cast<std::uint64_t>(leaf_count));
   std::copy(raw_root.begin(), raw_root.end(), payload.begin() + 1 + 8);
-  return Sha256Digest(payload.data(), payload.size(),
+  return HashDigest(payload.data(), payload.size(),
                       "HashExtensionRootWithCount");
 }
 
@@ -1822,7 +1786,7 @@ BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesUnchecked(
   const MerkleRoot root_d = merkle_d.Root();
   proof.commitments.roots_by_level.push_back(root_d);
 
-  Sha256Transcript transcript;
+  HashTranscript transcript;
   AbsorbPublicInput(transcript, root_d, z, claimed_y);
   AbsorbChallengeConfig(transcript, challenge_cfg);
 
@@ -1998,7 +1962,7 @@ bool VerifyEvalWithExtensionChallenges(
     return false;
   }
 
-  Sha256Transcript transcript;
+  HashTranscript transcript;
   AbsorbPublicInput(transcript, commitment_C, z, claimed_y);
   AbsorbChallengeConfig(transcript, challenge_cfg);
 
@@ -2248,7 +2212,7 @@ bool VerifyEvalWithExtensionChallenges(
   return true;
 }
 
-void AbsorbPublicInput(Sha256Transcript &transcript,
+void AbsorbPublicInput(HashTranscript &transcript,
                        const MerkleRoot &commitment,
                        const std::vector<FieldElement> &z,
                        const FieldElement &y) {
@@ -2331,7 +2295,7 @@ BaseFoldPCSProveEvalUnchecked(const vec_ZZ_pE &f_coeffs,
   const MerkleRoot root_d = merkle[static_cast<std::size_t>(params.d)].Root();
   proof.commitments.roots_by_level[static_cast<std::size_t>(params.d)] = root_d;
 
-  Sha256Transcript transcript;
+  HashTranscript transcript;
   AbsorbPublicInput(transcript, root_d, z, claimed_y);
 
   if (params.d == 0) {
@@ -2457,7 +2421,7 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
     return false;
   }
 
-  Sha256Transcript transcript;
+  HashTranscript transcript;
   AbsorbPublicInput(transcript, commitment_C, z, claimed_y);
 
   // h_d
