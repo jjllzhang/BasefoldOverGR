@@ -728,22 +728,20 @@ MerkleMultiproofStats PlanMerkleMultiproof(
   return multiproof_planner::BuildPlanFromSortedUnique(leaf_count, unique).stats;
 }
 
-bool MerkleVerifyMultiproof(const MerkleRoot &root, long leaf_count,
-                            const MerkleMultiproof &proof) {
-  Profile *prof = ActiveProfile();
-  ScopedTimer timer(prof ? &prof->merkle_verify_opening_ns : nullptr,
-                    prof ? &prof->merkle_verify_opening_calls : nullptr);
-
+namespace {
+bool MerkleVerifyMultiproofNoProfile(const MerkleRoot &root, long leaf_count,
+                                     const std::vector<long> &queried_indices,
+                                     const MerkleMultiproof &proof) {
   if (leaf_count < 0) {
     return false;
   }
   if (static_cast<long>(proof.values.length()) !=
-      static_cast<long>(proof.queried_indices.size())) {
+      static_cast<long>(queried_indices.size())) {
     return false;
   }
 
   if (leaf_count == 0) {
-    if (!proof.queried_indices.empty() || proof.values.length() != 0 ||
+    if (!queried_indices.empty() || proof.values.length() != 0 ||
         !proof.sibling_hashes.empty()) {
       return false;
     }
@@ -751,26 +749,26 @@ bool MerkleVerifyMultiproof(const MerkleRoot &root, long leaf_count,
   }
 
   if (!multiproof_planner::IsSortedUniqueIndicesInRange(
-          leaf_count, proof.queried_indices)) {
+          leaf_count, queried_indices)) {
     return false;
   }
 
   const MerkleMultiproofPlan plan = multiproof_planner::BuildPlanFromSortedUnique(
-      leaf_count, proof.queried_indices);
+      leaf_count, queried_indices);
   if (proof.sibling_hashes.size() !=
       static_cast<std::size_t>(plan.stats.unique_sibling_count)) {
     return false;
   }
 
-  if (proof.queried_indices.empty()) {
+  if (queried_indices.empty()) {
     return proof.sibling_hashes.empty();
   }
 
   std::vector<std::pair<long, Digest>> current;
-  current.resize(proof.queried_indices.size());
-  for (std::size_t i = 0; i < proof.queried_indices.size(); ++i) {
-    current[i] = {proof.queried_indices[i],
-                  HashLeaf(proof.queried_indices[i], proof.values[static_cast<long>(i)])};
+  current.resize(queried_indices.size());
+  for (std::size_t i = 0; i < queried_indices.size(); ++i) {
+    current[i] = {queried_indices[i],
+                  HashLeaf(queried_indices[i], proof.values[static_cast<long>(i)])};
   }
 
   Digest raw_root;
@@ -783,6 +781,26 @@ bool MerkleVerifyMultiproof(const MerkleRoot &root, long leaf_count,
     return false;
   }
   return HashRootWithCount(leaf_count, raw_root) == root;
+}
+}  // namespace
+
+bool MerkleVerifyMultiproof(const MerkleRoot &root, long leaf_count,
+                            const MerkleMultiproof &proof) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->merkle_verify_opening_ns : nullptr,
+                    prof ? &prof->merkle_verify_opening_calls : nullptr);
+  return MerkleVerifyMultiproofNoProfile(root, leaf_count,
+                                         proof.queried_indices, proof);
+}
+
+bool MerkleVerifyMultiproof(const MerkleRoot &root, long leaf_count,
+                            const std::vector<long> &queried_indices,
+                            const MerkleMultiproof &proof) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->merkle_verify_opening_ns : nullptr,
+                    prof ? &prof->merkle_verify_opening_calls : nullptr);
+  return MerkleVerifyMultiproofNoProfile(root, leaf_count, queried_indices,
+                                         proof);
 }
 
 MerkleTree MerkleTree::Build(const Oracle &oracle) {

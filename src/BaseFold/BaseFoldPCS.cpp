@@ -1707,40 +1707,36 @@ private:
   std::vector<std::vector<Digest>> levels_;
 };
 
-bool VerifyExtensionMerkleMultiproof(const MerkleRoot &root, long leaf_count,
-                                     const ExtensionMerkleMultiproof &proof,
-                                     const ZZ_pEX &extension_modulus) {
-  Profile *prof = ActiveProfile();
-  ScopedTimer timer(prof ? &prof->ext_merkle_verify_opening_ns : nullptr,
-                    prof ? &prof->ext_merkle_verify_opening_calls : nullptr);
-
+bool VerifyExtensionMerkleMultiproofNoProfile(
+    const MerkleRoot &root, long leaf_count,
+    const std::vector<long> &queried_indices,
+    const ExtensionMerkleMultiproof &proof, const ZZ_pEX &extension_modulus) {
   if (leaf_count <= 0) {
     return false;
   }
-  if (proof.values.size() != proof.queried_indices.size()) {
+  if (proof.values.size() != queried_indices.size()) {
     return false;
   }
   if (!multiproof_planner::IsSortedUniqueIndicesInRange(
-          leaf_count, proof.queried_indices)) {
+          leaf_count, queried_indices)) {
     return false;
   }
 
   const LocalMultiproofPlan plan =
-      multiproof_planner::BuildPlanFromSortedUnique(leaf_count,
-                                                    proof.queried_indices);
+      multiproof_planner::BuildPlanFromSortedUnique(leaf_count, queried_indices);
   if (proof.sibling_hashes.size() !=
       static_cast<std::size_t>(plan.stats.unique_sibling_count)) {
     return false;
   }
-  if (proof.queried_indices.empty()) {
+  if (queried_indices.empty()) {
     return proof.sibling_hashes.empty();
   }
 
   std::vector<std::pair<long, Digest>> current;
-  current.resize(proof.queried_indices.size());
-  for (std::size_t i = 0; i < proof.queried_indices.size(); ++i) {
-    current[i] = {proof.queried_indices[i],
-                  HashExtensionLeaf(proof.queried_indices[i], proof.values[i],
+  current.resize(queried_indices.size());
+  for (std::size_t i = 0; i < queried_indices.size(); ++i) {
+    current[i] = {queried_indices[i],
+                  HashExtensionLeaf(queried_indices[i], proof.values[i],
                                     extension_modulus)};
   }
 
@@ -1754,6 +1750,17 @@ bool VerifyExtensionMerkleMultiproof(const MerkleRoot &root, long leaf_count,
     return false;
   }
   return HashExtensionRootWithCount(leaf_count, raw_root) == root;
+}
+
+bool VerifyExtensionMerkleMultiproof(const MerkleRoot &root, long leaf_count,
+                                     const std::vector<long> &queried_indices,
+                                     const ExtensionMerkleMultiproof &proof,
+                                     const ZZ_pEX &extension_modulus) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->ext_merkle_verify_opening_ns : nullptr,
+                    prof ? &prof->ext_merkle_verify_opening_calls : nullptr);
+  return VerifyExtensionMerkleMultiproofNoProfile(
+      root, leaf_count, queried_indices, proof, extension_modulus);
 }
 
 BaseFoldPCSEvalProof ProveEvalFromCommittedTopOracleUnchecked(
@@ -1991,9 +1998,6 @@ bool VerifyEvalWithExtensionChallenges(
     return false;
   if (static_cast<long>(proof.extension.h_by_level.size()) != params.d)
     return false;
-  if (static_cast<long>(proof.extension.r_by_level.size()) != 0 &&
-      static_cast<long>(proof.extension.r_by_level.size()) != params.d)
-    return false;
   if (static_cast<long>(proof.extension.msg0_coeffs.size()) != params.k0)
     return false;
   if (!proof.query_multiproofs.empty())
@@ -2034,17 +2038,11 @@ bool VerifyEvalWithExtensionChallenges(
 
   std::vector<ZZ_pEX> r_by_level;
   r_by_level.resize(static_cast<std::size_t>(params.d));
-  const bool has_explicit_r =
-      (static_cast<long>(proof.extension.r_by_level.size()) == params.d);
 
   for (long i = params.d; i-- > 0;) {
     const ZZ_pEX r_i = SampleExtensionChallenge(
         transcript, "r/" + std::to_string(i), extension_modulus);
     r_by_level[static_cast<std::size_t>(i)] = r_i;
-    if (has_explicit_r &&
-        proof.extension.r_by_level[static_cast<std::size_t>(i)] != r_i) {
-      return false;
-    }
     transcript.AbsorbDigest(
         proof.extension.roots_by_level[static_cast<std::size_t>(i)]);
     if (i > 0) {
@@ -2138,11 +2136,14 @@ bool VerifyEvalWithExtensionChallenges(
       CollectBaseQueryIndicesByTree(query_plans, params);
   const MerkleMultiproof &top_query_multiproof =
       proof.extension.base_top_query_multiproof;
-  if (top_query_multiproof.queried_indices !=
-      requested_indices_by_tree[static_cast<std::size_t>(params.d)]) {
+  const std::vector<long> &expected_top_indices =
+      requested_indices_by_tree[static_cast<std::size_t>(params.d)];
+  if (static_cast<long>(top_query_multiproof.values.length()) !=
+      static_cast<long>(expected_top_indices.size())) {
     return false;
   }
-  if (!MerkleVerifyMultiproof(commitment_C, n_d, top_query_multiproof)) {
+  if (!MerkleVerifyMultiproof(commitment_C, n_d, expected_top_indices,
+                              top_query_multiproof)) {
     return false;
   }
 
@@ -2154,16 +2155,13 @@ bool VerifyEvalWithExtensionChallenges(
         proof.extension.query_multiproofs[static_cast<std::size_t>(tree_level)];
     const std::vector<long> &expected_indices =
         requested_indices_by_tree[static_cast<std::size_t>(tree_level)];
-    if (multiproof.queried_indices != expected_indices) {
-      return false;
-    }
     if (multiproof.values.size() != expected_indices.size()) {
       return false;
     }
     const long leaf_count = CodewordLengthAtLevel(params, tree_level);
     if (!VerifyExtensionMerkleMultiproof(
             proof.extension.roots_by_level[static_cast<std::size_t>(tree_level)],
-            leaf_count, multiproof, extension_modulus)) {
+            leaf_count, expected_indices, multiproof, extension_modulus)) {
       return false;
     }
   }
@@ -2180,13 +2178,13 @@ bool VerifyEvalWithExtensionChallenges(
     const long n_top = CodewordLengthAtLevel(params, top_i);
 
     const FieldElement *left_top = multiproof_replay::FindMultiproofValue(
-        top_query_multiproof.queried_indices, top_query_multiproof.values.length(),
-        mu_top, [&](std::size_t pos) {
+        expected_top_indices, top_query_multiproof.values.length(), mu_top,
+        [&](std::size_t pos) {
           return &top_query_multiproof.values[static_cast<long>(pos)];
         });
     const FieldElement *right_top = multiproof_replay::FindMultiproofValue(
-        top_query_multiproof.queried_indices, top_query_multiproof.values.length(),
-        mu_top + n_top, [&](std::size_t pos) {
+        expected_top_indices, top_query_multiproof.values.length(), mu_top + n_top,
+        [&](std::size_t pos) {
           return &top_query_multiproof.values[static_cast<long>(pos)];
         });
     if (left_top == nullptr || right_top == nullptr) {
@@ -2206,9 +2204,10 @@ bool VerifyEvalWithExtensionChallenges(
 
       const ExtensionMerkleMultiproof &folded_multiproof =
           proof.extension.query_multiproofs[static_cast<std::size_t>(i)];
+      const std::vector<long> &folded_indices =
+          requested_indices_by_tree[static_cast<std::size_t>(i)];
       const NTL::ZZ_pEX *folded_ext = multiproof_replay::FindMultiproofValue(
-          folded_multiproof.queried_indices,
-          static_cast<long>(folded_multiproof.values.size()), mu_i,
+          folded_indices, static_cast<long>(folded_multiproof.values.size()), mu_i,
           [&](std::size_t pos) { return &folded_multiproof.values[pos]; });
       if (folded_ext == nullptr) {
         return false;
@@ -2218,13 +2217,14 @@ bool VerifyEvalWithExtensionChallenges(
       if (i < params.d - 1) {
         const ExtensionMerkleMultiproof &next_multiproof =
             proof.extension.query_multiproofs[static_cast<std::size_t>(i + 1)];
+        const std::vector<long> &next_indices =
+            requested_indices_by_tree[static_cast<std::size_t>(i + 1)];
         const NTL::ZZ_pEX *left_ext = multiproof_replay::FindMultiproofValue(
-            next_multiproof.queried_indices,
-            static_cast<long>(next_multiproof.values.size()), mu_i,
+            next_indices, static_cast<long>(next_multiproof.values.size()), mu_i,
             [&](std::size_t pos) { return &next_multiproof.values[pos]; });
         const NTL::ZZ_pEX *right_ext = multiproof_replay::FindMultiproofValue(
-            next_multiproof.queried_indices,
-            static_cast<long>(next_multiproof.values.size()), mu_i + n_i,
+            next_indices, static_cast<long>(next_multiproof.values.size()),
+            mu_i + n_i,
             [&](std::size_t pos) { return &next_multiproof.values[pos]; });
         if (left_ext == nullptr || right_ext == nullptr) {
           return false;
@@ -2260,8 +2260,7 @@ bool VerifyEvalWithExtensionChallenges(
         const ExtensionMerkleMultiproof &carry_multiproof =
             proof.extension.query_multiproofs[static_cast<std::size_t>(i)];
         const NTL::ZZ_pEX *next_value = multiproof_replay::FindMultiproofValue(
-            carry_multiproof.queried_indices,
-            static_cast<long>(carry_multiproof.values.size()),
+            folded_indices, static_cast<long>(carry_multiproof.values.size()),
             carries_left ? left_carry_index : right_carry_index,
             [&](std::size_t pos) { return &carry_multiproof.values[pos]; });
         if (next_value == nullptr || folded_ext_value != *next_value) {
@@ -2576,9 +2575,6 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
         proof.query_multiproofs[static_cast<std::size_t>(tree_level)];
     const std::vector<long> &expected_indices =
         requested_indices_by_tree[static_cast<std::size_t>(tree_level)];
-    if (multiproof.queried_indices != expected_indices) {
-      return false;
-    }
     if (static_cast<long>(multiproof.values.length()) !=
         static_cast<long>(expected_indices.size())) {
       return false;
@@ -2586,7 +2582,7 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
     const long leaf_count = CodewordLengthAtLevel(params, tree_level);
     if (!MerkleVerifyMultiproof(
             proof.commitments.roots_by_level[static_cast<std::size_t>(tree_level)],
-            leaf_count, multiproof)) {
+            leaf_count, expected_indices, multiproof)) {
       return false;
     }
   }
@@ -2604,18 +2600,22 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
           proof.query_multiproofs[static_cast<std::size_t>(i + 1)];
       const MerkleMultiproof &folded_multiproof =
           proof.query_multiproofs[static_cast<std::size_t>(i)];
+      const std::vector<long> &upper_indices =
+          requested_indices_by_tree[static_cast<std::size_t>(i + 1)];
+      const std::vector<long> &folded_indices =
+          requested_indices_by_tree[static_cast<std::size_t>(i)];
       const FieldElement *left = multiproof_replay::FindMultiproofValue(
-          upper_multiproof.queried_indices, upper_multiproof.values.length(), mu,
+          upper_indices, upper_multiproof.values.length(), mu,
           [&](std::size_t pos) {
             return &upper_multiproof.values[static_cast<long>(pos)];
           });
       const FieldElement *right = multiproof_replay::FindMultiproofValue(
-          upper_multiproof.queried_indices, upper_multiproof.values.length(),
+          upper_indices, upper_multiproof.values.length(),
           mu + n_i, [&](std::size_t pos) {
             return &upper_multiproof.values[static_cast<long>(pos)];
           });
       const FieldElement *folded = multiproof_replay::FindMultiproofValue(
-          folded_multiproof.queried_indices, folded_multiproof.values.length(),
+          folded_indices, folded_multiproof.values.length(),
           mu, [&](std::size_t pos) {
             return &folded_multiproof.values[static_cast<long>(pos)];
           });

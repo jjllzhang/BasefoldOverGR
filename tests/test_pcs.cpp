@@ -231,6 +231,13 @@ void TestPCS_EvalProof_GF4() {
   CHECK(basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params));
   CHECK(basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries,
                                         proof_from_committed, params));
+  basefold::BaseFoldPCSEvalProof proof_without_indices = proof;
+  for (basefold::MerkleMultiproof &multiproof :
+       proof_without_indices.query_multiproofs) {
+    multiproof.queried_indices.clear();
+  }
+  CHECK(basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries,
+                                        proof_without_indices, params));
 
   const ZZ_pE y_bad = y + testutil::ConstZZpE(1);
   CHECK(!basefold::BaseFoldPCSVerifyEval(C, z, y_bad, num_queries, proof, params));
@@ -422,6 +429,17 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
       C, z, y, num_queries, proof, params, cfg));
   CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
       C, z, y, num_queries, proof_from_committed, params, cfg));
+  basefold::BaseFoldPCSEvalProof proof_without_metadata = proof;
+  proof_without_metadata.extension.r_by_level.resize(
+      static_cast<std::size_t>(params.d));
+  proof_without_metadata.extension.base_top_query_multiproof.queried_indices
+      .clear();
+  for (basefold::ExtensionMerkleMultiproof &multiproof :
+       proof_without_metadata.extension.query_multiproofs) {
+    multiproof.queried_indices.clear();
+  }
+  CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      C, z, y, num_queries, proof_without_metadata, params, cfg));
 
   CHECK(!basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params));
 

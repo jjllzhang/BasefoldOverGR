@@ -241,6 +241,13 @@ MerkleMultiproofStats PlanMerkleMultiproof(
 bool MerkleVerifyMultiproof(const MerkleRoot &root, long leaf_count,
                             const MerkleMultiproof &proof);
 
+// Verifies that `proof` is a valid pruned multiproof for `root`, using
+// verifier-supplied queried indices (for example, transcript-derived indices)
+// instead of any indices stored in `proof`.
+bool MerkleVerifyMultiproof(const MerkleRoot &root, long leaf_count,
+                            const std::vector<long> &queried_indices,
+                            const MerkleMultiproof &proof);
+
 // A reusable Merkle tree for an oracle, allowing one build and many multiproofs.
 //
 // - Build(oracle) runs in O(n).
