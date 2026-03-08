@@ -248,6 +248,12 @@ cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 cmake --build build-release
 ```
 
+Hashing is fixed to `BLAKE3`:
+
+```bash
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+```
+
 Then:
 
 ```bash

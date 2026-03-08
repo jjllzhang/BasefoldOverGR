@@ -1,4 +1,5 @@
 #include "BaseFold/IOPP.hpp"
+#include "BaseFold/Hash.hpp"
 #include "BaseFold/MerkleMultiproofPlanner.hpp"
 #include "BaseFold/MerkleMultiproofReplay.hpp"
 #include "BaseFold/Profile.hpp"
@@ -7,8 +8,6 @@
 #include <NTL/ZZ_p.h>
 #include <NTL/ZZ_pX.h>
 #include <NTL/mat_ZZ_pE.h>
-
-#include <openssl/sha.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -44,7 +43,7 @@ thread_local Profile *g_active_profile = nullptr;
 
 namespace {
 
-constexpr std::size_t kSha256DigestBytes = 32;
+constexpr std::size_t kDigestBytes = Digest{}.size();
 
 long Pow2Checked(long e) {
   if (e < 0)
@@ -300,29 +299,16 @@ bool TryInvertUnit(ZZ_pE &inv_out, const ZZ_pE &a) {
   return true;
 }
 
-Digest Sha256Digest(const Byte *data, std::size_t len) {
-  Digest out;
-  static_assert(out.size() == kSha256DigestBytes,
-                "Digest must be SHA-256 sized");
-  const unsigned char *ret =
-      SHA256(reinterpret_cast<const unsigned char *>(data), len,
-             reinterpret_cast<unsigned char *>(out.data()));
-  if (ret == nullptr) {
-    LogicError("Sha256Digest: SHA256 failed");
-  }
-  return out;
-}
-
 Digest HashWithPrefix(Byte prefix) {
-  return Sha256Digest(&prefix, 1);
+  return HashDigest(&prefix, 1, "HashWithPrefix");
 }
 
 Digest HashNode(const Digest &left, const Digest &right) {
-  std::array<Byte, 1 + 2 * kSha256DigestBytes> in;
+  std::array<Byte, 1 + 2 * kDigestBytes> in;
   in[0] = static_cast<Byte>(0x01);
   std::memcpy(in.data() + 1, left.data(), left.size());
   std::memcpy(in.data() + 1 + left.size(), right.data(), right.size());
-  return Sha256Digest(in.data(), in.size());
+  return HashDigest(in.data(), in.size(), "HashNode");
 }
 
 Digest HashLeaf(long index, const FieldElement &value) {
@@ -354,15 +340,15 @@ Digest HashLeaf(long index, const FieldElement &value) {
     off += coeff_bytes;
   }
 
-  return Sha256Digest(in.data(), in.size());
+  return HashDigest(in.data(), in.size(), "HashLeaf");
 }
 
 Digest HashRootWithCount(long leaf_count, const Digest &raw_root) {
-  std::array<Byte, 1 + 8 + kSha256DigestBytes> in;
+  std::array<Byte, 1 + 8 + kDigestBytes> in;
   in[0] = static_cast<Byte>(0x03);
   WriteU64BE(in.data() + 1, static_cast<std::uint64_t>(leaf_count));
   std::memcpy(in.data() + 1 + 8, raw_root.data(), raw_root.size());
-  return Sha256Digest(in.data(), in.size());
+  return HashDigest(in.data(), in.size(), "HashRootWithCount");
 }
 
 std::size_t ExpectedMerkleHeight(long leaf_count) {
