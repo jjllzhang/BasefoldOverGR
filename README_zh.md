@@ -186,21 +186,29 @@
 - 通过 fixed-width proof serializer 做 BaseFold PCS proof size 的精确计数：
   - `basefold::BaseFoldPCSEvalProofSizeBytes(proof)`
   - `basefold::BaseFoldPCSEvalProofSizeKB(proof)`（KiB, 1024 bytes）
+- 计数时会省略 verifier 可从 transcript 重建的 query indices / 显式扩环
+  challenge（例如 `extension.r_by_level`）。
 - 面向用户的 proof size 输出来自 `bench_pcs_eval`：同一次 prove/eval bench
   会直接打印 `proof_size_bytes` / `proof_size_kb`。
 
 ### `bench/bench_pcs_commit.cpp`
 
-- 编码性能基准：测量 **去掉校验后的纯编码时间**（`EncodeFoldableUnchecked`），支持由命令行分别指定有限域与 Galois ring 的上下文参数。
+- 顶层 commit 基准：
+  - `encode-only mean`：顶层原始编码时间（`EncodeFoldableUnchecked`，不含校验）
+  - `top-commit mean`：对顶层 oracle 做 `MerkleTree::Build` 并提取 root 的时间
+  - `commit mean`：headline 的顶层 commit 阶段 = encode + 顶层 Merkle commit
+- 有限域与 Galois ring 上下文都可由命令行分别配置。
 - 可选 `--k0 <int>`（默认 `1`）用于测试一般 `k0` 的编码性能。
 - 可选 `--auto-zeta teich` 自动从 `(p,k,F)` 推导 Teichmüller 子群生成元作为 `zeta`（启用后忽略 `--field-zeta/--ring-zeta`）。
 
 ### `bench/bench_pcs_eval.cpp`
 
-- PCS eval proof 性能基准：测量 prover time 与 verifier time（Merkle + Fiat–Shamir）。
-- 默认 prover 走 `BaseFoldPCSProveEvalUnchecked`；如需把校验也算进 prover time，可加 `--checked`。
-- 同一次运行会通过 fixed-width `CountingSink` 路径输出该 proof 的精确大小
-  （`proof_size_bytes` / `proof_size_kb`）。
+- PCS eval proof 性能基准：测量 prover time 与 verifier time（顶层 commit 之下的
+  Merkle + Fiat–Shamir）。
+- 默认 prover 走 `BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked`；如需把校验也算进 prover time，可加 `--checked`。headline prover time 不包含顶层 encode + commit，而是从预计算的 `BaseFoldPCSCommitArtifacts` 开始计时。
+- 同一次运行会通过 fixed-width `CountingSink` 路径输出该 proof 的精确 payload 大小
+  （`proof_size_bytes` / `proof_size_kb`，省略 verifier 可自行从 transcript 重建的
+  indices/challenges）。
 - 可加 `--use-extension-challenges` 切到扩域/扩环 challenge 路径（`BaseFoldPCSChallengeConfig`），此时 sumcheck/folding 在扩域/扩环上运行，顶层 commitment 仍在原域/环。
 - 可选 `--field-challenge-ext` / `--ring-challenge-ext` 指定 challenge 扩域模多项式 `E(U)`，格式为 `a0;a1;...;ad`（每个 `ai` 是一个 `ZZ_pE` 元素，写作 `c0,c1,...`）；若不指定，默认 `E(U)=zeta + U + U^2`。
 - 可加 `--profile` 输出 prover/verifier 内部耗时拆分（profile 会在 `reps` 次迭代上累加，不包含 `warmup`；建议 `--warmup 0 --reps 1` 方便阅读）。
@@ -224,7 +232,7 @@
 
 - `tests/test_galois_ring_basic.cpp`：覆盖主要工具函数、求逆、插值，以及 Hensel 提升、`FindPrimitiveElement`、`FindTeichmullerGenerator` 的 smoke test。
 - `tests/test_foldable_codes.cpp`：覆盖 foldable code 编码的正确性测试（递归编码结果与显式构造的 `G_d` 乘法结果一致）。
-- `tests/test_iopp.cpp`：覆盖 BaseFold IOPP（有限域与 GR）commit/query 与 Merkle openings。
+- `tests/test_iopp.cpp`：覆盖 BaseFold IOPP（有限域与 GR）commit/query 与 Merkle multiproof。
 - `tests/test_pcs.cpp`：覆盖 BaseFold PCS（有限域与 GR）生成 proof 并验证通过（以及篡改后应失败）。
 
 在安装好 NTL/GMP 后，使用 CMake（推荐 out-of-source 构建）：
@@ -287,8 +295,9 @@ context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_m
 
 - `gamma`：`calc_iopp_params --auto-gamma` 选出的 slack 参数。
 - `queries`：推荐查询次数（即 `l_min_for_PCS`）。
-- `proof_size_kb/proof_size_bytes`：来自 `bench_pcs_eval` 的精确序列化结果
-  （fixed-width counting 路径，KiB / bytes）。
+- `proof_size_kb/proof_size_bytes`：来自 `bench_pcs_eval` 的精确 payload 大小
+  （fixed-width counting 路径，省略 verifier 可从 transcript 重建的
+  indices/challenges，KiB / bytes）。
 - `status,error`：该 `(context,d)` 点是否成功及失败原因（若有）。
 
 ### 结果文件与绘图

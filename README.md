@@ -244,7 +244,7 @@ Available tests:
 
 - `tests/test_galois_ring_basic.cpp`: utilities, inversion, interpolation, plus smoke tests for Hensel lift, `FindPrimitiveElement`, `FindTeichmullerGenerator`.
 - `tests/test_foldable_codes.cpp`: foldable-code correctness (recursive encoding matches explicit `G_d` multiplication).
-- `tests/test_iopp.cpp`: BaseFold IOPP (field + GR) commit/query and Merkle openings.
+- `tests/test_iopp.cpp`: BaseFold IOPP (field + GR) commit/query and Merkle multiproofs.
 - `tests/test_pcs.cpp`: BaseFold PCS (field + GR) proof generation and verification (including tampering-failure checks).
 
 After installing NTL/GMP, build with CMake (out-of-source recommended):
