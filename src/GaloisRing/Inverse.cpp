@@ -25,13 +25,52 @@ using NTL::ZZ_pE;
 using NTL::ZZ_pEBak;
 using NTL::ZZ_pX;
 
-void Inv_matrix_1(mat_ZZ_p &A, ZZ_pE &a, long d);
+void Inv_matrix_1(mat_ZZ_p &A, const ZZ_pE &a, long d);
 void Inv_matrix_2(mat_ZZ_p &A, long d);
 
 namespace {
 
-void ExportPolyCoeffs(const ZZ_pX &poly, std::vector<ZZ> &coeffs, long len) {
-  coeffs.assign(static_cast<std::size_t>(len), ZZ(0));
+struct PrimePowerCache {
+  bool valid = false;
+  bool ok = false;
+  ZZ modulus;
+  ZZ p;
+  long k = 0;
+};
+
+struct HenselScratch {
+  std::vector<ZZ> F_coeffs;
+  std::vector<ZZ> a_coeffs;
+  std::vector<ZZ> b_coeffs;
+};
+
+struct Matrix2ShapeCache {
+  bool valid = false;
+  ZZ modulus;
+  long s = 0;
+  std::vector<ZZ> f_coeffs;
+  std::vector<ZZ> current_f_coeffs;
+  std::vector<ZZ> entries;
+};
+
+PrimePowerCache &GetPrimePowerCache() {
+  static thread_local PrimePowerCache cache;
+  return cache;
+}
+
+HenselScratch &GetHenselScratch() {
+  static thread_local HenselScratch scratch;
+  return scratch;
+}
+
+Matrix2ShapeCache &GetMatrix2ShapeCache() {
+  static thread_local Matrix2ShapeCache cache;
+  return cache;
+}
+
+void ExportPolyCoeffsInto(const ZZ_pX &poly, std::vector<ZZ> &coeffs, long len) {
+  coeffs.resize(static_cast<std::size_t>(len));
+  std::fill(coeffs.begin(), coeffs.end(), ZZ(0));
   const long d = deg(poly);
   const long upto = std::min(d, len - 1);
   for (long i = 0; i <= upto; ++i) {
@@ -47,6 +86,38 @@ ZZ_pX ImportPolyCoeffs(const std::vector<ZZ> &coeffs) {
     }
   }
   return poly;
+}
+
+void ExportMatrixEntriesInto(const mat_ZZ_p &A, std::vector<ZZ> &entries) {
+  const long rows = A.NumRows();
+  const long cols = A.NumCols();
+  entries.resize(static_cast<std::size_t>(rows * cols));
+  long index = 0;
+  for (long i = 0; i < rows; ++i) {
+    for (long j = 0; j < cols; ++j) {
+      entries[static_cast<std::size_t>(index++)] = rep(A[i][j]);
+    }
+  }
+}
+
+void ImportMatrixEntriesInto(const std::vector<ZZ> &entries, mat_ZZ_p &A,
+                             long rows, long cols) {
+  const std::size_t expected =
+      static_cast<std::size_t>(rows) * static_cast<std::size_t>(cols);
+  if (entries.size() != expected) {
+    NTL::LogicError("ImportMatrixEntriesInto: cached shape size mismatch");
+  }
+  A.SetDims(rows, cols);
+  clear(A);
+  long index = 0;
+  for (long i = 0; i < rows; ++i) {
+    for (long j = 0; j < cols; ++j) {
+      const ZZ &value = entries[static_cast<std::size_t>(index++)];
+      if (value != 0) {
+        A[i][j] = conv<ZZ_p>(value);
+      }
+    }
+  }
 }
 
 bool ExtractPrimePowerFromLongModulus(const ZZ &modulus, ZZ &p, long &k) {
@@ -88,7 +159,57 @@ bool ExtractPrimePowerFromLongModulus(const ZZ &modulus, ZZ &p, long &k) {
   return true;
 }
 
-ZZ_pE InvMatrixSolve(ZZ_pE a, long s) {
+bool GetPrimePowerDecompositionCached(const ZZ &modulus, ZZ &p, long &k) {
+  PrimePowerCache &cache = GetPrimePowerCache();
+  if (cache.valid && cache.modulus == modulus) {
+    if (!cache.ok) return false;
+    p = cache.p;
+    k = cache.k;
+    return true;
+  }
+
+  ZZ p_local;
+  long k_local = 0;
+  const bool ok = ExtractPrimePowerFromLongModulus(modulus, p_local, k_local);
+
+  cache.valid = true;
+  cache.ok = ok;
+  cache.modulus = modulus;
+  if (ok) {
+    cache.p = p_local;
+    cache.k = k_local;
+    p = p_local;
+    k = k_local;
+    return true;
+  }
+
+  clear(cache.p);
+  cache.k = 0;
+  return false;
+}
+
+void GetMatrix2Cached(mat_ZZ_p &A, long s) {
+  Matrix2ShapeCache &cache = GetMatrix2ShapeCache();
+  const ZZ modulus = ZZ_p::modulus();
+  ExportPolyCoeffsInto(ZZ_pE::modulus(), cache.current_f_coeffs, s + 1);
+
+  if (cache.valid && cache.s == s && cache.modulus == modulus &&
+      cache.f_coeffs == cache.current_f_coeffs) {
+    ImportMatrixEntriesInto(cache.entries, A, 2 * s - 1, s);
+    return;
+  }
+
+  // Cache only context-free integer reps. mat_ZZ_p itself is tied to the
+  // active ZZ_p modulus and cannot be safely reused across ZZ_p::init(...) calls.
+  Inv_matrix_2(A, s);
+  cache.valid = true;
+  cache.modulus = modulus;
+  cache.s = s;
+  cache.f_coeffs = cache.current_f_coeffs;
+  ExportMatrixEntriesInto(A, cache.entries);
+}
+
+ZZ_pE InvMatrixSolve(const ZZ_pE &a, long s) {
   try {
     mat_ZZ_p A1, A2;
     vec_ZZ x, b;
@@ -99,7 +220,7 @@ ZZ_pE InvMatrixSolve(ZZ_pE a, long s) {
     b[0] = 1;
 
     Inv_matrix_1(A1, a, s);
-    Inv_matrix_2(A2, s);
+    GetMatrix2Cached(A2, s);
 
     ZZ d;
 
@@ -156,16 +277,15 @@ bool TryInvViaHensel(ZZ_pE &out, const ZZ_pE &a, long s) {
 
   ZZ p;
   long k = 0;
-  if (!ExtractPrimePowerFromLongModulus(modulus, p, k)) return false;
+  if (!GetPrimePowerDecompositionCached(modulus, p, k)) return false;
   if (k <= 1) return false;
 
+  HenselScratch &scratch = GetHenselScratch();
   const ZZ_pX &F_current = ZZ_pE::modulus();
-  std::vector<ZZ> F_coeffs;
-  ExportPolyCoeffs(F_current, F_coeffs, s + 1);
+  ExportPolyCoeffsInto(F_current, scratch.F_coeffs, s + 1);
 
   const ZZ_pX &a_poly_current = rep(a);
-  std::vector<ZZ> a_coeffs;
-  ExportPolyCoeffs(a_poly_current, a_coeffs, s);
+  ExportPolyCoeffsInto(a_poly_current, scratch.a_coeffs, s);
 
   ZZ_pBak modulus_bak;
   modulus_bak.save();
@@ -176,10 +296,10 @@ bool TryInvViaHensel(ZZ_pE &out, const ZZ_pE &a, long s) {
     ZZ mod = p;
     ZZ_p::init(mod);
 
-    ZZ_pX F_poly = ImportPolyCoeffs(F_coeffs);
+    ZZ_pX F_poly = ImportPolyCoeffs(scratch.F_coeffs);
     ZZ_pE::init(F_poly);
 
-    ZZ_pX a_poly = ImportPolyCoeffs(a_coeffs);
+    ZZ_pX a_poly = ImportPolyCoeffs(scratch.a_coeffs);
     ZZ_pE a_mod_p;
     conv(a_mod_p, a_poly);
     if (a_mod_p == 0) {
@@ -195,8 +315,7 @@ bool TryInvViaHensel(ZZ_pE &out, const ZZ_pE &a, long s) {
       return true;
     }
 
-    std::vector<ZZ> b_coeffs;
-    ExportPolyCoeffs(rep(b), b_coeffs, s);
+    ExportPolyCoeffsInto(rep(b), scratch.b_coeffs, s);
 
     long lifted_exp = 1;
     while (lifted_exp < k) {
@@ -204,27 +323,27 @@ bool TryInvViaHensel(ZZ_pE &out, const ZZ_pE &a, long s) {
       for (long t = lifted_exp; t < next_exp; ++t) mod *= p;
 
       ZZ_p::init(mod);
-      ZZ_pX F_next = ImportPolyCoeffs(F_coeffs);
+      ZZ_pX F_next = ImportPolyCoeffs(scratch.F_coeffs);
       ZZ_pE::init(F_next);
 
       ZZ_pE a_cur, b_cur;
-      conv(a_cur, ImportPolyCoeffs(a_coeffs));
-      conv(b_cur, ImportPolyCoeffs(b_coeffs));
+      conv(a_cur, ImportPolyCoeffs(scratch.a_coeffs));
+      conv(b_cur, ImportPolyCoeffs(scratch.b_coeffs));
 
       ZZ_pE one;
       NTL::set(one);
       const ZZ_pE two = one + one;
       const ZZ_pE b_next = b_cur * (two - a_cur * b_cur);
-      ExportPolyCoeffs(rep(b_next), b_coeffs, s);
+      ExportPolyCoeffsInto(rep(b_next), scratch.b_coeffs, s);
 
       lifted_exp = next_exp;
     }
 
     ZZ_p::init(modulus);
-    ZZ_pX F_final = ImportPolyCoeffs(F_coeffs);
+    ZZ_pX F_final = ImportPolyCoeffs(scratch.F_coeffs);
     ZZ_pE::init(F_final);
 
-    conv(out, ImportPolyCoeffs(b_coeffs));
+    conv(out, ImportPolyCoeffs(scratch.b_coeffs));
     ZZ_pE one;
     NTL::set(one);
     if (a * out != one) {
@@ -245,7 +364,7 @@ bool TryInvViaHensel(ZZ_pE &out, const ZZ_pE &a, long s) {
     The matrix encodes shifted coefficients of a and is used to set up a linear
    system whose solution corresponds to the inverse element's coefficients.
 */
-void Inv_matrix_1(mat_ZZ_p &A, ZZ_pE &a, long d) {
+void Inv_matrix_1(mat_ZZ_p &A, const ZZ_pE &a, long d) {
   ZZ_pX poly = rep(a);
   A.SetDims(d, 2 * d - 1);
   clear(A);

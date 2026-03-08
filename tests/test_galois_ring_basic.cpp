@@ -259,6 +259,138 @@ void TestInverse_Ring() {
   }
 }
 
+void TestInverse_CacheSafetyAcrossContexts() {
+  testutil::PrintInfo("Inv cache safety: repeated calls, modulus switches, and "
+                      "same-modulus extension switches");
+
+  const ZZ p2 = to_ZZ(2);
+  const long k2 = 2;
+  const long s2 = 2;
+  const ZZ mod4 = power(p2, k2);
+  ZZ_pPush mod4_push(mod4);
+
+  ZZ_pX F_a;
+  SetCoeff(F_a, 2, 1);
+  SetCoeff(F_a, 1, 1);
+  SetCoeff(F_a, 0, 1);
+  ZZ_pEPush e_push_a(F_a);
+
+  ZZ_pE one_a;
+  set(one_a);
+  const ZZ_pE unit_a = long2ZZpE({1, 1});
+  const ZZ_pE inv_a_1 = Inv(unit_a, s2);
+  const ZZ_pE inv_a_2 = Inv(unit_a, s2);
+  CHECK(inv_a_1 != 0);
+  CHECK_EQ(inv_a_1, inv_a_2);
+  CHECK_EQ(unit_a * inv_a_2, one_a);
+
+  const ZZ_pE non_unit_a = long2ZZpE({0, 2});
+  CHECK_EQ(Inv(non_unit_a, s2), ZZ_pE(0));
+
+  {
+    const ZZ p3 = to_ZZ(3);
+    const long k3 = 2;
+    const ZZ mod9 = power(p3, k3);
+    ZZ_pPush mod9_push(mod9);
+
+    ZZ_pX F_b;
+    SetCoeff(F_b, 2, 1);
+    SetCoeff(F_b, 0, 1);
+    ZZ_pEPush e_push_b(F_b);
+
+    ZZ_pE one_b;
+    set(one_b);
+    const ZZ_pE unit_b = long2ZZpE({1, 1});
+    const ZZ_pE inv_b = Inv(unit_b, s2);
+    CHECK(inv_b != 0);
+    CHECK_EQ(unit_b * inv_b, one_b);
+  }
+
+  const ZZ_pE inv_a_after_mod_switch = Inv(unit_a, s2);
+  CHECK_EQ(inv_a_after_mod_switch, inv_a_1);
+  CHECK_EQ(unit_a * inv_a_after_mod_switch, one_a);
+
+  {
+    ZZ_pX F_alt;
+    SetCoeff(F_alt, 2, 1);
+    SetCoeff(F_alt, 1, 1);
+    SetCoeff(F_alt, 0, 3);
+    ZZ_pEPush e_push_alt(F_alt);
+
+    ZZ_pE one_alt;
+    set(one_alt);
+    const ZZ_pE unit_alt = long2ZZpE({1, 1});
+    const ZZ_pE inv_alt_1 = Inv(unit_alt, s2);
+    const ZZ_pE inv_alt_2 = Inv(unit_alt, s2);
+    CHECK(inv_alt_1 != 0);
+    CHECK_EQ(inv_alt_1, inv_alt_2);
+    CHECK_EQ(unit_alt * inv_alt_2, one_alt);
+
+    const ZZ_pE non_unit_alt = long2ZZpE({2, 0});
+    CHECK_EQ(Inv(non_unit_alt, s2), ZZ_pE(0));
+  }
+
+  const ZZ_pE inv_a_after_f_switch = Inv(unit_a, s2);
+  CHECK_EQ(inv_a_after_f_switch, inv_a_1);
+  CHECK_EQ(unit_a * inv_a_after_f_switch, one_a);
+}
+
+void TestInverse_MatrixSolveFallbackCache() {
+  testutil::PrintInfo("Inv matrix fallback cache: repeated large-modulus calls "
+                      "remain correct across context switches");
+
+  ZZ mod_large;
+  conv(mod_large, "340282366920938461286658806734041124249");
+  const long s = 2;
+
+  ZZ_pPush mod_large_push(mod_large);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush e_push(F);
+
+  ZZ_pE one;
+  set(one);
+
+  const ZZ_pE a = long2ZZpE({1, 1});
+  const ZZ_pE b = long2ZZpE({2, 1});
+  const ZZ_pE inv_a_1 = Inv(a, s);
+  const ZZ_pE inv_a_2 = Inv(a, s);
+  const ZZ_pE inv_b_1 = Inv(b, s);
+  const ZZ_pE inv_b_2 = Inv(b, s);
+
+  CHECK(inv_a_1 != 0);
+  CHECK(inv_b_1 != 0);
+  CHECK_EQ(inv_a_1, inv_a_2);
+  CHECK_EQ(inv_b_1, inv_b_2);
+  CHECK_EQ(a * inv_a_1, one);
+  CHECK_EQ(b * inv_b_1, one);
+
+  {
+    const ZZ mod_small = power(to_ZZ(2), 2);
+    ZZ_pPush mod_small_push(mod_small);
+
+    ZZ_pX F_small;
+    SetCoeff(F_small, 2, 1);
+    SetCoeff(F_small, 1, 1);
+    SetCoeff(F_small, 0, 1);
+    ZZ_pEPush e_push_small(F_small);
+
+    const ZZ_pE sample = long2ZZpE({1, 1});
+    const ZZ_pE sample_inv = Inv(sample, s);
+    ZZ_pE one_small;
+    set(one_small);
+    CHECK(sample_inv != 0);
+    CHECK_EQ(sample * sample_inv, one_small);
+  }
+
+  const ZZ_pE inv_a_after_switch = Inv(a, s);
+  CHECK_EQ(inv_a_after_switch, inv_a_1);
+  CHECK_EQ(a * inv_a_after_switch, one);
+}
+
 void TestFindPrimitivePoly() {
   const ZZ p = to_ZZ(2);
   const long n = 3;
@@ -473,6 +605,8 @@ int main() {
     RUN_TEST(TestConversionsAndPolyOps_Field);
     RUN_TEST(TestInverse_Field);
     RUN_TEST(TestInverse_Ring);
+    RUN_TEST(TestInverse_CacheSafetyAcrossContexts);
+    RUN_TEST(TestInverse_MatrixSolveFallbackCache);
     RUN_TEST(TestFindPrimitivePoly);
     RUN_TEST(TestInterpolateForGR);
     RUN_TEST(TestHenselLift_Smoke);
