@@ -446,7 +446,7 @@ std::uint64_t ComputeProofSizeBytes(
     bool use_extension_challenges, long challenge_ext_degree) {
   basefold::BaseFoldProofSizeOptions options;
   options.include_version_byte = true;
-  if (use_extension_challenges || proof.extension.enabled) {
+  if (use_extension_challenges || proof.extension.has_extension_payload) {
     options.challenge_ext_degree = challenge_ext_degree;
   }
   return basefold::BaseFoldPCSEvalProofSizeBytes(proof, options);
@@ -918,8 +918,8 @@ int main(int argc, char **argv) {
       }
     } else if (arg == "--verifier-query-threshold") {
       if (!ParseLong(RequireNextArgValue("--verifier-query-threshold"),
-                     verifier_query_cfg.parallel_query_threshold) ||
-          verifier_query_cfg.parallel_query_threshold <= 0) {
+                     verifier_query_cfg.min_queries_for_parallelism) ||
+          verifier_query_cfg.min_queries_for_parallelism <= 0) {
         std::cerr << "Invalid --verifier-query-threshold\n";
         return 2;
       }

@@ -426,7 +426,7 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
       basefold::BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle(
           f_coeffs, z, y, num_queries, params, commit_artifacts, cfg);
 
-  CHECK(proof.extension.enabled);
+  CHECK(proof.extension.has_extension_payload);
   CHECK(proof.extension.r_by_level.empty());
   CHECK(static_cast<long>(proof.extension.roots_by_level.size()) == params.d);
   CHECK(static_cast<long>(proof.extension.query_multiproofs.size()) == params.d);
@@ -536,7 +536,7 @@ void TestPCS_EvalProof_ExtChallengeConfig_GR42() {
       basefold::BaseFoldPCSProveEvalWithChallengeConfig(
           f_coeffs, z, y, num_queries, params, cfg);
 
-  CHECK(proof.extension.enabled);
+  CHECK(proof.extension.has_extension_payload);
   CHECK(proof.extension.r_by_level.empty());
   CHECK(static_cast<long>(proof.extension.roots_by_level.size()) == params.d);
   CHECK(static_cast<long>(proof.extension.query_multiproofs.size()) == params.d);
@@ -601,12 +601,12 @@ void TestPCS_ProofSizeFixedWidth_GF4_HandCheck() {
   basefold::BaseFoldPCSEvalProof proof;
   proof.commitments.roots_by_level.resize(1);
   proof.h_by_level.resize(1);
-  proof.pi0_full.SetLength(2);
+  proof.pi0_codeword.SetLength(2);
   proof.query_multiproofs.resize(1);
   proof.query_multiproofs[0].queried_indices = {0, 1};
   proof.query_multiproofs[0].values.SetLength(2);
   proof.query_multiproofs[0].sibling_hashes.resize(3);
-  proof.extension.enabled = false;
+  proof.extension.has_extension_payload = false;
 
   const std::uint64_t expected_bytes = 192;
   const std::uint64_t actual_bytes =
@@ -634,7 +634,7 @@ void TestPCS_ProofSizeFixedWidth_ExtensionWidthDerivation() {
   ZZ_pEPush e_push(F);
 
   basefold::BaseFoldPCSEvalProof proof;
-  proof.extension.enabled = true;
+  proof.extension.has_extension_payload = true;
   proof.extension.msg0_coeffs.resize(1);
   proof.extension.r_by_level.resize(2);
 

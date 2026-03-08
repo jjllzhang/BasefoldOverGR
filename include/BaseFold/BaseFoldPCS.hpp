@@ -42,7 +42,7 @@ struct BaseFoldPCSCommitArtifacts {
 // Commitment to π_d remains in the base ring (Merkle over ZZ_pE values), while
 // sumcheck/folding arithmetic below runs in the extension ring E(U).
 struct BaseFoldPCSExtensionProofData {
-  bool enabled = false;
+  bool has_extension_payload = false;
 
   // Merkle roots for extension oracles π_0..π_{d-1}.
   // Top-level π_d commitment is still in BaseFoldPCSEvalProof::commitments.
@@ -59,7 +59,7 @@ struct BaseFoldPCSExtensionProofData {
   std::vector<NTL::ZZ_pEX> msg0_coeffs;
 
   // Full π_0 in E(U), derived from extension-ring folding.
-  std::vector<NTL::ZZ_pEX> pi0_full;
+  std::vector<NTL::ZZ_pEX> pi0_codeword;
 
   // Shared base openings into the top-level base commitment C = MerkleRoot(π_d).
   MerkleMultiproof base_top_query_multiproof;
@@ -86,7 +86,7 @@ struct BaseFoldPCSEvalProof {
   // Base π_0 payload.
   // Base-challenge path: length n0 = c*k0.
   // Extension-challenge compact path: may be empty.
-  Oracle pi0_full;
+  Oracle pi0_codeword;
 
   // Shared base openings grouped by oracle level π_0..π_d.
   std::vector<MerkleMultiproof> query_multiproofs;
@@ -116,7 +116,7 @@ struct BaseFoldPCSChallengeConfig {
 // - BASEFOLD_VERIFY_QUERY_MAX_THREADS
 struct VerifierQueryParallelConfig {
   long queries_per_thread = 1;
-  long parallel_query_threshold = 2;
+  long min_queries_for_parallelism = 2;
   int max_threads = 8;
 };
 

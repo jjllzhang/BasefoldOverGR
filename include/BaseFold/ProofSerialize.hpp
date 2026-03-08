@@ -97,7 +97,7 @@ inline std::uint64_t ComputeFixedCoeffBytesOrThrow() {
 inline void ValidateExtensionWidthOrThrow(
     const BaseFoldPCSEvalProof &proof,
     const FixedProofEncodingOptions &options) {
-  if (!proof.extension.enabled) {
+  if (!proof.extension.has_extension_payload) {
     if (options.challenge_ext_degree < 0) {
       NTL::LogicError(
           "ValidateExtensionWidthOrThrow: challenge_ext_degree must be >= 0");
@@ -294,10 +294,10 @@ inline void SerializeExtensionProofDataFixed(
   }
 
   const std::uint64_t pi0_count =
-      SizeToU64OrThrow(extension.pi0_full.size(),
-                       "SerializeExtensionProofDataFixed: extension pi0 count overflow");
+      SizeToU64OrThrow(extension.pi0_codeword.size(),
+                       "SerializeExtensionProofDataFixed: extension pi0_codeword count overflow");
   SerializeVecHeader(sink, pi0_count);
-  for (const NTL::ZZ_pEX &value : extension.pi0_full) {
+  for (const NTL::ZZ_pEX &value : extension.pi0_codeword) {
     SerializeExtensionElementFixed(sink, value, ctx);
   }
 
@@ -365,7 +365,7 @@ inline void SerializeBaseFoldPCSEvalProofFixed(
     fixed_proof_serialize_detail::SerializeQuadraticPolyFixed(sink, h, ctx);
   }
 
-  fixed_proof_serialize_detail::SerializeOracleFixed(sink, proof.pi0_full, ctx);
+  fixed_proof_serialize_detail::SerializeOracleFixed(sink, proof.pi0_codeword, ctx);
 
   const std::uint64_t multiproof_count =
       fixed_proof_serialize_detail::SizeToU64OrThrow(
@@ -377,8 +377,8 @@ inline void SerializeBaseFoldPCSEvalProofFixed(
                                                                  ctx);
   }
 
-  sink.WriteU8(proof.extension.enabled ? 1 : 0);
-  if (proof.extension.enabled) {
+  sink.WriteU8(proof.extension.has_extension_payload ? 1 : 0);
+  if (proof.extension.has_extension_payload) {
     fixed_proof_serialize_detail::SerializeExtensionProofDataFixed(
         sink, proof.extension, ctx);
   }

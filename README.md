@@ -179,7 +179,7 @@ Language versions:
     `BaseFoldPCSVerifyEvalWithChallengeConfig`
     - When `use_extension_challenges=false`: behavior matches legacy path.
     - When `use_extension_challenges=true`: Fiat-Shamir challenges are sampled in an outer extension over `ZZ_pE`, extension parameters are transcript-bound, and sumcheck/folding run in the extension; verifiable Merkle commitments are created for extension intermediate layers `pi_0..pi_{d-1}`, while top commitment (`pi_d` Merkle root) remains in the base ring.
-    - Extension-challenge proof payload is multiproof-only and compacted: no duplicated base-side `h_i / pi0_full`; base and extension query payloads use shared Merkle multiproofs; `extension.r_by_level` can be omitted and recovered by transcript re-sampling.
+    - Extension-challenge proof payload is multiproof-only and compacted: no duplicated base-side `h_i / pi0_codeword`; base and extension query payloads use shared Merkle multiproofs; `extension.r_by_level` can be omitted and recovered by transcript re-sampling.
     - `challenge_extension_modulus` now validates algebraic conditions: irreducible in field mode; basic irreducible after mod-`p` reduction in ring mode.
   - Supports `k0=2^kappa` (BaseFold paper, Remark 3): IOPP depth is `d`, polynomial point dimension is `d+kappa`; `kappa=0` degenerates to Protocol 4 in `Basefold_over_GR.pdf` (`k0==1`).
 

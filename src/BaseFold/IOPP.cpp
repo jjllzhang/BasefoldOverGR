@@ -583,12 +583,12 @@ void ProverCommitAll(IOPPOracles &oracles, const Oracle &pi_d,
   if (pi_d.length() != n_d)
     LogicError("ProverCommitAll: pi_d has wrong length");
 
-  oracles.pi.resize(static_cast<std::size_t>(params.d + 1));
-  oracles.pi[static_cast<std::size_t>(params.d)] = pi_d;
+  oracles.oracles_by_level.resize(static_cast<std::size_t>(params.d + 1));
+  oracles.oracles_by_level[static_cast<std::size_t>(params.d)] = pi_d;
 
   for (long i = params.d; i-- > 0;) {
-    ProverCommitRound(oracles.pi[static_cast<std::size_t>(i)],
-                      oracles.pi[static_cast<std::size_t>(i + 1)],
+    ProverCommitRound(oracles.oracles_by_level[static_cast<std::size_t>(i)],
+                      oracles.oracles_by_level[static_cast<std::size_t>(i + 1)],
                       challenges.alphas[static_cast<std::size_t>(i)], i,
                       params);
   }
@@ -630,11 +630,11 @@ bool VerifyQueryFromOpenings(const IOPPQueryPlan &plan,
     return false;
   if (static_cast<long>(plan.mu_by_level.size()) != params.d)
     return false;
-  if (static_cast<long>(openings.left.size()) != params.d)
+  if (static_cast<long>(openings.upper_left_by_level.size()) != params.d)
     return false;
-  if (static_cast<long>(openings.right.size()) != params.d)
+  if (static_cast<long>(openings.upper_right_by_level.size()) != params.d)
     return false;
-  if (static_cast<long>(openings.folded.size()) != params.d)
+  if (static_cast<long>(openings.folded_by_level.size()) != params.d)
     return false;
 
   for (long i = params.d; i-- > 0;) {
@@ -645,15 +645,17 @@ bool VerifyQueryFromOpenings(const IOPPQueryPlan &plan,
 
     FieldElement x1, x2;
     FoldingPoints(x1, x2, params, i, mu);
-    const FieldElement &y1 = openings.left[static_cast<std::size_t>(i)];
-    const FieldElement &y2 = openings.right[static_cast<std::size_t>(i)];
+    const FieldElement &y1 =
+        openings.upper_left_by_level[static_cast<std::size_t>(i)];
+    const FieldElement &y2 =
+        openings.upper_right_by_level[static_cast<std::size_t>(i)];
     const FieldElement expected = EvalLineAt(
         challenges.alphas[static_cast<std::size_t>(i)], x1, y1, x2, y2);
-    if (expected != openings.folded[static_cast<std::size_t>(i)])
+    if (expected != openings.folded_by_level[static_cast<std::size_t>(i)])
       return false;
   }
 
-  return IsCodewordC0(openings.pi0_full, params);
+  return IsCodewordC0(openings.pi0_codeword, params);
 }
 
 bool VerifyQueryFromOracles(const IOPPQueryPlan &plan,
@@ -665,11 +667,11 @@ bool VerifyQueryFromOracles(const IOPPQueryPlan &plan,
     return false;
   if (static_cast<long>(plan.mu_by_level.size()) != params.d)
     return false;
-  if (static_cast<long>(oracles.pi.size()) != params.d + 1)
+  if (static_cast<long>(oracles.oracles_by_level.size()) != params.d + 1)
     return false;
 
   for (long i = 0; i <= params.d; ++i) {
-    if (oracles.pi[static_cast<std::size_t>(i)].length() !=
+    if (oracles.oracles_by_level[static_cast<std::size_t>(i)].length() !=
         CodewordLengthAtLevel(params, i)) {
       return false;
     }
@@ -683,16 +685,17 @@ bool VerifyQueryFromOracles(const IOPPQueryPlan &plan,
 
     FieldElement x1, x2;
     FoldingPoints(x1, x2, params, i, mu);
-    const FieldElement &y1 = oracles.pi[static_cast<std::size_t>(i + 1)][mu];
+    const FieldElement &y1 =
+        oracles.oracles_by_level[static_cast<std::size_t>(i + 1)][mu];
     const FieldElement &y2 =
-        oracles.pi[static_cast<std::size_t>(i + 1)][mu + n_i];
+        oracles.oracles_by_level[static_cast<std::size_t>(i + 1)][mu + n_i];
     const FieldElement expected = EvalLineAt(
         challenges.alphas[static_cast<std::size_t>(i)], x1, y1, x2, y2);
-    if (expected != oracles.pi[static_cast<std::size_t>(i)][mu])
+    if (expected != oracles.oracles_by_level[static_cast<std::size_t>(i)][mu])
       return false;
   }
 
-  return IsCodewordC0(oracles.pi[0], params);
+  return IsCodewordC0(oracles.oracles_by_level[0], params);
 }
 
 MerkleRoot MerkleCommitOracle(const Oracle &oracle) {

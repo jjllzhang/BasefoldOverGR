@@ -161,20 +161,20 @@ void TestIOPP_CommitAndQuery() {
   CHECK(basefold::VerifyQueryFromOracles(plan, challenges, oracles, params));
 
   basefold::IOPPQueryOpenings openings;
-  openings.left.resize(static_cast<std::size_t>(params.d));
-  openings.right.resize(static_cast<std::size_t>(params.d));
-  openings.folded.resize(static_cast<std::size_t>(params.d));
+  openings.upper_left_by_level.resize(static_cast<std::size_t>(params.d));
+  openings.upper_right_by_level.resize(static_cast<std::size_t>(params.d));
+  openings.folded_by_level.resize(static_cast<std::size_t>(params.d));
   for (long i = 0; i < params.d; ++i) {
     const long mu = plan.mu_by_level[static_cast<std::size_t>(i)];
     const long ni = basefold::CodewordLengthAtLevel(params, i);
-    openings.left[static_cast<std::size_t>(i)] =
-        oracles.pi[static_cast<std::size_t>(i + 1)][mu];
-    openings.right[static_cast<std::size_t>(i)] =
-        oracles.pi[static_cast<std::size_t>(i + 1)][mu + ni];
-    openings.folded[static_cast<std::size_t>(i)] =
-        oracles.pi[static_cast<std::size_t>(i)][mu];
+    openings.upper_left_by_level[static_cast<std::size_t>(i)] =
+        oracles.oracles_by_level[static_cast<std::size_t>(i + 1)][mu];
+    openings.upper_right_by_level[static_cast<std::size_t>(i)] =
+        oracles.oracles_by_level[static_cast<std::size_t>(i + 1)][mu + ni];
+    openings.folded_by_level[static_cast<std::size_t>(i)] =
+        oracles.oracles_by_level[static_cast<std::size_t>(i)][mu];
   }
-  openings.pi0_full = oracles.pi[0];
+  openings.pi0_codeword = oracles.oracles_by_level[0];
 
   CHECK(basefold::VerifyQueryFromOpenings(plan, challenges, openings, params));
 }
@@ -222,20 +222,20 @@ void TestIOPP_GR42_CommitAndQuery() {
   CHECK(basefold::VerifyQueryFromOracles(plan, challenges, oracles, params));
 
   basefold::IOPPQueryOpenings openings;
-  openings.left.resize(static_cast<std::size_t>(params.d));
-  openings.right.resize(static_cast<std::size_t>(params.d));
-  openings.folded.resize(static_cast<std::size_t>(params.d));
+  openings.upper_left_by_level.resize(static_cast<std::size_t>(params.d));
+  openings.upper_right_by_level.resize(static_cast<std::size_t>(params.d));
+  openings.folded_by_level.resize(static_cast<std::size_t>(params.d));
   for (long i = 0; i < params.d; ++i) {
     const long mu = plan.mu_by_level[static_cast<std::size_t>(i)];
     const long ni = basefold::CodewordLengthAtLevel(params, i);
-    openings.left[static_cast<std::size_t>(i)] =
-        oracles.pi[static_cast<std::size_t>(i + 1)][mu];
-    openings.right[static_cast<std::size_t>(i)] =
-        oracles.pi[static_cast<std::size_t>(i + 1)][mu + ni];
-    openings.folded[static_cast<std::size_t>(i)] =
-        oracles.pi[static_cast<std::size_t>(i)][mu];
+    openings.upper_left_by_level[static_cast<std::size_t>(i)] =
+        oracles.oracles_by_level[static_cast<std::size_t>(i + 1)][mu];
+    openings.upper_right_by_level[static_cast<std::size_t>(i)] =
+        oracles.oracles_by_level[static_cast<std::size_t>(i + 1)][mu + ni];
+    openings.folded_by_level[static_cast<std::size_t>(i)] =
+        oracles.oracles_by_level[static_cast<std::size_t>(i)][mu];
   }
-  openings.pi0_full = oracles.pi[0];
+  openings.pi0_codeword = oracles.oracles_by_level[0];
   CHECK(basefold::VerifyQueryFromOpenings(plan, challenges, openings, params));
 }
 
@@ -333,11 +333,11 @@ void TestIOPP_DecodeC0() {
   basefold::ProverCommitAll(oracles, pi_d, challenges, params);
 
   vec_ZZ_pE msg0;
-  CHECK(basefold::DecodeC0(msg0, oracles.pi[0], params));
+  CHECK(basefold::DecodeC0(msg0, oracles.oracles_by_level[0], params));
   vec_ZZ_pE rec;
   mul(rec, msg0, params.G0);
-  CHECK_EQ(rec, oracles.pi[0]);
-  CHECK(basefold::IsCodewordC0(oracles.pi[0], params));
+  CHECK_EQ(rec, oracles.oracles_by_level[0]);
+  CHECK(basefold::IsCodewordC0(oracles.oracles_by_level[0], params));
 }
 
 void TestIOPP_GR42_DecodeC0() {
@@ -379,11 +379,11 @@ void TestIOPP_GR42_DecodeC0() {
   basefold::ProverCommitAll(oracles, pi_d, challenges, params);
 
   vec_ZZ_pE msg0;
-  CHECK(basefold::DecodeC0(msg0, oracles.pi[0], params));
+  CHECK(basefold::DecodeC0(msg0, oracles.oracles_by_level[0], params));
   vec_ZZ_pE rec;
   mul(rec, msg0, params.G0);
-  CHECK_EQ(rec, oracles.pi[0]);
-  CHECK(basefold::IsCodewordC0(oracles.pi[0], params));
+  CHECK_EQ(rec, oracles.oracles_by_level[0]);
+  CHECK(basefold::IsCodewordC0(oracles.oracles_by_level[0], params));
 }
 
 }  // namespace
