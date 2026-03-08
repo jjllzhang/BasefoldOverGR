@@ -280,7 +280,7 @@ Then:
 
 ### One-Command Reproduction (`c=4`, `lambda=128`)
 
-The repo includes sweep script `scripts/run_release_c4_lambda128.sh`. By default it runs 12 contexts over `d=3..29` and writes outputs to `results/release_c4_lambda128_sweep_<RUN_ID>/` (`RUN_ID` defaults to `<timestamp>_pid<pid>`).
+The repo includes sweep script `scripts/run_release_c4_lambda128.sh`. By default it runs 14 contexts over `d=3..29` and writes outputs to `results/release_c4_lambda128_sweep_<RUN_ID>/` (`RUN_ID` defaults to `<timestamp>_pid<pid>`).
 
 ```bash
 scripts/run_release_c4_lambda128.sh
@@ -305,6 +305,8 @@ context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_m
 
 Common columns:
 
+- `poly_dim`: message/truth-table size `k_d = k0*2^d` (so under the default
+  `k0=1`, this is just `2^d`).
 - `gamma`: slack parameter selected by `calc_iopp_params --auto-gamma`.
 - `queries`: recommended query count (`l_min_for_PCS`).
 - `proof_size_kb/proof_size_bytes`: exact fixed-width proof payload size

@@ -36,6 +36,12 @@ poly_degree_from_coeff_list() {
     }' <<< "$coeffs"
 }
 
+is_power_of_two() {
+  local value="$1"
+  [[ "$value" =~ ^[1-9][0-9]*$ ]] || return 1
+  (( (value & (value - 1)) == 0 ))
+}
+
 # Target profile: rate = 1/4 (c=4), security = 128 bits.
 C="${C:-4}"
 K0="${K0:-1}"
@@ -157,6 +163,14 @@ if [[ "$CONTINUE_ON_ERROR" != "0" && "$CONTINUE_ON_ERROR" != "1" ]]; then
 fi
 if ! [[ "$BENCH_THREADS" =~ ^[0-9]+$ ]]; then
   echo "BENCH_THREADS must be a non-negative integer" >&2
+  exit 2
+fi
+if ! [[ "$K0" =~ ^[1-9][0-9]*$ ]]; then
+  echo "K0 must be a positive integer" >&2
+  exit 2
+fi
+if ! is_power_of_two "$K0"; then
+  echo "K0 must be a power of two" >&2
   exit 2
 fi
 if [[ "$CPU_PIN_MODE" != "none" && "$CPU_PIN_MODE" != "manual" && "$CPU_PIN_MODE" != "slot" ]]; then
@@ -477,7 +491,7 @@ run_one_context_d() {
   shift 4
   local -a bench_args=("$@")
 
-  local poly_dim=$((1 << d))
+  local poly_dim=$((K0 * (1 << d)))
   local status="ok"
   local error=""
   local gamma="NA"
@@ -583,7 +597,7 @@ run_one_context_d() {
   local commit_log="$OUT_DIR/logs/${prefix}_commit.log"
   local eval_log="$OUT_DIR/logs/${prefix}_eval.log"
 
-  echo "  - ${context_label}: d=${d} (poly_dim=2^${d})"
+  echo "  - ${context_label}: d=${d} (poly_dim=${poly_dim} = ${K0}*2^${d})"
 
   if ! run_and_log "$calc_log" \
       "$BUILD_DIR/calc_iopp_params" \
@@ -793,7 +807,7 @@ echo "[4/4] Build markdown summary"
   echo "- build_dir: $BUILD_DIR"
   echo "- isolate_build_dir: $ISOLATE_BUILD_DIR"
   echo "- output_dir: $OUT_DIR"
-  echo "- d_range: [$D_MIN, $D_MAX] (poly_dim = 2^d)"
+  echo "- d_range: [$D_MIN, $D_MAX] (poly_dim = k_d = ${K0}*2^d)"
   echo "- contexts: $CONTEXTS"
   echo "- bench_threads: $BENCH_THREADS (set 0 to use runtime default)"
   echo "- cpu_pin_mode: $CPU_PIN_MODE"

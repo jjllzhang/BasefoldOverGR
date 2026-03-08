@@ -267,7 +267,7 @@ cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 
 ### 一键复现实验（`c=4`, `lambda=128`）
 
-仓库内置 sweep 脚本 `scripts/run_release_c4_lambda128.sh`，默认会在 12 组上下文上遍历 `d=3..29`，并输出到 `results/release_c4_lambda128_sweep_<RUN_ID>/`（`RUN_ID` 默认形如 `<timestamp>_pid<pid>`）。
+仓库内置 sweep 脚本 `scripts/run_release_c4_lambda128.sh`，默认会在 14 组上下文上遍历 `d=3..29`，并输出到 `results/release_c4_lambda128_sweep_<RUN_ID>/`（`RUN_ID` 默认形如 `<timestamp>_pid<pid>`）。
 
 ```bash
 scripts/run_release_c4_lambda128.sh
@@ -292,6 +292,7 @@ context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_m
 
 其中常用列含义：
 
+- `poly_dim`：消息/真值表长度 `k_d = k0*2^d`（默认 `k0=1` 时就是 `2^d`）。
 - `gamma`：`calc_iopp_params --auto-gamma` 选出的 slack 参数。
 - `queries`：推荐查询次数（即 `l_min_for_PCS`）。
 - `proof_size_kb/proof_size_bytes`：来自 `bench_pcs_eval` 的精确 payload 大小

@@ -7,7 +7,9 @@
 - 码率：`1/4`，即 `c=4`
 - 安全性：`lambda=128`
 - 多项式维度：`2^3` 到 `2^29`
-  - 在 bench 参数中对应 `d=3..29`（`k0=1` 时，`poly_dim = k_d = 2^d`）
+  - 在 bench 参数中对应 `d=3..29`
+  - `results.csv` / `RESULTS.md` 里的 `poly_dim` 记录 `k_d = k0*2^d`
+    （默认 `k0=1` 时，`poly_dim = 2^d`）
 - 构建：`Release`
 - 指标：
   - `commit time`：`bench_pcs_commit` 的 `commit mean`
@@ -18,7 +20,7 @@
     indices/challenges，如 `r_by_level`；输出 `proof_size_bytes` /
     `proof_size_kb`）
 
-## 2) 实验上下文（默认 `all` 共 12 组）
+## 2) 实验上下文（默认 `all` 共 14 组）
 
 - `Field-255`
   - `--mode field`
@@ -82,6 +84,22 @@
   - 使用扩域挑战（`--use-extension-challenges` + 二次 Artin-Schreier 多项式 `U^2 + U + beta`，`Tr(beta)=1`）
   - `calc_iopp_params` 使用 `q = 2^(128*2) = 2^256`
 
+- `F_3^40`（`field-f3p40-ext`）
+  - `--mode field`
+  - `--field-mod = 3`
+  - `--field-F = F3_40_F`（脚本内置 40 次模 3 不可约多项式）
+  - `--field-zeta = 0,1`
+  - 使用三次扩域挑战（`--use-extension-challenges` + `E(U)=zeta+U+U^3`）
+  - `calc_iopp_params` 使用 `q = 3^(40*3)`
+
+- `F_3^81`（`field-f3p81-ext`）
+  - `--mode field`
+  - `--field-mod = 3`
+  - `--field-F = F3_81_F`（脚本内置 81 次模 3 不可约多项式）
+  - `--field-zeta = 0,1`
+  - 使用二次扩域挑战（`--use-extension-challenges` + `E(U)=zeta+U+U^2`）
+  - `calc_iopp_params` 使用 `q = 3^(81*2)`
+
 - `GR(2^16,64)`（`ring-gr-2p16-64-ext`）
 - `GR(2^16,128)`（`ring-gr-2p16-128-ext`）
 - `GR(2^2,64)`（`ring-gr-2p2-64-ext`）
@@ -93,13 +111,13 @@
     - `ring-gr-2p16-64-ext` / `ring-gr-2p2-64-ext`：`q = 2^(64*3) = 2^192`
     - `ring-gr-2p16-128-ext` / `ring-gr-2p2-128-ext`：`q = 2^(128*2) = 2^256`
 
-## 3) queries（每个 d、每个上下文单独推导）
+## 3) queries（每个 d、每个上下文在当前 `K0` 下单独推导）
 
 脚本对每个 `(context, d)` 都会调用：
 
 ```bash
 ./build-release/calc_iopp_params \
-  --d <d> --c 4 --k0 1 --lambda 128 \
+  --d <d> --c 4 --k0 <K0> --lambda 128 \
   --p <context-specific-p> --r <context-specific-r> --m <context-specific-m> \
   --auto-gamma
 ```
@@ -125,8 +143,10 @@ scripts/run_release_c4_lambda128.sh
 - 常用环境变量：
   - `RUN_ID`：本次运行 ID（默认 `<timestamp>_pid<shell-pid>`），用于区分输出目录和（可选）构建目录
   - `D_MIN` / `D_MAX`：维度区间（默认 `3..29`）
+  - `K0`：基础消息维度 `k0`（默认 `1`，要求为 2 的幂）
+    - 输出中的 `poly_dim = k_d = K0*2^d`
   - `CONTEXTS`：选择上下文，默认 `all`
-    - 可选值：`field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162,field-prime64-ext,field-f2p64-ext,field-prime128-ext,field-f2p128-ext,ring-gr-2p16-64-ext,ring-gr-2p16-128-ext,ring-gr-2p2-64-ext,ring-gr-2p2-128-ext`
+    - 可选值：`field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162,field-prime64-ext,field-f2p64-ext,field-prime128-ext,field-f2p128-ext,field-f3p40-ext,field-f3p81-ext,ring-gr-2p16-64-ext,ring-gr-2p16-128-ext,ring-gr-2p2-64-ext,ring-gr-2p2-128-ext`
     - 示例：`CONTEXTS=field-prime128-ext` 或 `CONTEXTS=field-f2p128-ext,ring-gr-2p16-64-ext`
     - 兼容别名：`field-prime64 -> field-prime64-ext`，`field-f2p64 -> field-f2p64-ext`，`field-prime128 -> field-prime128-ext`，`field-f2p128 -> field-f2p128-ext`
   - `BENCH_THREADS`：单个 bench 进程内部线程数（默认 `8`）
@@ -170,7 +190,8 @@ CONTEXTS=ring-gr-2p16-128-ext scripts/run_release_c4_lambda128.sh
 脚本输出目录：`results/release_c4_lambda128_sweep_<RUN_ID>/`
 
 - 明细 csv：`results.csv`
-  - 每行一个 `(context, d)` 点，含 `gamma/queries/4项指标/status/error`
+  - 每行一个 `(context, d)` 点，含 `poly_dim/gamma/queries/4项指标/status/error`
+  - 其中 `poly_dim = k_d = k0*2^d`
   - 其中 `proof_size_bytes` / `proof_size_kb` 来自 `bench_pcs_eval` 对真实 proof
     的 fixed-width payload counting 结果（省略 verifier 可重建的
     indices/challenges）
