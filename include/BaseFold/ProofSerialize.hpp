@@ -188,60 +188,24 @@ inline void SerializeOracleFixed(CountingSink &sink, const Oracle &oracle,
   }
 }
 
-inline void SerializeMerkleAuthPathFixed(CountingSink &sink,
-                                         const MerkleAuthPath &auth_path,
-                                         const FixedProofEncodingContext &ctx) {
-  const std::uint64_t count = SizeToU64OrThrow(
-      auth_path.sibling_hashes.size(),
-      "SerializeMerkleAuthPathFixed: sibling hash count overflow");
-  SerializeVecHeader(sink, count);
-  for (const Digest &digest : auth_path.sibling_hashes) {
-    (void)digest;
-    SerializeDigestFixed(sink, ctx);
-  }
-}
-
-inline void SerializeMerkleOpeningFixed(CountingSink &sink,
-                                        const MerkleOpening &opening,
-                                        const FixedProofEncodingContext &ctx) {
-  sink.WriteU64(LongToU64OrThrow(
-      opening.index, "SerializeMerkleOpeningFixed: index must be >= 0"));
-  SerializeFieldElementFixed(sink, opening.value, ctx);
-  SerializeMerkleAuthPathFixed(sink, opening.auth_path, ctx);
-}
-
-inline void SerializeExtensionMerkleOpeningFixed(
-    CountingSink &sink, const ExtensionMerkleOpening &opening,
-    const FixedProofEncodingContext &ctx) {
-  sink.WriteU64(LongToU64OrThrow(
-      opening.index,
-      "SerializeExtensionMerkleOpeningFixed: index must be >= 0"));
-  SerializeExtensionElementFixed(sink, opening.value, ctx);
-  SerializeMerkleAuthPathFixed(sink, opening.auth_path, ctx);
-}
-
 inline void SerializeMerkleMultiproofFixed(CountingSink &sink,
                                            const MerkleMultiproof &proof,
                                            const FixedProofEncodingContext &ctx) {
-  const std::uint64_t query_count =
-      SizeToU64OrThrow(proof.queried_indices.size(),
-                       "SerializeMerkleMultiproofFixed: queried index count overflow");
-  SerializeVecHeader(sink, query_count);
-  for (long index : proof.queried_indices) {
-    sink.WriteU64(LongToU64OrThrow(
-        index, "SerializeMerkleMultiproofFixed: queried index must be >= 0"));
-  }
-
   if (proof.values.length() < 0) {
     NTL::LogicError(
         "SerializeMerkleMultiproofFixed: values length must be >= 0");
   }
-  const std::uint64_t value_count = static_cast<std::uint64_t>(proof.values.length());
-  if (value_count != query_count) {
+  const std::uint64_t value_count =
+      static_cast<std::uint64_t>(proof.values.length());
+  if (!proof.queried_indices.empty() &&
+      value_count != SizeToU64OrThrow(
+                         proof.queried_indices.size(),
+                         "SerializeMerkleMultiproofFixed: queried index count overflow")) {
     NTL::LogicError(
         "SerializeMerkleMultiproofFixed: values length must match queried "
         "indices count");
   }
+  SerializeVecHeader(sink, value_count);
   for (long i = 0; i < proof.values.length(); ++i) {
     SerializeFieldElementFixed(sink, proof.values[i], ctx);
   }
@@ -256,83 +220,21 @@ inline void SerializeMerkleMultiproofFixed(CountingSink &sink,
   }
 }
 
-inline void SerializeLegacyQueryProofFixed(
-    CountingSink &sink, const BaseFoldPCSQueryProof &query_proof,
-    const FixedProofEncodingContext &ctx) {
-  const std::uint64_t left_count =
-      SizeToU64OrThrow(query_proof.left.size(),
-                       "SerializeLegacyQueryProofFixed: left count overflow");
-  SerializeVecHeader(sink, left_count);
-  for (const MerkleOpening &opening : query_proof.left) {
-    SerializeMerkleOpeningFixed(sink, opening, ctx);
-  }
-
-  const std::uint64_t right_count =
-      SizeToU64OrThrow(query_proof.right.size(),
-                       "SerializeLegacyQueryProofFixed: right count overflow");
-  SerializeVecHeader(sink, right_count);
-  for (const MerkleOpening &opening : query_proof.right) {
-    SerializeMerkleOpeningFixed(sink, opening, ctx);
-  }
-
-  const std::uint64_t folded_count =
-      SizeToU64OrThrow(query_proof.folded.size(),
-                       "SerializeLegacyQueryProofFixed: folded count overflow");
-  SerializeVecHeader(sink, folded_count);
-  for (const MerkleOpening &opening : query_proof.folded) {
-    SerializeMerkleOpeningFixed(sink, opening, ctx);
-  }
-}
-
-inline void SerializeExtensionQueryProofFixed(
-    CountingSink &sink, const BaseFoldPCSQueryProofExtension &query_proof,
-    const FixedProofEncodingContext &ctx) {
-  const std::uint64_t left_count = SizeToU64OrThrow(
-      query_proof.left.size(),
-      "SerializeExtensionQueryProofFixed: left count overflow");
-  SerializeVecHeader(sink, left_count);
-  for (const ExtensionMerkleOpening &opening : query_proof.left) {
-    SerializeExtensionMerkleOpeningFixed(sink, opening, ctx);
-  }
-
-  const std::uint64_t right_count = SizeToU64OrThrow(
-      query_proof.right.size(),
-      "SerializeExtensionQueryProofFixed: right count overflow");
-  SerializeVecHeader(sink, right_count);
-  for (const ExtensionMerkleOpening &opening : query_proof.right) {
-    SerializeExtensionMerkleOpeningFixed(sink, opening, ctx);
-  }
-
-  const std::uint64_t folded_count = SizeToU64OrThrow(
-      query_proof.folded.size(),
-      "SerializeExtensionQueryProofFixed: folded count overflow");
-  SerializeVecHeader(sink, folded_count);
-  for (const ExtensionMerkleOpening &opening : query_proof.folded) {
-    SerializeExtensionMerkleOpeningFixed(sink, opening, ctx);
-  }
-}
-
 inline void SerializeExtensionMerkleMultiproofFixed(
     CountingSink &sink, const ExtensionMerkleMultiproof &proof,
     const FixedProofEncodingContext &ctx) {
-  const std::uint64_t query_count = SizeToU64OrThrow(
-      proof.queried_indices.size(),
-      "SerializeExtensionMerkleMultiproofFixed: queried index count overflow");
-  SerializeVecHeader(sink, query_count);
-  for (long index : proof.queried_indices) {
-    sink.WriteU64(LongToU64OrThrow(
-        index,
-        "SerializeExtensionMerkleMultiproofFixed: queried index must be >= 0"));
-  }
-
   const std::uint64_t value_count = SizeToU64OrThrow(
       proof.values.size(),
       "SerializeExtensionMerkleMultiproofFixed: value count overflow");
-  if (value_count != query_count) {
+  if (!proof.queried_indices.empty() &&
+      value_count != SizeToU64OrThrow(
+                         proof.queried_indices.size(),
+                         "SerializeExtensionMerkleMultiproofFixed: queried index count overflow")) {
     NTL::LogicError(
         "SerializeExtensionMerkleMultiproofFixed: values count must match "
         "queried indices count");
   }
+  SerializeVecHeader(sink, value_count);
   for (const NTL::ZZ_pEX &value : proof.values) {
     SerializeExtensionElementFixed(sink, value, ctx);
   }
@@ -350,12 +252,6 @@ inline void SerializeExtensionMerkleMultiproofFixed(
 inline bool HasMerkleMultiproofPayload(const MerkleMultiproof &proof) {
   return !proof.queried_indices.empty() || proof.values.length() != 0 ||
          !proof.sibling_hashes.empty();
-}
-
-inline bool UseExtensionMultiproofLayout(
-    const BaseFoldPCSExtensionProofData &extension) {
-  return !extension.query_multiproofs.empty() ||
-         HasMerkleMultiproofPayload(extension.base_top_query_multiproof);
 }
 
 inline void SerializeCommitmentsFixed(CountingSink &sink,
@@ -389,14 +285,6 @@ inline void SerializeExtensionProofDataFixed(
     SerializeExtensionQuadraticPolyFixed(sink, h, ctx);
   }
 
-  const std::uint64_t r_count =
-      SizeToU64OrThrow(extension.r_by_level.size(),
-                       "SerializeExtensionProofDataFixed: extension r count overflow");
-  SerializeVecHeader(sink, r_count);
-  for (const NTL::ZZ_pEX &r : extension.r_by_level) {
-    SerializeExtensionElementFixed(sink, r, ctx);
-  }
-
   const std::uint64_t msg0_count =
       SizeToU64OrThrow(extension.msg0_coeffs.size(),
                        "SerializeExtensionProofDataFixed: extension msg0 count overflow");
@@ -413,27 +301,16 @@ inline void SerializeExtensionProofDataFixed(
     SerializeExtensionElementFixed(sink, value, ctx);
   }
 
-  if (UseExtensionMultiproofLayout(extension)) {
-    SerializeMerkleMultiproofFixed(sink, extension.base_top_query_multiproof,
-                                   ctx);
+  SerializeMerkleMultiproofFixed(sink, extension.base_top_query_multiproof,
+                                 ctx);
 
-    const std::uint64_t multiproof_count = SizeToU64OrThrow(
-        extension.query_multiproofs.size(),
-        "SerializeExtensionProofDataFixed: extension multiproof count overflow");
-    SerializeVecHeader(sink, multiproof_count);
-    for (const ExtensionMerkleMultiproof &multiproof :
-         extension.query_multiproofs) {
-      SerializeExtensionMerkleMultiproofFixed(sink, multiproof, ctx);
-    }
-  } else {
-    const std::uint64_t query_count =
-        SizeToU64OrThrow(extension.query_proofs.size(),
-                         "SerializeExtensionProofDataFixed: extension query count overflow");
-    SerializeVecHeader(sink, query_count);
-    for (const BaseFoldPCSQueryProofExtension &query :
-         extension.query_proofs) {
-      SerializeExtensionQueryProofFixed(sink, query, ctx);
-    }
+  const std::uint64_t multiproof_count = SizeToU64OrThrow(
+      extension.query_multiproofs.size(),
+      "SerializeExtensionProofDataFixed: extension multiproof count overflow");
+  SerializeVecHeader(sink, multiproof_count);
+  for (const ExtensionMerkleMultiproof &multiproof :
+       extension.query_multiproofs) {
+    SerializeExtensionMerkleMultiproofFixed(sink, multiproof, ctx);
   }
 }
 
@@ -497,15 +374,6 @@ inline void SerializeBaseFoldPCSEvalProofFixed(
   fixed_proof_serialize_detail::SerializeVecHeader(sink, multiproof_count);
   for (const MerkleMultiproof &multiproof : proof.query_multiproofs) {
     fixed_proof_serialize_detail::SerializeMerkleMultiproofFixed(sink, multiproof,
-                                                                 ctx);
-  }
-
-  const std::uint64_t query_count = fixed_proof_serialize_detail::SizeToU64OrThrow(
-      proof.query_proofs.size(),
-      "SerializeBaseFoldPCSEvalProofFixed: query_proofs count overflow");
-  fixed_proof_serialize_detail::SerializeVecHeader(sink, query_count);
-  for (const BaseFoldPCSQueryProof &query : proof.query_proofs) {
-    fixed_proof_serialize_detail::SerializeLegacyQueryProofFixed(sink, query,
                                                                  ctx);
   }
 

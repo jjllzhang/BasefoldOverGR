@@ -118,22 +118,6 @@ void SortAndUniqueIndices(std::vector<long> &indices) {
 using LocalMultiproofPlan = multiproof_planner::Plan;
 using LocalMultiproofPlanLevel = multiproof_planner::PlanLevel;
 
-std::size_t FindCachedOpeningPosition(const std::vector<long> &indices,
-                                      long index, const char *func_name) {
-  const auto it = std::lower_bound(indices.begin(), indices.end(), index);
-  if (it == indices.end() || *it != index) {
-    const std::string msg =
-        std::string(func_name) + ": missing cached opening index";
-    LogicError(msg.c_str());
-  }
-  return static_cast<std::size_t>(it - indices.begin());
-}
-
-bool SameMerkleOpening(const MerkleOpening &lhs, const MerkleOpening &rhs) {
-  return lhs.index == rhs.index && lhs.value == rhs.value &&
-         lhs.auth_path.sibling_hashes == rhs.auth_path.sibling_hashes;
-}
-
 std::vector<std::vector<long>> CollectBaseQueryIndicesByTree(
     const std::vector<IOPPQueryPlan> &query_plans,
     const FoldableCodeParams &params) {
@@ -159,20 +143,19 @@ bool HasMerkleMultiproofPayload(const MerkleMultiproof &proof) {
          !proof.sibling_hashes.empty();
 }
 
-bool ExtensionMerkleMultiproofHasPayload(
-    const ExtensionMerkleMultiproof &proof) {
-  return !proof.queried_indices.empty() || !proof.values.empty() ||
-         !proof.sibling_hashes.empty();
-}
-
-bool HasExtensionQueryMultiproofPayload(
-    const BaseFoldPCSExtensionProofData &extension) {
-  for (const ExtensionMerkleMultiproof &proof : extension.query_multiproofs) {
-    if (ExtensionMerkleMultiproofHasPayload(proof)) {
-      return true;
-    }
+void ValidateCommittedTopOracleArtifactsOrThrow(
+    const BaseFoldPCSCommitArtifacts &commit_artifacts, long expected_length,
+    const char *func_name) {
+  if (commit_artifacts.pi_d.length() != expected_length) {
+    LogicError((std::string(func_name) +
+                ": commit_artifacts.pi_d has wrong length")
+                   .c_str());
   }
-  return !extension.query_multiproofs.empty();
+  if (commit_artifacts.merkle_d.Root() != commit_artifacts.root_d) {
+    LogicError((std::string(func_name) +
+                ": commit_artifacts root mismatch")
+                   .c_str());
+  }
 }
 
 template <typename Fn>
@@ -1625,22 +1608,6 @@ Digest HashExtensionRootWithCount(long leaf_count, const Digest &raw_root) {
                       "HashExtensionRootWithCount");
 }
 
-std::size_t ExpectedExtensionMerkleHeight(long leaf_count) {
-  if (leaf_count <= 0) {
-    return 0;
-  }
-  std::size_t height = 0;
-  long n = leaf_count;
-  while (n > 1) {
-    if ((n & 1L) == 1L) {
-      ++n;
-    }
-    n >>= 1;
-    ++height;
-  }
-  return height;
-}
-
 class ExtensionMerkleTree {
 public:
   ExtensionMerkleTree() = default;
@@ -1702,38 +1669,6 @@ public:
     return HashExtensionRootWithCount(leaf_count_, raw_root_);
   }
 
-  ExtensionMerkleOpening Open(const std::vector<ZZ_pEX> &oracle,
-                              long index) const {
-    Profile *prof = ActiveProfile();
-    ScopedTimer timer(prof ? &prof->ext_merkle_tree_open_ns : nullptr,
-                      prof ? &prof->ext_merkle_tree_open_calls : nullptr);
-
-    if (leaf_count_ <= 0) {
-      LogicError("ExtensionMerkleTree::Open: empty tree");
-    }
-    if (static_cast<long>(oracle.size()) != leaf_count_) {
-      LogicError("ExtensionMerkleTree::Open: oracle length mismatch");
-    }
-    if (index < 0 || index >= leaf_count_) {
-      LogicError("ExtensionMerkleTree::Open: index out of range");
-    }
-
-    ExtensionMerkleOpening opening;
-    opening.index = index;
-    opening.value = oracle[static_cast<std::size_t>(index)];
-
-    long cur = index;
-    const std::size_t height = levels_.size();
-    for (std::size_t h = 0; h + 1U < height; ++h) {
-      const std::vector<Digest> &level = levels_[h];
-      const long sibling_index = (cur & 1L) ? (cur - 1L) : (cur + 1L);
-      opening.auth_path.sibling_hashes.push_back(
-          level[static_cast<std::size_t>(sibling_index)]);
-      cur >>= 1;
-    }
-    return opening;
-  }
-
   ExtensionMerkleMultiproof OpenMany(
       const std::vector<ZZ_pEX> &oracle,
       const std::vector<long> &queried_indices) const {
@@ -1771,38 +1706,6 @@ private:
   Digest raw_root_{};
   std::vector<std::vector<Digest>> levels_;
 };
-
-bool VerifyExtensionMerkleOpening(const MerkleRoot &root, long leaf_count,
-                                  const ExtensionMerkleOpening &opening,
-                                  const ZZ_pEX &extension_modulus) {
-  Profile *prof = ActiveProfile();
-  ScopedTimer timer(prof ? &prof->ext_merkle_verify_opening_ns : nullptr,
-                    prof ? &prof->ext_merkle_verify_opening_calls : nullptr);
-
-  if (leaf_count <= 0) {
-    return false;
-  }
-  if (opening.index < 0 || opening.index >= leaf_count) {
-    return false;
-  }
-  if (opening.auth_path.sibling_hashes.size() !=
-      ExpectedExtensionMerkleHeight(leaf_count)) {
-    return false;
-  }
-
-  Digest cur =
-      HashExtensionLeaf(opening.index, opening.value, extension_modulus);
-  long idx = opening.index;
-  for (const Digest &sib : opening.auth_path.sibling_hashes) {
-    if (idx & 1L) {
-      cur = HashExtensionNode(sib, cur);
-    } else {
-      cur = HashExtensionNode(cur, sib);
-    }
-    idx >>= 1;
-  }
-  return HashExtensionRootWithCount(leaf_count, cur) == root;
-}
 
 bool VerifyExtensionMerkleMultiproof(const MerkleRoot &root, long leaf_count,
                                      const ExtensionMerkleMultiproof &proof,
@@ -1853,43 +1756,134 @@ bool VerifyExtensionMerkleMultiproof(const MerkleRoot &root, long leaf_count,
   return HashExtensionRootWithCount(leaf_count, raw_root) == root;
 }
 
-BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesUnchecked(
+BaseFoldPCSEvalProof ProveEvalFromCommittedTopOracleUnchecked(
     const vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
     const FieldElement &claimed_y, long num_queries,
     const FoldableCodeParams &params,
-    const BaseFoldPCSChallengeConfig &challenge_cfg) {
+    const BaseFoldPCSCommitArtifacts &commit_artifacts) {
+  ValidateCommittedTopOracleArtifactsOrThrow(
+      commit_artifacts, CodewordLengthAtLevelNoValidate(params, params.d),
+      "BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked");
+
+  BaseFoldPCSEvalProof proof;
+  proof.commitments.roots_by_level.resize(
+      static_cast<std::size_t>(params.d + 1));
+  proof.h_by_level.resize(static_cast<std::size_t>(params.d));
+  proof.commitments.roots_by_level[static_cast<std::size_t>(params.d)] =
+      commit_artifacts.root_d;
+
+  HashTranscript transcript;
+  AbsorbPublicInput(transcript, commit_artifacts.root_d, z, claimed_y);
+
   if (params.d == 0) {
-    return BaseFoldPCSProveEvalUnchecked(f_coeffs, z, claimed_y, num_queries,
-                                         params);
+    proof.pi0_full = commit_artifacts.pi_d;
+    return proof;
+  }
+
+  std::vector<Oracle> oracles(static_cast<std::size_t>(params.d));
+  std::vector<MerkleTree> merkle(static_cast<std::size_t>(params.d));
+
+  SumcheckProver sumcheck(f_coeffs, z);
+
+  const QuadraticPoly h_d = sumcheck.CurrentPolynomial();
+  proof.h_by_level[static_cast<std::size_t>(params.d - 1)] = h_d;
+  transcript.AbsorbQuadraticPoly(h_d);
+
+  std::vector<FieldElement> r_by_level(static_cast<std::size_t>(params.d));
+
+  for (long i = params.d; i-- > 0;) {
+    const FieldElement r_i =
+        transcript.ChallengeFieldElement("r/" + std::to_string(i));
+    r_by_level[static_cast<std::size_t>(i)] = r_i;
+
+    const Oracle &upper_oracle =
+        (i + 1 == params.d)
+            ? commit_artifacts.pi_d
+            : oracles[static_cast<std::size_t>(i + 1)];
+    ProverCommitRoundNoValidate(oracles[static_cast<std::size_t>(i)],
+                                upper_oracle, r_i, i, params);
+
+    merkle[static_cast<std::size_t>(i)] =
+        MerkleTree::Build(oracles[static_cast<std::size_t>(i)]);
+    const MerkleRoot root_i = merkle[static_cast<std::size_t>(i)].Root();
+    proof.commitments.roots_by_level[static_cast<std::size_t>(i)] = root_i;
+    transcript.AbsorbDigest(root_i);
+
+    sumcheck.ReceiveChallenge(r_i);
+    if (i > 0) {
+      const QuadraticPoly h_i = sumcheck.CurrentPolynomial();
+      proof.h_by_level[static_cast<std::size_t>(i - 1)] = h_i;
+      transcript.AbsorbQuadraticPoly(h_i);
+    }
+  }
+
+  proof.pi0_full = oracles[0];
+
+  const long n_last = CodewordLengthAtLevelNoValidate(params, params.d - 1);
+  std::vector<IOPPQueryPlan> query_plans(static_cast<std::size_t>(num_queries));
+  for (long q = 0; q < num_queries; ++q) {
+    const long mu =
+        transcript.ChallengeIndex("mu/" + std::to_string(q), n_last);
+    query_plans[static_cast<std::size_t>(q)] = MakeQueryPlanNoValidate(mu, params);
+  }
+
+  proof.query_multiproofs.resize(static_cast<std::size_t>(params.d + 1));
+  const std::vector<std::vector<long>> requested_indices_by_tree =
+      CollectBaseQueryIndicesByTree(query_plans, params);
+  for (long tree_level = 0; tree_level <= params.d; ++tree_level) {
+    if (tree_level == params.d) {
+      proof.query_multiproofs[static_cast<std::size_t>(tree_level)] =
+          commit_artifacts.merkle_d.OpenMany(
+              commit_artifacts.pi_d,
+              requested_indices_by_tree[static_cast<std::size_t>(tree_level)]);
+      continue;
+    }
+    proof.query_multiproofs[static_cast<std::size_t>(tree_level)] =
+        merkle[static_cast<std::size_t>(tree_level)].OpenMany(
+            oracles[static_cast<std::size_t>(tree_level)],
+            requested_indices_by_tree[static_cast<std::size_t>(tree_level)]);
+  }
+
+  return proof;
+}
+
+BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesFromCommittedTopOracleUnchecked(
+    const vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const FoldableCodeParams &params,
+    const BaseFoldPCSCommitArtifacts &commit_artifacts,
+    const BaseFoldPCSChallengeConfig &challenge_cfg) {
+  ValidateCommittedTopOracleArtifactsOrThrow(
+      commit_artifacts, CodewordLengthAtLevelNoValidate(params, params.d),
+      "BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked");
+
+  if (params.d == 0) {
+    return ProveEvalFromCommittedTopOracleUnchecked(
+        f_coeffs, z, claimed_y, num_queries, params, commit_artifacts);
   }
 
   const ZZ_pEX &extension_modulus = challenge_cfg.challenge_extension_modulus;
-  ExtensionDegreeOrThrow(extension_modulus,
-                         "ProveEvalWithExtensionChallengesUnchecked");
+  ExtensionDegreeOrThrow(
+      extension_modulus,
+      "BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked");
 
   BaseFoldPCSEvalProof proof;
   proof.extension.enabled = true;
   proof.commitments.roots_by_level.clear();
   proof.extension.roots_by_level.resize(static_cast<std::size_t>(params.d));
-
-  Oracle pi_d_base;
-  EncodeFoldableUnchecked(pi_d_base, f_coeffs, params);
-  const MerkleTree merkle_d = MerkleTree::Build(pi_d_base);
-  const MerkleRoot root_d = merkle_d.Root();
-  proof.commitments.roots_by_level.push_back(root_d);
+  proof.commitments.roots_by_level.push_back(commit_artifacts.root_d);
 
   HashTranscript transcript;
-  AbsorbPublicInput(transcript, root_d, z, claimed_y);
+  AbsorbPublicInput(transcript, commit_artifacts.root_d, z, claimed_y);
   AbsorbChallengeConfig(transcript, challenge_cfg);
 
   proof.extension.h_by_level.resize(static_cast<std::size_t>(params.d));
-  std::vector<ZZ_pEX> r_by_level;
-  r_by_level.resize(static_cast<std::size_t>(params.d));
+  std::vector<ZZ_pEX> r_by_level(static_cast<std::size_t>(params.d));
 
   std::vector<std::vector<ZZ_pEX>> ext_oracles;
   ext_oracles.resize(static_cast<std::size_t>(params.d + 1));
   ext_oracles[static_cast<std::size_t>(params.d)] =
-      LiftOracleToExtension(pi_d_base);
+      LiftOracleToExtension(commit_artifacts.pi_d);
 
   std::vector<ExtensionMerkleTree> ext_merkle_trees;
   ext_merkle_trees.resize(static_cast<std::size_t>(params.d));
@@ -1932,30 +1926,27 @@ BaseFoldPCSEvalProof ProveEvalWithExtensionChallengesUnchecked(
       EncodeC0Extension(proof.extension.msg0_coeffs, params, extension_modulus);
   if (expected_pi0 != proof.extension.pi0_full) {
     LogicError(
-        "ProveEvalWithExtensionChallengesUnchecked: internal pi0 mismatch");
+        "BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked: internal pi0 mismatch");
   }
 
-  proof.query_proofs.clear();
-  proof.extension.query_proofs.clear();
   proof.extension.base_top_query_multiproof = MerkleMultiproof{};
   proof.extension.query_multiproofs.resize(static_cast<std::size_t>(params.d));
 
   const long n_last = CodewordLengthAtLevelNoValidate(params, params.d - 1);
-  std::vector<IOPPQueryPlan> query_plans;
-  query_plans.resize(static_cast<std::size_t>(num_queries));
+  std::vector<IOPPQueryPlan> query_plans(static_cast<std::size_t>(num_queries));
   for (long q = 0; q < num_queries; ++q) {
     const long mu =
         transcript.ChallengeIndex("mu/" + std::to_string(q), n_last);
-    query_plans[static_cast<std::size_t>(q)] =
-        MakeQueryPlanNoValidate(mu, params);
+    query_plans[static_cast<std::size_t>(q)] = MakeQueryPlanNoValidate(mu, params);
   }
 
   if (num_queries > 0) {
     const std::vector<std::vector<long>> requested_indices_by_tree =
         CollectBaseQueryIndicesByTree(query_plans, params);
-    proof.extension.base_top_query_multiproof = merkle_d.OpenMany(
-        pi_d_base,
-        requested_indices_by_tree[static_cast<std::size_t>(params.d)]);
+    proof.extension.base_top_query_multiproof =
+        commit_artifacts.merkle_d.OpenMany(
+            commit_artifacts.pi_d,
+            requested_indices_by_tree[static_cast<std::size_t>(params.d)]);
     for (long tree_level = 0; tree_level < params.d; ++tree_level) {
       proof.extension.query_multiproofs[static_cast<std::size_t>(tree_level)] =
           ext_merkle_trees[static_cast<std::size_t>(tree_level)].OpenMany(
@@ -2005,37 +1996,17 @@ bool VerifyEvalWithExtensionChallenges(
     return false;
   if (static_cast<long>(proof.extension.msg0_coeffs.size()) != params.k0)
     return false;
+  if (!proof.query_multiproofs.empty())
+    return false;
   const long n0 = CodewordLengthAtLevel(params, 0);
   if (static_cast<long>(proof.extension.pi0_full.size()) != n0)
     return false;
-  const bool has_base_top_multiproof =
-      HasMerkleMultiproofPayload(proof.extension.base_top_query_multiproof);
-  const bool has_extension_multiproofs =
-      HasExtensionQueryMultiproofPayload(proof.extension);
-  const bool has_legacy_base_query_proofs = !proof.query_proofs.empty();
-  const bool has_legacy_extension_query_proofs =
-      !proof.extension.query_proofs.empty();
-  const bool use_multiproof_query_layout =
-      has_base_top_multiproof || has_extension_multiproofs;
-  const bool use_legacy_query_layout =
-      has_legacy_base_query_proofs || has_legacy_extension_query_proofs;
-
-  if (use_multiproof_query_layout && use_legacy_query_layout)
+  if (num_queries > 0 &&
+      !HasMerkleMultiproofPayload(proof.extension.base_top_query_multiproof)) {
     return false;
-  if (use_multiproof_query_layout) {
-    if (num_queries > 0 && !has_base_top_multiproof)
-      return false;
-    if (static_cast<long>(proof.extension.query_multiproofs.size()) !=
-        params.d) {
-      return false;
-    }
-    if (!proof.query_proofs.empty() || !proof.extension.query_proofs.empty())
-      return false;
-  } else {
-    if (static_cast<long>(proof.extension.query_proofs.size()) != num_queries)
-      return false;
-    if (static_cast<long>(proof.query_proofs.size()) != num_queries)
-      return false;
+  }
+  if (static_cast<long>(proof.extension.query_multiproofs.size()) != params.d) {
+    return false;
   }
 
   const std::size_t base_root_count = proof.commitments.roots_by_level.size();
@@ -2165,37 +2136,35 @@ bool VerifyEvalWithExtensionChallenges(
 
   const std::vector<std::vector<long>> requested_indices_by_tree =
       CollectBaseQueryIndicesByTree(query_plans, params);
-  if (has_extension_multiproofs) {
-    const MerkleMultiproof &top_query_multiproof =
-        proof.extension.base_top_query_multiproof;
-    if (top_query_multiproof.queried_indices !=
-        requested_indices_by_tree[static_cast<std::size_t>(params.d)]) {
-      return false;
-    }
-    if (!MerkleVerifyMultiproof(commitment_C, n_d, top_query_multiproof)) {
-      return false;
-    }
+  const MerkleMultiproof &top_query_multiproof =
+      proof.extension.base_top_query_multiproof;
+  if (top_query_multiproof.queried_indices !=
+      requested_indices_by_tree[static_cast<std::size_t>(params.d)]) {
+    return false;
+  }
+  if (!MerkleVerifyMultiproof(commitment_C, n_d, top_query_multiproof)) {
+    return false;
+  }
 
-    ScopedTimer query_timer(
-        prof ? &prof->ext_verify_query_merkle_ns : nullptr,
-        prof ? &prof->ext_verify_query_merkle_calls : nullptr);
-    for (long tree_level = 0; tree_level < params.d; ++tree_level) {
-      const ExtensionMerkleMultiproof &multiproof =
-          proof.extension.query_multiproofs[static_cast<std::size_t>(tree_level)];
-      const std::vector<long> &expected_indices =
-          requested_indices_by_tree[static_cast<std::size_t>(tree_level)];
-      if (multiproof.queried_indices != expected_indices) {
-        return false;
-      }
-      if (multiproof.values.size() != expected_indices.size()) {
-        return false;
-      }
-      const long leaf_count = CodewordLengthAtLevel(params, tree_level);
-      if (!VerifyExtensionMerkleMultiproof(
-              proof.extension.roots_by_level[static_cast<std::size_t>(tree_level)],
-              leaf_count, multiproof, extension_modulus)) {
-        return false;
-      }
+  ScopedTimer query_timer(
+      prof ? &prof->ext_verify_query_merkle_ns : nullptr,
+      prof ? &prof->ext_verify_query_merkle_calls : nullptr);
+  for (long tree_level = 0; tree_level < params.d; ++tree_level) {
+    const ExtensionMerkleMultiproof &multiproof =
+        proof.extension.query_multiproofs[static_cast<std::size_t>(tree_level)];
+    const std::vector<long> &expected_indices =
+        requested_indices_by_tree[static_cast<std::size_t>(tree_level)];
+    if (multiproof.queried_indices != expected_indices) {
+      return false;
+    }
+    if (multiproof.values.size() != expected_indices.size()) {
+      return false;
+    }
+    const long leaf_count = CodewordLengthAtLevel(params, tree_level);
+    if (!VerifyExtensionMerkleMultiproof(
+            proof.extension.roots_by_level[static_cast<std::size_t>(tree_level)],
+            leaf_count, multiproof, extension_modulus)) {
+      return false;
     }
   }
 
@@ -2210,84 +2179,21 @@ bool VerifyEvalWithExtensionChallenges(
     const long mu_top = plan.mu_by_level[static_cast<std::size_t>(top_i)];
     const long n_top = CodewordLengthAtLevel(params, top_i);
 
-    FieldElement left_top_value;
-    FieldElement right_top_value;
-    if (has_extension_multiproofs) {
-      const MerkleMultiproof &top_query_multiproof =
-          proof.extension.base_top_query_multiproof;
-      const FieldElement *left_top = multiproof_replay::FindMultiproofValue(
-          top_query_multiproof.queried_indices,
-          top_query_multiproof.values.length(), mu_top,
-          [&](std::size_t pos) {
-            return &top_query_multiproof.values[static_cast<long>(pos)];
-          });
-      const FieldElement *right_top = multiproof_replay::FindMultiproofValue(
-          top_query_multiproof.queried_indices,
-          top_query_multiproof.values.length(), mu_top + n_top,
-          [&](std::size_t pos) {
-            return &top_query_multiproof.values[static_cast<long>(pos)];
-          });
-      if (left_top == nullptr || right_top == nullptr) {
-        return false;
-      }
-      left_top_value = *left_top;
-      right_top_value = *right_top;
-    } else {
-      const BaseFoldPCSQueryProof &qp =
-          proof.query_proofs[static_cast<std::size_t>(q)];
-      const BaseFoldPCSQueryProofExtension &qp_ext =
-          proof.extension.query_proofs[static_cast<std::size_t>(q)];
-      if (qp.left.size() != qp.right.size())
-        return false;
-      const bool qp_full = (static_cast<long>(qp.left.size()) == params.d);
-      const bool qp_compact = (qp.left.size() == 1U);
-      if (!qp_full && !qp_compact)
-        return false;
-      if (qp_full) {
-        if (static_cast<long>(qp.folded.size()) != params.d)
-          return false;
-      } else {
-        if (!qp.folded.empty())
-          return false;
-      }
-      if (static_cast<long>(qp_ext.left.size()) != params.d)
-        return false;
-      if (static_cast<long>(qp_ext.right.size()) != params.d)
-        return false;
-      if (static_cast<long>(qp_ext.folded.size()) != params.d)
-        return false;
-
-      const std::size_t top_slot = qp_full ? static_cast<std::size_t>(top_i) : 0U;
-      const MerkleOpening &left_top = qp.left[top_slot];
-      const MerkleOpening &right_top = qp.right[top_slot];
-      if (left_top.index != mu_top || right_top.index != mu_top + n_top) {
-        return false;
-      }
-      if (!MerkleVerifyOpening(commitment_C, n_d, left_top) ||
-          !MerkleVerifyOpening(commitment_C, n_d, right_top)) {
-        return false;
-      }
-
-      if (qp_ext.left[static_cast<std::size_t>(top_i)].index != mu_top ||
-          qp_ext.right[static_cast<std::size_t>(top_i)].index != mu_top + n_top) {
-        return false;
-      }
-      if (!qp_ext.left[static_cast<std::size_t>(top_i)]
-               .auth_path.sibling_hashes.empty() ||
-          !qp_ext.right[static_cast<std::size_t>(top_i)]
-               .auth_path.sibling_hashes.empty()) {
-        return false;
-      }
-      if (qp_ext.left[static_cast<std::size_t>(top_i)].value !=
-              LiftBaseToExtension(left_top.value) ||
-          qp_ext.right[static_cast<std::size_t>(top_i)].value !=
-              LiftBaseToExtension(right_top.value)) {
-        return false;
-      }
-
-      left_top_value = left_top.value;
-      right_top_value = right_top.value;
+    const FieldElement *left_top = multiproof_replay::FindMultiproofValue(
+        top_query_multiproof.queried_indices, top_query_multiproof.values.length(),
+        mu_top, [&](std::size_t pos) {
+          return &top_query_multiproof.values[static_cast<long>(pos)];
+        });
+    const FieldElement *right_top = multiproof_replay::FindMultiproofValue(
+        top_query_multiproof.queried_indices, top_query_multiproof.values.length(),
+        mu_top + n_top, [&](std::size_t pos) {
+          return &top_query_multiproof.values[static_cast<long>(pos)];
+        });
+    if (left_top == nullptr || right_top == nullptr) {
+      return false;
     }
+    const FieldElement left_top_value = *left_top;
+    const FieldElement right_top_value = *right_top;
 
     for (long i = params.d; i-- > 0;) {
       const long mu_i = plan.mu_by_level[static_cast<std::size_t>(i)];
@@ -2298,73 +2204,36 @@ bool VerifyEvalWithExtensionChallenges(
       NTL::ZZ_pEX right_ext_value;
       NTL::ZZ_pEX folded_ext_value;
 
-      if (has_extension_multiproofs) {
-        const ExtensionMerkleMultiproof &folded_multiproof =
-            proof.extension.query_multiproofs[static_cast<std::size_t>(i)];
-        const NTL::ZZ_pEX *folded_ext = multiproof_replay::FindMultiproofValue(
-            folded_multiproof.queried_indices,
-            static_cast<long>(folded_multiproof.values.size()), mu_i,
-            [&](std::size_t pos) { return &folded_multiproof.values[pos]; });
-        if (folded_ext == nullptr) {
+      const ExtensionMerkleMultiproof &folded_multiproof =
+          proof.extension.query_multiproofs[static_cast<std::size_t>(i)];
+      const NTL::ZZ_pEX *folded_ext = multiproof_replay::FindMultiproofValue(
+          folded_multiproof.queried_indices,
+          static_cast<long>(folded_multiproof.values.size()), mu_i,
+          [&](std::size_t pos) { return &folded_multiproof.values[pos]; });
+      if (folded_ext == nullptr) {
+        return false;
+      }
+      folded_ext_value = *folded_ext;
+
+      if (i < params.d - 1) {
+        const ExtensionMerkleMultiproof &next_multiproof =
+            proof.extension.query_multiproofs[static_cast<std::size_t>(i + 1)];
+        const NTL::ZZ_pEX *left_ext = multiproof_replay::FindMultiproofValue(
+            next_multiproof.queried_indices,
+            static_cast<long>(next_multiproof.values.size()), mu_i,
+            [&](std::size_t pos) { return &next_multiproof.values[pos]; });
+        const NTL::ZZ_pEX *right_ext = multiproof_replay::FindMultiproofValue(
+            next_multiproof.queried_indices,
+            static_cast<long>(next_multiproof.values.size()), mu_i + n_i,
+            [&](std::size_t pos) { return &next_multiproof.values[pos]; });
+        if (left_ext == nullptr || right_ext == nullptr) {
           return false;
         }
-        folded_ext_value = *folded_ext;
-
-        if (i < params.d - 1) {
-          const ExtensionMerkleMultiproof &next_multiproof =
-              proof.extension.query_multiproofs[static_cast<std::size_t>(i + 1)];
-          const NTL::ZZ_pEX *left_ext = multiproof_replay::FindMultiproofValue(
-              next_multiproof.queried_indices,
-              static_cast<long>(next_multiproof.values.size()), mu_i,
-              [&](std::size_t pos) { return &next_multiproof.values[pos]; });
-          const NTL::ZZ_pEX *right_ext = multiproof_replay::FindMultiproofValue(
-              next_multiproof.queried_indices,
-              static_cast<long>(next_multiproof.values.size()), mu_i + n_i,
-              [&](std::size_t pos) { return &next_multiproof.values[pos]; });
-          if (left_ext == nullptr || right_ext == nullptr) {
-            return false;
-          }
-          left_ext_value = *left_ext;
-          right_ext_value = *right_ext;
-        } else {
-          left_ext_value = LiftBaseToExtension(left_top_value);
-          right_ext_value = LiftBaseToExtension(right_top_value);
-        }
+        left_ext_value = *left_ext;
+        right_ext_value = *right_ext;
       } else {
-        const BaseFoldPCSQueryProofExtension &qp_ext =
-            proof.extension.query_proofs[static_cast<std::size_t>(q)];
-        const ExtensionMerkleOpening &left_ext =
-            qp_ext.left[static_cast<std::size_t>(i)];
-        const ExtensionMerkleOpening &right_ext =
-            qp_ext.right[static_cast<std::size_t>(i)];
-        const ExtensionMerkleOpening &folded_ext =
-            qp_ext.folded[static_cast<std::size_t>(i)];
-
-        if (folded_ext.index != mu_i)
-          return false;
-        if (!VerifyExtensionMerkleOpening(
-                proof.extension.roots_by_level[static_cast<std::size_t>(i)], n_i,
-                folded_ext, extension_modulus)) {
-          return false;
-        }
-
-        if (left_ext.index != mu_i || right_ext.index != mu_i + n_i)
-          return false;
-        if (i < params.d - 1) {
-          const long n_ip1 = CodewordLengthAtLevel(params, i + 1);
-          if (!VerifyExtensionMerkleOpening(
-                  proof.extension.roots_by_level[static_cast<std::size_t>(i + 1)],
-                  n_ip1, left_ext, extension_modulus) ||
-              !VerifyExtensionMerkleOpening(
-                  proof.extension.roots_by_level[static_cast<std::size_t>(i + 1)],
-                  n_ip1, right_ext, extension_modulus)) {
-            return false;
-          }
-        }
-
-        left_ext_value = left_ext.value;
-        right_ext_value = right_ext.value;
-        folded_ext_value = folded_ext.value;
+        left_ext_value = LiftBaseToExtension(left_top_value);
+        right_ext_value = LiftBaseToExtension(right_top_value);
       }
 
       const FieldElement &t = params.diag_T[static_cast<std::size_t>(i)][mu_i];
@@ -2388,26 +2257,13 @@ bool VerifyEvalWithExtensionChallenges(
           return false;
         }
 
-        const NTL::ZZ_pEX *next_value = nullptr;
-        if (has_extension_multiproofs) {
-          const ExtensionMerkleMultiproof &carry_multiproof =
-              proof.extension.query_multiproofs[static_cast<std::size_t>(i)];
-          next_value = multiproof_replay::FindMultiproofValue(
-              carry_multiproof.queried_indices,
-              static_cast<long>(carry_multiproof.values.size()),
-              carries_left ? left_carry_index : right_carry_index,
-              [&](std::size_t pos) { return &carry_multiproof.values[pos]; });
-        } else {
-          next_value = carries_left
-                           ? &proof.extension
-                                  .query_proofs[static_cast<std::size_t>(q)]
-                                  .left[static_cast<std::size_t>(i - 1)]
-                                  .value
-                           : &proof.extension
-                                  .query_proofs[static_cast<std::size_t>(q)]
-                                  .right[static_cast<std::size_t>(i - 1)]
-                                  .value;
-        }
+        const ExtensionMerkleMultiproof &carry_multiproof =
+            proof.extension.query_multiproofs[static_cast<std::size_t>(i)];
+        const NTL::ZZ_pEX *next_value = multiproof_replay::FindMultiproofValue(
+            carry_multiproof.queried_indices,
+            static_cast<long>(carry_multiproof.values.size()),
+            carries_left ? left_carry_index : right_carry_index,
+            [&](std::size_t pos) { return &carry_multiproof.values[pos]; });
         if (next_value == nullptr || folded_ext_value != *next_value) {
           return false;
         }
@@ -2455,15 +2311,27 @@ VerifierQueryParallelConfig GetVerifierQueryParallelConfig() {
   return LoadVerifierQueryParallelConfig();
 }
 
+BaseFoldPCSCommitArtifacts BaseFoldPCSBuildCommitArtifacts(
+    const vec_ZZ_pE &f_coeffs, const FoldableCodeParams &params) {
+  ValidateParamsOrThrow(params);
+  if (f_coeffs.length() != MessageLength(params)) {
+    LogicError("BaseFoldPCSBuildCommitArtifacts: f_coeffs has wrong length");
+  }
+  return BaseFoldPCSBuildCommitArtifactsUnchecked(f_coeffs, params);
+}
+
+BaseFoldPCSCommitArtifacts BaseFoldPCSBuildCommitArtifactsUnchecked(
+    const vec_ZZ_pE &f_coeffs, const FoldableCodeParams &params) {
+  BaseFoldPCSCommitArtifacts commit_artifacts;
+  EncodeFoldableUnchecked(commit_artifacts.pi_d, f_coeffs, params);
+  commit_artifacts.merkle_d = MerkleTree::Build(commit_artifacts.pi_d);
+  commit_artifacts.root_d = commit_artifacts.merkle_d.Root();
+  return commit_artifacts;
+}
+
 MerkleRoot BaseFoldPCSCommit(const vec_ZZ_pE &f_coeffs,
                              const FoldableCodeParams &params) {
-  ValidateParamsOrThrow(params);
-  if (f_coeffs.length() != MessageLength(params))
-    LogicError("BaseFoldPCSCommit: f_coeffs has wrong length");
-
-  Oracle pi_d;
-  EncodeFoldable(pi_d, f_coeffs, params);
-  return MerkleCommitOracle(pi_d);
+  return BaseFoldPCSBuildCommitArtifacts(f_coeffs, params).root_d;
 }
 
 BaseFoldPCSEvalProof BaseFoldPCSProveEval(const vec_ZZ_pE &f_coeffs,
@@ -2474,108 +2342,69 @@ BaseFoldPCSEvalProof BaseFoldPCSProveEval(const vec_ZZ_pE &f_coeffs,
   ValidateParamsOrThrow(params);
   const long kappa = Log2ExactPowerOfTwoLong(params.k0);
   const long point_dim = params.d + kappa;
-  if (static_cast<long>(z.size()) != point_dim)
+  if (static_cast<long>(z.size()) != point_dim) {
     LogicError("BaseFoldPCSProveEval: z has wrong dimension");
-  if (f_coeffs.length() != MessageLength(params))
+  }
+  if (f_coeffs.length() != MessageLength(params)) {
     LogicError("BaseFoldPCSProveEval: f_coeffs has wrong length");
-  if (num_queries < 0)
+  }
+  if (num_queries < 0) {
     LogicError("BaseFoldPCSProveEval: num_queries must be non-negative");
-
+  }
   if (EvalMultilinearMonomialCoeffs(f_coeffs, z) != claimed_y) {
     LogicError("BaseFoldPCSProveEval: claimed_y != f(z)");
   }
 
-  return BaseFoldPCSProveEvalUnchecked(f_coeffs, z, claimed_y, num_queries,
-                                       params);
+  const BaseFoldPCSCommitArtifacts commit_artifacts =
+      BaseFoldPCSBuildCommitArtifactsUnchecked(f_coeffs, params);
+  return BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked(
+      f_coeffs, z, claimed_y, num_queries, params, commit_artifacts);
 }
 
-BaseFoldPCSEvalProof
-BaseFoldPCSProveEvalUnchecked(const vec_ZZ_pE &f_coeffs,
-                              const std::vector<FieldElement> &z,
-                              const FieldElement &claimed_y, long num_queries,
-                              const FoldableCodeParams &params) {
-  BaseFoldPCSEvalProof proof;
-  proof.commitments.roots_by_level.resize(
-      static_cast<std::size_t>(params.d + 1));
-  proof.h_by_level.resize(static_cast<std::size_t>(params.d));
+BaseFoldPCSEvalProof BaseFoldPCSProveEvalUnchecked(
+    const vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const FoldableCodeParams &params) {
+  const BaseFoldPCSCommitArtifacts commit_artifacts =
+      BaseFoldPCSBuildCommitArtifactsUnchecked(f_coeffs, params);
+  return BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked(
+      f_coeffs, z, claimed_y, num_queries, params, commit_artifacts);
+}
 
-  IOPPOracles oracles;
-  oracles.pi.resize(static_cast<std::size_t>(params.d + 1));
-
-  std::vector<MerkleTree> merkle;
-  merkle.resize(static_cast<std::size_t>(params.d + 1));
-
-  EncodeFoldableUnchecked(oracles.pi[static_cast<std::size_t>(params.d)],
-                          f_coeffs, params);
-  merkle[static_cast<std::size_t>(params.d)] =
-      MerkleTree::Build(oracles.pi[static_cast<std::size_t>(params.d)]);
-  const MerkleRoot root_d = merkle[static_cast<std::size_t>(params.d)].Root();
-  proof.commitments.roots_by_level[static_cast<std::size_t>(params.d)] = root_d;
-
-  HashTranscript transcript;
-  AbsorbPublicInput(transcript, root_d, z, claimed_y);
-
-  if (params.d == 0) {
-    proof.pi0_full = oracles.pi[0];
-    proof.query_proofs.resize(static_cast<std::size_t>(num_queries));
-    return proof;
+BaseFoldPCSEvalProof BaseFoldPCSProveEvalFromCommittedTopOracle(
+    const vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const FoldableCodeParams &params,
+    const BaseFoldPCSCommitArtifacts &commit_artifacts) {
+  ValidateParamsOrThrow(params);
+  const long kappa = Log2ExactPowerOfTwoLong(params.k0);
+  const long point_dim = params.d + kappa;
+  if (static_cast<long>(z.size()) != point_dim) {
+    LogicError("BaseFoldPCSProveEvalFromCommittedTopOracle: z has wrong dimension");
+  }
+  if (f_coeffs.length() != MessageLength(params)) {
+    LogicError(
+        "BaseFoldPCSProveEvalFromCommittedTopOracle: f_coeffs has wrong length");
+  }
+  if (num_queries < 0) {
+    LogicError(
+        "BaseFoldPCSProveEvalFromCommittedTopOracle: num_queries must be non-negative");
+  }
+  if (EvalMultilinearMonomialCoeffs(f_coeffs, z) != claimed_y) {
+    LogicError("BaseFoldPCSProveEvalFromCommittedTopOracle: claimed_y != f(z)");
   }
 
-  SumcheckProver sumcheck(f_coeffs, z);
+  return BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked(
+      f_coeffs, z, claimed_y, num_queries, params, commit_artifacts);
+}
 
-  // h_d
-  const QuadraticPoly h_d = sumcheck.CurrentPolynomial();
-  proof.h_by_level[static_cast<std::size_t>(params.d - 1)] = h_d;
-  transcript.AbsorbQuadraticPoly(h_d);
-
-  std::vector<FieldElement> r_by_level;
-  r_by_level.resize(static_cast<std::size_t>(params.d));
-
-  for (long i = params.d; i-- > 0;) {
-    const FieldElement r_i =
-        transcript.ChallengeFieldElement("r/" + std::to_string(i));
-    r_by_level[static_cast<std::size_t>(i)] = r_i;
-
-    ProverCommitRoundNoValidate(oracles.pi[static_cast<std::size_t>(i)],
-                                oracles.pi[static_cast<std::size_t>(i + 1)],
-                                r_i, i, params);
-
-    merkle[static_cast<std::size_t>(i)] =
-        MerkleTree::Build(oracles.pi[static_cast<std::size_t>(i)]);
-    const MerkleRoot root_i = merkle[static_cast<std::size_t>(i)].Root();
-    proof.commitments.roots_by_level[static_cast<std::size_t>(i)] = root_i;
-    transcript.AbsorbDigest(root_i);
-
-    sumcheck.ReceiveChallenge(r_i);
-    if (i > 0) {
-      const QuadraticPoly h_i = sumcheck.CurrentPolynomial();
-      proof.h_by_level[static_cast<std::size_t>(i - 1)] = h_i;
-      transcript.AbsorbQuadraticPoly(h_i);
-    }
-  }
-
-  proof.pi0_full = oracles.pi[0];
-
-  const long n_last = CodewordLengthAtLevelNoValidate(params, params.d - 1);
-  std::vector<IOPPQueryPlan> query_plans;
-  query_plans.resize(static_cast<std::size_t>(num_queries));
-  for (long q = 0; q < num_queries; ++q) {
-    const long mu =
-        transcript.ChallengeIndex("mu/" + std::to_string(q), n_last);
-    query_plans[static_cast<std::size_t>(q)] = MakeQueryPlanNoValidate(mu, params);
-  }
-
-  proof.query_multiproofs.resize(static_cast<std::size_t>(params.d + 1));
-  const std::vector<std::vector<long>> requested_indices_by_tree =
-      CollectBaseQueryIndicesByTree(query_plans, params);
-  for (long tree_level = 0; tree_level <= params.d; ++tree_level) {
-    proof.query_multiproofs[static_cast<std::size_t>(tree_level)] =
-        merkle[static_cast<std::size_t>(tree_level)].OpenMany(
-            oracles.pi[static_cast<std::size_t>(tree_level)],
-            requested_indices_by_tree[static_cast<std::size_t>(tree_level)]);
-  }
-
-  return proof;
+BaseFoldPCSEvalProof BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked(
+    const vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const FoldableCodeParams &params,
+    const BaseFoldPCSCommitArtifacts &commit_artifacts) {
+  return ProveEvalFromCommittedTopOracleUnchecked(
+      f_coeffs, z, claimed_y, num_queries, params, commit_artifacts);
 }
 
 bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
@@ -2601,11 +2430,8 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
     return false;
   if (static_cast<long>(proof.h_by_level.size()) != params.d)
     return false;
-  const bool has_query_multiproofs = !proof.query_multiproofs.empty();
-  if (has_query_multiproofs) {
-    if (static_cast<long>(proof.query_multiproofs.size()) != params.d + 1)
-      return false;
-  } else if (static_cast<long>(proof.query_proofs.size()) != num_queries) {
+  if (params.d > 0 &&
+      static_cast<long>(proof.query_multiproofs.size()) != params.d + 1) {
     return false;
   }
 
@@ -2620,6 +2446,8 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
 
   if (params.d == 0) {
     if (!proof.h_by_level.empty())
+      return false;
+    if (!proof.query_multiproofs.empty())
       return false;
     if (MerkleCommitOracle(proof.pi0_full) != commitment_C)
       return false;
@@ -2740,134 +2568,31 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
 
   const std::vector<std::vector<long>> requested_indices_by_tree =
       CollectBaseQueryIndicesByTree(query_plans, params);
+  ScopedTimer query_timer(prof ? &prof->verify_query_merkle_ns : nullptr,
+                          prof ? &prof->verify_query_merkle_calls : nullptr);
 
-  if (has_query_multiproofs) {
-    ScopedTimer query_timer(prof ? &prof->verify_query_merkle_ns : nullptr,
-                            prof ? &prof->verify_query_merkle_calls : nullptr);
-
-    for (long tree_level = 0; tree_level <= params.d; ++tree_level) {
-      const MerkleMultiproof &multiproof =
-          proof.query_multiproofs[static_cast<std::size_t>(tree_level)];
-      const std::vector<long> &expected_indices =
-          requested_indices_by_tree[static_cast<std::size_t>(tree_level)];
-      if (multiproof.queried_indices != expected_indices) {
-        return false;
-      }
-      if (static_cast<long>(multiproof.values.length()) !=
-          static_cast<long>(expected_indices.size())) {
-        return false;
-      }
-      const long leaf_count = CodewordLengthAtLevel(params, tree_level);
-      if (!MerkleVerifyMultiproof(
-              proof.commitments.roots_by_level[static_cast<std::size_t>(tree_level)],
-              leaf_count, multiproof)) {
-        return false;
-      }
+  for (long tree_level = 0; tree_level <= params.d; ++tree_level) {
+    const MerkleMultiproof &multiproof =
+        proof.query_multiproofs[static_cast<std::size_t>(tree_level)];
+    const std::vector<long> &expected_indices =
+        requested_indices_by_tree[static_cast<std::size_t>(tree_level)];
+    if (multiproof.queried_indices != expected_indices) {
+      return false;
     }
-
-    auto verify_one_query = [&](long q) -> bool {
-      const IOPPQueryPlan &plan = query_plans[static_cast<std::size_t>(q)];
-      for (long i = params.d; i-- > 0;) {
-        const long mu = plan.mu_by_level[static_cast<std::size_t>(i)];
-        const long n_i = CodewordLengthAtLevel(params, i);
-        if (mu < 0 || mu >= n_i) {
-          return false;
-        }
-
-        const MerkleMultiproof &upper_multiproof =
-            proof.query_multiproofs[static_cast<std::size_t>(i + 1)];
-        const MerkleMultiproof &folded_multiproof =
-            proof.query_multiproofs[static_cast<std::size_t>(i)];
-        const FieldElement *left = multiproof_replay::FindMultiproofValue(
-            upper_multiproof.queried_indices, upper_multiproof.values.length(), mu,
-            [&](std::size_t pos) {
-              return &upper_multiproof.values[static_cast<long>(pos)];
-            });
-        const FieldElement *right = multiproof_replay::FindMultiproofValue(
-            upper_multiproof.queried_indices, upper_multiproof.values.length(),
-            mu + n_i, [&](std::size_t pos) {
-              return &upper_multiproof.values[static_cast<long>(pos)];
-            });
-        const FieldElement *folded = multiproof_replay::FindMultiproofValue(
-            folded_multiproof.queried_indices, folded_multiproof.values.length(),
-            mu, [&](std::size_t pos) {
-              return &folded_multiproof.values[static_cast<long>(pos)];
-            });
-        if (left == nullptr || right == nullptr || folded == nullptr) {
-          return false;
-        }
-
-        FieldElement x1, x2;
-        FoldingPoints(x1, x2, params, i, mu);
-        const FieldElement expected = EvalLineAt(
-            challenges.alphas[static_cast<std::size_t>(i)], x1, *left, x2, *right);
-        if (expected != *folded) {
-          return false;
-        }
-      }
-      return true;
-    };
-
-    return VerifyQueriesMaybeParallel(num_queries, prof, verify_one_query);
-  }
-
-  const bool use_opening_cache =
-      (prof != nullptr) || (ChooseQueryVerifyThreads(num_queries) <= 1);
-  std::vector<std::vector<MerkleOpening>> cached_openings_by_tree;
-  std::vector<std::vector<unsigned char>> cached_openings_seen_by_tree;
-  std::vector<std::vector<unsigned char>> cached_openings_valid_by_tree;
-  if (use_opening_cache) {
-    cached_openings_by_tree.resize(static_cast<std::size_t>(params.d + 1));
-    cached_openings_seen_by_tree.resize(static_cast<std::size_t>(params.d + 1));
-    cached_openings_valid_by_tree.resize(static_cast<std::size_t>(params.d + 1));
-    for (long tree_level = 0; tree_level <= params.d; ++tree_level) {
-      cached_openings_by_tree[static_cast<std::size_t>(tree_level)].resize(
-          requested_indices_by_tree[static_cast<std::size_t>(tree_level)].size());
-      cached_openings_seen_by_tree[static_cast<std::size_t>(tree_level)]
-          .assign(requested_indices_by_tree[static_cast<std::size_t>(tree_level)].size(),
-                  static_cast<unsigned char>(0));
-      cached_openings_valid_by_tree[static_cast<std::size_t>(tree_level)]
-          .assign(requested_indices_by_tree[static_cast<std::size_t>(tree_level)].size(),
-                  static_cast<unsigned char>(0));
+    if (static_cast<long>(multiproof.values.length()) !=
+        static_cast<long>(expected_indices.size())) {
+      return false;
+    }
+    const long leaf_count = CodewordLengthAtLevel(params, tree_level);
+    if (!MerkleVerifyMultiproof(
+            proof.commitments.roots_by_level[static_cast<std::size_t>(tree_level)],
+            leaf_count, multiproof)) {
+      return false;
     }
   }
-
-  auto verify_opening_cached = [&](long tree_level, long leaf_count,
-                                   const MerkleRoot &root,
-                                   const MerkleOpening &opening) -> bool {
-    if (!use_opening_cache) {
-      return MerkleVerifyOpening(root, leaf_count, opening);
-    }
-    const std::size_t pos = FindCachedOpeningPosition(
-        requested_indices_by_tree[static_cast<std::size_t>(tree_level)],
-        opening.index, "BaseFoldPCSVerifyEval/opening-cache");
-    unsigned char &seen =
-        cached_openings_seen_by_tree[static_cast<std::size_t>(tree_level)][pos];
-    unsigned char &valid =
-        cached_openings_valid_by_tree[static_cast<std::size_t>(tree_level)][pos];
-    MerkleOpening &cached =
-        cached_openings_by_tree[static_cast<std::size_t>(tree_level)][pos];
-    if (seen != 0) {
-      return valid != 0 && SameMerkleOpening(cached, opening);
-    }
-    cached = opening;
-    seen = static_cast<unsigned char>(1);
-    valid = MerkleVerifyOpening(root, leaf_count, opening)
-                ? static_cast<unsigned char>(1)
-                : static_cast<unsigned char>(0);
-    return valid != 0;
-  };
 
   auto verify_one_query = [&](long q) -> bool {
     const IOPPQueryPlan &plan = query_plans[static_cast<std::size_t>(q)];
-    const BaseFoldPCSQueryProof &qp =
-        proof.query_proofs[static_cast<std::size_t>(q)];
-    if (static_cast<long>(qp.left.size()) != params.d)
-      return false;
-    if (static_cast<long>(qp.right.size()) != params.d)
-      return false;
-    if (static_cast<long>(qp.folded.size()) != params.d)
-      return false;
 
     for (long i = params.d; i-- > 0;) {
       const long mu = plan.mu_by_level[static_cast<std::size_t>(i)];
@@ -2875,50 +2600,42 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
       if (mu < 0 || mu >= n_i)
         return false;
 
-      const MerkleOpening &left = qp.left[static_cast<std::size_t>(i)];
-      const MerkleOpening &right = qp.right[static_cast<std::size_t>(i)];
-      const MerkleOpening &folded = qp.folded[static_cast<std::size_t>(i)];
-      if (left.index != mu || right.index != mu + n_i || folded.index != mu) {
-        return false;
-      }
-
-      const long n_ip1 = 2 * n_i;
-      if (!verify_opening_cached(
-              i + 1, n_ip1,
-              proof.commitments.roots_by_level[static_cast<std::size_t>(i + 1)],
-              left)) {
-        return false;
-      }
-      if (!verify_opening_cached(
-              i + 1, n_ip1,
-              proof.commitments.roots_by_level[static_cast<std::size_t>(i + 1)],
-              right)) {
-        return false;
-      }
-      if (!verify_opening_cached(
-              i, n_i,
-              proof.commitments.roots_by_level[static_cast<std::size_t>(i)],
-              folded)) {
+      const MerkleMultiproof &upper_multiproof =
+          proof.query_multiproofs[static_cast<std::size_t>(i + 1)];
+      const MerkleMultiproof &folded_multiproof =
+          proof.query_multiproofs[static_cast<std::size_t>(i)];
+      const FieldElement *left = multiproof_replay::FindMultiproofValue(
+          upper_multiproof.queried_indices, upper_multiproof.values.length(), mu,
+          [&](std::size_t pos) {
+            return &upper_multiproof.values[static_cast<long>(pos)];
+          });
+      const FieldElement *right = multiproof_replay::FindMultiproofValue(
+          upper_multiproof.queried_indices, upper_multiproof.values.length(),
+          mu + n_i, [&](std::size_t pos) {
+            return &upper_multiproof.values[static_cast<long>(pos)];
+          });
+      const FieldElement *folded = multiproof_replay::FindMultiproofValue(
+          folded_multiproof.queried_indices, folded_multiproof.values.length(),
+          mu, [&](std::size_t pos) {
+            return &folded_multiproof.values[static_cast<long>(pos)];
+          });
+      if (left == nullptr || right == nullptr || folded == nullptr) {
         return false;
       }
 
       FieldElement x1, x2;
       FoldingPoints(x1, x2, params, i, mu);
       const FieldElement expected =
-          EvalLineAt(challenges.alphas[static_cast<std::size_t>(i)], x1,
-                     left.value, x2, right.value);
-      if (expected != folded.value)
+          EvalLineAt(challenges.alphas[static_cast<std::size_t>(i)], x1, *left,
+                     x2, *right);
+      if (expected != *folded)
         return false;
     }
 
     return true;
   };
 
-  if (!VerifyQueriesMaybeParallel(num_queries, prof, verify_one_query)) {
-    return false;
-  }
-
-  return true;
+  return VerifyQueriesMaybeParallel(num_queries, prof, verify_one_query);
 }
 
 BaseFoldPCSEvalProof BaseFoldPCSProveEvalWithChallengeConfig(
@@ -2947,8 +2664,11 @@ BaseFoldPCSEvalProof BaseFoldPCSProveEvalWithChallengeConfig(
     LogicError("BaseFoldPCSProveEvalWithChallengeConfig: claimed_y != f(z)");
   }
 
-  return ProveEvalWithExtensionChallengesUnchecked(
-      f_coeffs, z, claimed_y, num_queries, params, challenge_cfg);
+  const BaseFoldPCSCommitArtifacts commit_artifacts =
+      BaseFoldPCSBuildCommitArtifactsUnchecked(f_coeffs, params);
+  return BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked(
+      f_coeffs, z, claimed_y, num_queries, params, commit_artifacts,
+      challenge_cfg);
 }
 
 BaseFoldPCSEvalProof BaseFoldPCSProveEvalWithChallengeConfigUnchecked(
@@ -2961,8 +2681,66 @@ BaseFoldPCSEvalProof BaseFoldPCSProveEvalWithChallengeConfigUnchecked(
     return BaseFoldPCSProveEvalUnchecked(f_coeffs, z, claimed_y, num_queries,
                                          params);
   }
-  return ProveEvalWithExtensionChallengesUnchecked(
-      f_coeffs, z, claimed_y, num_queries, params, challenge_cfg);
+  const BaseFoldPCSCommitArtifacts commit_artifacts =
+      BaseFoldPCSBuildCommitArtifactsUnchecked(f_coeffs, params);
+  return BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked(
+      f_coeffs, z, claimed_y, num_queries, params, commit_artifacts,
+      challenge_cfg);
+}
+
+BaseFoldPCSEvalProof
+BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle(
+    const vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const FoldableCodeParams &params,
+    const BaseFoldPCSCommitArtifacts &commit_artifacts,
+    const BaseFoldPCSChallengeConfig &challenge_cfg) {
+  ValidateChallengeConfigOrThrow(challenge_cfg, params);
+  if (!challenge_cfg.use_extension_challenges) {
+    return BaseFoldPCSProveEvalFromCommittedTopOracle(
+        f_coeffs, z, claimed_y, num_queries, params, commit_artifacts);
+  }
+
+  ValidateParamsOrThrow(params);
+  const long kappa = Log2ExactPowerOfTwoLong(params.k0);
+  const long point_dim = params.d + kappa;
+  if (static_cast<long>(z.size()) != point_dim) {
+    LogicError(
+        "BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle: z has wrong dimension");
+  }
+  if (f_coeffs.length() != MessageLength(params)) {
+    LogicError(
+        "BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle: f_coeffs has wrong length");
+  }
+  if (num_queries < 0) {
+    LogicError(
+        "BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle: num_queries must be non-negative");
+  }
+  if (EvalMultilinearMonomialCoeffs(f_coeffs, z) != claimed_y) {
+    LogicError(
+        "BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle: claimed_y != f(z)");
+  }
+
+  return BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked(
+      f_coeffs, z, claimed_y, num_queries, params, commit_artifacts,
+      challenge_cfg);
+}
+
+BaseFoldPCSEvalProof
+BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked(
+    const vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const FoldableCodeParams &params,
+    const BaseFoldPCSCommitArtifacts &commit_artifacts,
+    const BaseFoldPCSChallengeConfig &challenge_cfg) {
+  ValidateChallengeConfigOrThrow(challenge_cfg, params);
+  if (!challenge_cfg.use_extension_challenges) {
+    return BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked(
+        f_coeffs, z, claimed_y, num_queries, params, commit_artifacts);
+  }
+  return ProveEvalWithExtensionChallengesFromCommittedTopOracleUnchecked(
+      f_coeffs, z, claimed_y, num_queries, params, commit_artifacts,
+      challenge_cfg);
 }
 
 bool BaseFoldPCSVerifyEvalWithChallengeConfig(

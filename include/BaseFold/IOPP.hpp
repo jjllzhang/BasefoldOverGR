@@ -184,21 +184,6 @@ bool VerifyQueryFromOracles(const IOPPQueryPlan &plan,
 // transcript and Merkle hashing/serialization that are consistent between prover
 // and verifier.
 
-// A Merkle authentication path for one leaf.
-// Conventions:
-// - sibling_hashes[k] is the sibling digest at height k (starting from the leaf
-//   level).
-struct MerkleAuthPath {
-  std::vector<Digest> sibling_hashes;
-};
-
-// One opened leaf in a Merkle-committed oracle.
-struct MerkleOpening {
-  long index = 0;
-  FieldElement value;
-  MerkleAuthPath auth_path;
-};
-
 struct MerkleMultiproofStats {
   std::uint64_t opened_leaf_count = 0;
   std::uint64_t unique_sibling_count = 0;
@@ -243,18 +228,10 @@ MerkleBuildParallelConfig GetMerkleBuildParallelConfig();
 // Computes the Merkle root for an oracle.
 MerkleRoot MerkleCommitOracle(const Oracle &oracle);
 
-// Produces a Merkle opening for oracle[index].
-MerkleOpening MerkleOpenOracle(const Oracle &oracle, long index);
-
 // Produces a pruned Merkle multiproof for a set of queried indices.
 // `queried_indices` may contain duplicates and need not be sorted.
 MerkleMultiproof MerkleOpenOracleMany(const Oracle &oracle,
                                       const std::vector<long> &queried_indices);
-
-// Verifies that `opening` is a valid decommitment to `root` for an oracle of
-// length `leaf_count`.
-bool MerkleVerifyOpening(const MerkleRoot &root, long leaf_count,
-                         const MerkleOpening &opening);
 
 // Returns multiproof planning statistics for a queried index set.
 MerkleMultiproofStats PlanMerkleMultiproof(
@@ -264,12 +241,13 @@ MerkleMultiproofStats PlanMerkleMultiproof(
 bool MerkleVerifyMultiproof(const MerkleRoot &root, long leaf_count,
                             const MerkleMultiproof &proof);
 
-// A reusable Merkle tree for an oracle, allowing one build and many openings.
+// A reusable Merkle tree for an oracle, allowing one build and many multiproofs.
 //
 // - Build(oracle) runs in O(n).
-// - Open(index) runs in O(log n).
+// - OpenMany(indices) runs in O(k log n) on the requested leaves.
 //
-// Hashing is identical to MerkleCommitOracle/MerkleOpenOracle/MerkleVerifyOpening.
+// Hashing is identical to MerkleCommitOracle/MerkleOpenOracleMany/
+// MerkleVerifyMultiproof.
 class MerkleTree {
  public:
   MerkleTree() = default;
@@ -279,10 +257,6 @@ class MerkleTree {
   long LeafCount() const { return leaf_count_; }
 
   MerkleRoot Root() const;
-
-  // Produces a Merkle opening for oracle[index] using this tree's cached nodes.
-  // Precondition: oracle.length() == LeafCount().
-  MerkleOpening Open(const Oracle &oracle, long index) const;
 
   // Produces a pruned Merkle multiproof for queried_indices using this tree's
   // cached nodes. queried_indices may contain duplicates and need not be
@@ -318,21 +292,6 @@ struct IOPPMerkleCommitments {
   std::vector<MerkleRoot> roots_by_level;  // size == params.d + 1
 };
 
-// A Merkle-openings version of IOPPQueryOpenings.
-// For each i in [0, d):
-// - left[i]   opens π_{i+1}[µ_i]
-// - right[i]  opens π_{i+1}[µ_i + n_i]
-// - folded[i] opens π_i[µ_i]
-//
-// Note: π_0 is typically small (n0 = c*k0), so a common instantiation is to
-// include pi0_full in the proof and recompute/validate its Merkle root.
-struct IOPPQueryMerkleOpenings {
-  std::vector<MerkleOpening> left;
-  std::vector<MerkleOpening> right;
-  std::vector<MerkleOpening> folded;
-  Oracle pi0_full;
-};
-
 // Derives IOPP challenges α_0..α_{d-1} using Fiat-Shamir and the Merkle roots.
 //
 // Recommended transcript schedule (mirrors Protocol 2 adaptivity):
@@ -357,15 +316,6 @@ IOPPChallenges FiatShamirDeriveChallenges(
 std::vector<IOPPQueryPlan> FiatShamirDeriveQueryPlans(
     FiatShamirTranscript &transcript, long num_queries,
     const FoldableCodeParams &params);
-
-// Verifies one query repetition in the Merkle instantiation:
-// - Checks all Merkle openings against the corresponding roots, and
-// - Runs the folding consistency checks plus the final C0 membership check.
-bool VerifyQueryFromMerkleOpenings(const IOPPQueryPlan &plan,
-                                   const IOPPChallenges &challenges,
-                                   const IOPPQueryMerkleOpenings &openings,
-                                   const IOPPMerkleCommitments &commitments,
-                                   const FoldableCodeParams &params);
 
 // -----------------------------------------------------------------------------
 // C0 codeword check (Protocol 3 final step)

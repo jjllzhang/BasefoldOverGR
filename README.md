@@ -150,8 +150,8 @@ Language versions:
 
 - BaseFold IOPP (Protocol 2/3):
   - Folding prover: `ProverCommitAll/ProverCommitRound`
-  - Query verifier: `VerifyQueryFromOracles/VerifyQueryFromMerkleOpenings`
-  - Merkle commitment/opening: `MerkleCommitOracle/MerkleOpenOracle/MerkleVerifyOpening`
+  - Query verifier: `VerifyQueryFromOracles`
+  - Merkle commitment/multiproof: `MerkleCommitOracle/MerkleOpenOracleMany/MerkleVerifyMultiproof`
 
 ### `include/BaseFold/Profile.hpp`
 
@@ -166,13 +166,20 @@ Language versions:
 
 - Minimal non-interactive BaseFold PCS single-point evaluation proof (Protocol 4 + Merkle + Fiat-Shamir):
   - `BaseFoldPCSCommit/ProveEval/VerifyEval`
+  - Reusable top-commit artifacts + prove-from-commit API:
+    `BaseFoldPCSBuildCommitArtifacts` /
+    `BaseFoldPCSBuildCommitArtifactsUnchecked` /
+    `BaseFoldPCSProveEvalFromCommittedTopOracle` /
+    `BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked`
   - Configurable challenge-path API (legacy API unchanged):
     `BaseFoldPCSProveEvalWithChallengeConfig` /
     `BaseFoldPCSProveEvalWithChallengeConfigUnchecked` /
+    `BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle` /
+    `BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked` /
     `BaseFoldPCSVerifyEvalWithChallengeConfig`
     - When `use_extension_challenges=false`: behavior matches legacy path.
     - When `use_extension_challenges=true`: Fiat-Shamir challenges are sampled in an outer extension over `ZZ_pE`, extension parameters are transcript-bound, and sumcheck/folding run in the extension; verifiable Merkle commitments are created for extension intermediate layers `pi_0..pi_{d-1}`, while top commitment (`pi_d` Merkle root) remains in the base ring.
-    - Extension-challenge proof payload is compacted: no duplicated base-side `h_i / pi0_full`; `query_proofs` keeps only top-level base opening; `extension.r_by_level` can be omitted and recovered by transcript re-sampling.
+    - Extension-challenge proof payload is multiproof-only and compacted: no duplicated base-side `h_i / pi0_full`; base and extension query payloads use shared Merkle multiproofs; `extension.r_by_level` can be omitted and recovered by transcript re-sampling.
     - `challenge_extension_modulus` now validates algebraic conditions: irreducible in field mode; basic irreducible after mod-`p` reduction in ring mode.
   - Supports `k0=2^kappa` (BaseFold paper, Remark 3): IOPP depth is `d`, polynomial point dimension is `d+kappa`; `kappa=0` degenerates to Protocol 4 in `Basefold_over_GR.pdf` (`k0==1`).
 
@@ -183,6 +190,8 @@ Language versions:
   - `basefold::FixedProofEncodingContext`
   - `basefold::CountingSink`
   - `basefold::CountSerializedBaseFoldPCSEvalProofFixedBytes(...)`
+  - Omits transcript-recoverable query indices / explicit extension challenges
+    such as `extension.r_by_level` from the counted payload.
 
 ### `include/BaseFold/ProofSize.hpp` / `src/BaseFold/ProofSize.cpp`
 
@@ -194,17 +203,24 @@ Language versions:
 
 ### `bench/bench_pcs_commit.cpp`
 
-- Encoding performance benchmark: measures **raw encode time without validation** (`EncodeFoldableUnchecked`).
+- Top-commit benchmark:
+  - `encode-only mean`: raw top-level encode time without validation (`EncodeFoldableUnchecked`)
+  - `top-commit mean`: `MerkleTree::Build` + root extraction on the encoded top oracle
+  - `commit mean`: headline top-commit stage = encode + top Merkle commit
 - Field and ring contexts can be configured from CLI separately.
 - Optional `--k0 <int>` (default `1`) to benchmark general `k0`.
 - Optional `--auto-zeta teich` derives Teichmuller generator from `(p,k,F)` as `zeta` (overrides `--field-zeta/--ring-zeta`).
 
 ### `bench/bench_pcs_eval.cpp`
 
-- PCS eval-proof benchmark: measures prover and verifier time (Merkle + Fiat-Shamir).
-- Prover defaults to `BaseFoldPCSProveEvalUnchecked`; use `--checked` to include checks in prover timing.
-- Reports exact proof size for the generated proof via the fixed-width `CountingSink`
-  path (`proof_size_bytes` / `proof_size_kb`).
+- PCS eval-proof benchmark: measures prover and verifier time (Merkle + Fiat-Shamir below the top commit).
+- Prover defaults to `BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked`; use
+  `--checked` to include checks in prover timing. Headline prover time excludes
+  the top-level encode + commit stage and starts from precomputed
+  `BaseFoldPCSCommitArtifacts`.
+- Reports exact proof payload size for the generated proof via the fixed-width
+  `CountingSink` path (`proof_size_bytes` / `proof_size_kb`), omitting
+  transcript-recoverable indices/challenges.
 - `--use-extension-challenges` enables extension challenge path (`BaseFoldPCSChallengeConfig`): sumcheck/folding run in extension domain, top commitment remains in base field/ring.
 - Optional `--field-challenge-ext` / `--ring-challenge-ext` to set challenge extension modulus `E(U)`, format `a0;a1;...;ad` where each `ai` is `ZZ_pE` written as `c0,c1,...`; default is `E(U)=zeta + U + U^2`.
 - `--profile` prints prover/verifier breakdown (accumulated over `reps`, excluding `warmup`; use `--warmup 0 --reps 1` for readable single-run output).
@@ -291,8 +307,9 @@ Common columns:
 
 - `gamma`: slack parameter selected by `calc_iopp_params --auto-gamma`.
 - `queries`: recommended query count (`l_min_for_PCS`).
-- `proof_size_kb/proof_size_bytes`: exact serialized proof size reported by `bench_pcs_eval`
-  through the fixed-width counting path (KiB / bytes).
+- `proof_size_kb/proof_size_bytes`: exact fixed-width proof payload size
+  reported by `bench_pcs_eval`, omitting transcript-recoverable
+  indices/challenges (KiB / bytes).
 - `status,error`: per-point success status and error message (if any).
 
 ### Result Files and Plotting
@@ -461,19 +478,22 @@ cat "$csv"
   verifier mean ... ms
   [profile-prover]
     BaseFoldPCSProveEval total:  ... ms  (calls 1)
-    EncodeFoldableUnchecked:     ... ms  (calls 1)
     MerkleTree::Build:           ... ms  (calls ...)
     ...
   [profile-verifier]
     BaseFoldPCSVerifyEval total: ... ms  (calls 1)
-    MerkleVerifyOpening:         ... ms  (calls ...)
+    MerkleVerifyMultiproof:      ... ms  (calls ...)
     EvalLineAt:                  ... ms  (calls ...)
     ...
 ```
 
-- `BaseFoldPCSProveEval total`: total prover time measured in benchmark.
+- `BaseFoldPCSProveEval total`: total prover time measured in benchmark,
+  excluding the top-level encode + commit stage.
 - `BaseFoldPCSVerifyEval total`: total verifier time.
-- Entries like `MerkleTree::Build` (prover) and `MerkleVerifyOpening` (verifier) identify Merkle costs; `EvalLineAt` / `TryInvertUnit` identify folding-consistency and ring-arithmetic costs.
+- Use `bench_pcs_commit` to measure the excluded top-level encode/commit stage.
+- Entries like `MerkleTree::Build` (prover) and `MerkleVerifyMultiproof`
+  (verifier) identify Merkle costs; `EvalLineAt` / `TryInvertUnit` identify
+  folding-consistency and ring-arithmetic costs.
 
 #### Verification Integrity Note (No Proof-Check Steps Removed)
 
@@ -489,8 +509,8 @@ This repo exposes exact proof-size counting through the fixed-width proof serial
 - `basefold::BaseFoldPCSEvalProofSizeKB(proof)` (KiB)
 
 For end users, the intended CLI surface is `bench_pcs_eval`: it generates a real
-proof, then prints the exact `proof_size_bytes` / `proof_size_kb` for that proof in
-the same run.
+proof, then prints the exact fixed-width payload `proof_size_bytes` /
+`proof_size_kb` for that proof in the same run.
 
 ## License
 

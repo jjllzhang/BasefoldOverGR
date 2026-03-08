@@ -715,81 +715,10 @@ MerkleRoot MerkleCommitOracle(const Oracle &oracle) {
   return HashRootWithCount(leaf_count, raw_root);
 }
 
-MerkleOpening MerkleOpenOracle(const Oracle &oracle, long index) {
-  const long leaf_count = oracle.length();
-  if (index < 0 || index >= leaf_count) {
-    LogicError("MerkleOpenOracle: index out of range");
-  }
-
-  std::vector<Digest> level;
-  level.reserve(static_cast<std::size_t>(leaf_count));
-  for (long i = 0; i < leaf_count; ++i) {
-    level.push_back(HashLeaf(i, oracle[i]));
-  }
-
-  MerkleAuthPath path;
-  const std::size_t height = ExpectedMerkleHeight(leaf_count);
-  path.sibling_hashes.reserve(height);
-
-  long idx = index;
-  while (level.size() > 1) {
-    if (level.size() % 2 == 1)
-      level.push_back(level.back());
-
-    const long sibling = (idx % 2 == 0) ? (idx + 1) : (idx - 1);
-    path.sibling_hashes.push_back(level[static_cast<std::size_t>(sibling)]);
-
-    std::vector<Digest> next;
-    next.reserve(level.size() / 2);
-    for (std::size_t i = 0; i < level.size(); i += 2) {
-      next.push_back(HashNode(level[i], level[i + 1]));
-    }
-    idx /= 2;
-    level = std::move(next);
-  }
-
-  MerkleOpening opening;
-  opening.index = index;
-  opening.value = oracle[index];
-  opening.auth_path = std::move(path);
-  return opening;
-}
-
 MerkleMultiproof MerkleOpenOracleMany(const Oracle &oracle,
                                       const std::vector<long> &queried_indices) {
   const MerkleTree tree = MerkleTree::Build(oracle);
   return tree.OpenMany(oracle, queried_indices);
-}
-
-bool MerkleVerifyOpening(const MerkleRoot &root, long leaf_count,
-                         const MerkleOpening &opening) {
-  Profile *prof = ActiveProfile();
-  ScopedTimer timer(prof ? &prof->merkle_verify_opening_ns : nullptr,
-                    prof ? &prof->merkle_verify_opening_calls : nullptr);
-
-  if (leaf_count < 0)
-    return false;
-  if (opening.index < 0 || opening.index >= leaf_count)
-    return false;
-
-  const std::size_t expected_height = ExpectedMerkleHeight(leaf_count);
-  if (opening.auth_path.sibling_hashes.size() != expected_height)
-    return false;
-
-  Digest cur = HashLeaf(opening.index, opening.value);
-  long idx = opening.index;
-  for (std::size_t i = 0; i < expected_height; ++i) {
-    const Digest &sib = opening.auth_path.sibling_hashes[i];
-    if (idx % 2 == 1) {
-      cur = HashNode(sib, cur);
-    } else {
-      cur = HashNode(cur, sib);
-    }
-    idx /= 2;
-  }
-
-  const Digest expected_root = HashRootWithCount(leaf_count, cur);
-  return expected_root == root;
 }
 
 MerkleMultiproofStats PlanMerkleMultiproof(
@@ -968,37 +897,6 @@ MerkleRoot MerkleTree::Root() const {
   return HashRootWithCount(leaf_count_, raw_root_);
 }
 
-MerkleOpening MerkleTree::Open(const Oracle &oracle, long index) const {
-  Profile *prof = ActiveProfile();
-  ScopedTimer timer(prof ? &prof->merkle_tree_open_ns : nullptr,
-                    prof ? &prof->merkle_tree_open_calls : nullptr);
-
-  if (oracle.length() != leaf_count_) {
-    LogicError("MerkleTree::Open: oracle length mismatch");
-  }
-  if (index < 0 || index >= leaf_count_) {
-    LogicError("MerkleTree::Open: index out of range");
-  }
-
-  MerkleAuthPath path;
-  const std::size_t height = ExpectedMerkleHeight(leaf_count_);
-  path.sibling_hashes.reserve(height);
-
-  long idx = index;
-  for (std::size_t h = 0; h < height; ++h) {
-    const std::vector<Digest> &level = levels_[h];
-    const long sibling = (idx % 2 == 0) ? (idx + 1) : (idx - 1);
-    path.sibling_hashes.push_back(level[static_cast<std::size_t>(sibling)]);
-    idx /= 2;
-  }
-
-  MerkleOpening opening;
-  opening.index = index;
-  opening.value = oracle[index];
-  opening.auth_path = std::move(path);
-  return opening;
-}
-
 MerkleMultiproof MerkleTree::OpenMany(
     const Oracle &oracle, const std::vector<long> &queried_indices) const {
   Profile *prof = ActiveProfile();
@@ -1085,80 +983,6 @@ FiatShamirDeriveQueryPlans(FiatShamirTranscript &transcript, long num_queries,
   }
 
   return plans;
-}
-
-bool VerifyQueryFromMerkleOpenings(const IOPPQueryPlan &plan,
-                                   const IOPPChallenges &challenges,
-                                   const IOPPQueryMerkleOpenings &openings,
-                                   const IOPPMerkleCommitments &commitments,
-                                   const FoldableCodeParams &params) {
-  Profile *prof = ActiveProfile();
-  ScopedTimer timer(prof ? &prof->verify_query_merkle_ns : nullptr,
-                    prof ? &prof->verify_query_merkle_calls : nullptr);
-
-  ValidateParamsOrThrow(params);
-  if (static_cast<long>(commitments.roots_by_level.size()) != params.d + 1) {
-    return false;
-  }
-  if (static_cast<long>(challenges.alphas.size()) != params.d)
-    return false;
-  if (static_cast<long>(plan.mu_by_level.size()) != params.d)
-    return false;
-  if (static_cast<long>(openings.left.size()) != params.d)
-    return false;
-  if (static_cast<long>(openings.right.size()) != params.d)
-    return false;
-  if (static_cast<long>(openings.folded.size()) != params.d)
-    return false;
-
-  if (MerkleCommitOracle(openings.pi0_full) != commitments.roots_by_level[0]) {
-    return false;
-  }
-
-  for (long i = params.d; i-- > 0;) {
-    const long mu = plan.mu_by_level[static_cast<std::size_t>(i)];
-    const long n_i = CodewordLengthAtLevel(params, i);
-    if (mu < 0 || mu >= n_i)
-      return false;
-
-    const MerkleOpening &left = openings.left[static_cast<std::size_t>(i)];
-    const MerkleOpening &right = openings.right[static_cast<std::size_t>(i)];
-    const MerkleOpening &folded = openings.folded[static_cast<std::size_t>(i)];
-
-    if (left.index != mu)
-      return false;
-    if (right.index != mu + n_i)
-      return false;
-    if (folded.index != mu)
-      return false;
-
-    const long n_ip1 = 2 * n_i;
-    if (!MerkleVerifyOpening(
-            commitments.roots_by_level[static_cast<std::size_t>(i + 1)], n_ip1,
-            left)) {
-      return false;
-    }
-    if (!MerkleVerifyOpening(
-            commitments.roots_by_level[static_cast<std::size_t>(i + 1)], n_ip1,
-            right)) {
-      return false;
-    }
-    if (!MerkleVerifyOpening(
-            commitments.roots_by_level[static_cast<std::size_t>(i)], n_i,
-            folded)) {
-      return false;
-    }
-
-    FieldElement x1, x2;
-    FoldingPoints(x1, x2, params, i, mu);
-    const FieldElement expected =
-        EvalLineAt(challenges.alphas[static_cast<std::size_t>(i)], x1,
-                   left.value, x2, right.value);
-    if (expected != folded.value)
-      return false;
-  }
-
-  return IsCodewordC0(openings.pi0_full, params);
 }
 
 bool IsCodewordC0(const Oracle &pi0, const FoldableCodeParams &params) {

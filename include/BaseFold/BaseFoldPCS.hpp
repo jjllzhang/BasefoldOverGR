@@ -13,30 +13,11 @@
 
 namespace basefold {
 
-// A single IOPP.query repetition's Merkle openings (without duplicating π0).
-struct BaseFoldPCSQueryProof {
-  // Base-challenge path: left/right/folded each have size == params.d.
-  //
-  // Extension-challenge path (compact payload): this is used only for top-level
-  // base openings into commitment C=MerkleRoot(π_d), so left/right have size 1
-  // and folded is empty.
-  std::vector<MerkleOpening> left;
-  std::vector<MerkleOpening> right;
-  std::vector<MerkleOpening> folded;
-};
-
 // Degree-2 univariate polynomial over the outer challenge extension ring.
 struct ExtensionQuadraticPoly {
   NTL::ZZ_pEX a0;
   NTL::ZZ_pEX a1;
   NTL::ZZ_pEX a2;
-};
-
-// One opened leaf in an extension-ring Merkle-committed oracle.
-struct ExtensionMerkleOpening {
-  long index = 0;
-  NTL::ZZ_pEX value;
-  MerkleAuthPath auth_path;
 };
 
 // A pruned Merkle multiproof for multiple leaves in the same extension oracle.
@@ -46,11 +27,14 @@ struct ExtensionMerkleMultiproof {
   std::vector<Digest> sibling_hashes;
 };
 
-// One query repetition's values along the extension-ring folding chain.
-struct BaseFoldPCSQueryProofExtension {
-  std::vector<ExtensionMerkleOpening> left;    // size == params.d
-  std::vector<ExtensionMerkleOpening> right;   // size == params.d
-  std::vector<ExtensionMerkleOpening> folded;  // size == params.d
+// Reusable top-level commitment artifacts for PCS eval proofs.
+//
+// These let callers precompute the top codeword/oracle pi_d and its Merkle tree,
+// then build evaluation proofs without re-running the top encode/commit stage.
+struct BaseFoldPCSCommitArtifacts {
+  Oracle pi_d;
+  MerkleTree merkle_d;
+  MerkleRoot root_d;
 };
 
 // Additional proof payload used by the extension-challenge path.
@@ -78,16 +62,10 @@ struct BaseFoldPCSExtensionProofData {
   std::vector<NTL::ZZ_pEX> pi0_full;
 
   // Shared base openings into the top-level base commitment C = MerkleRoot(π_d).
-  // Compact multiproof layout may use this and leave BaseFoldPCSEvalProof::
-  // query_proofs empty.
   MerkleMultiproof base_top_query_multiproof;
 
   // Shared extension openings grouped by extension oracle level π_0..π_{d-1}.
-  // Compact multiproof layout may populate this and leave query_proofs empty.
   std::vector<ExtensionMerkleMultiproof> query_multiproofs;
-
-  // Legacy per-query extension openings.
-  std::vector<BaseFoldPCSQueryProofExtension> query_proofs;
 };
 
 // Non-interactive BaseFold PCS evaluation proof (Protocol 4 + Merkle+FS).
@@ -111,13 +89,7 @@ struct BaseFoldPCSEvalProof {
   Oracle pi0_full;
 
   // Shared base openings grouped by oracle level π_0..π_d.
-  // Base-challenge path may populate this and leave query_proofs empty.
   std::vector<MerkleMultiproof> query_multiproofs;
-
-  // Base openings for ℓ independent IOPP.query repetitions.
-  // Used by the extension-challenge compact path, and accepted as a legacy
-  // base-challenge layout when query_multiproofs is empty.
-  std::vector<BaseFoldPCSQueryProof> query_proofs;
 
   // Optional extension-ring payload used when
   // BaseFoldPCSChallengeConfig::use_extension_challenges=true.
@@ -163,6 +135,17 @@ VerifierQueryParallelConfig GetVerifierQueryParallelConfig();
 MerkleRoot BaseFoldPCSCommit(const NTL::vec_ZZ_pE &f_coeffs,
                              const FoldableCodeParams &params);
 
+// Builds reusable top-level commitment artifacts for π_d.
+//
+// Preconditions:
+// - f_coeffs.length() == MessageLength(params)
+BaseFoldPCSCommitArtifacts BaseFoldPCSBuildCommitArtifacts(
+    const NTL::vec_ZZ_pE &f_coeffs, const FoldableCodeParams &params);
+
+// Unchecked variant of BaseFoldPCSBuildCommitArtifacts intended for hot paths.
+BaseFoldPCSCommitArtifacts BaseFoldPCSBuildCommitArtifactsUnchecked(
+    const NTL::vec_ZZ_pE &f_coeffs, const FoldableCodeParams &params);
+
 // Proves an evaluation claim for a committed multilinear polynomial.
 //
 // Preconditions:
@@ -189,6 +172,22 @@ BaseFoldPCSEvalProof BaseFoldPCSProveEvalUnchecked(
     const NTL::vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
     const FieldElement &claimed_y, long num_queries,
     const FoldableCodeParams &params);
+
+// Proves an evaluation claim assuming the top codeword/oracle π_d is already
+// encoded and Merkle-committed via `commit_artifacts`.
+BaseFoldPCSEvalProof BaseFoldPCSProveEvalFromCommittedTopOracle(
+    const NTL::vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const FoldableCodeParams &params,
+    const BaseFoldPCSCommitArtifacts &commit_artifacts);
+
+// Unchecked variant of BaseFoldPCSProveEvalFromCommittedTopOracle intended for
+// benchmarking/hot paths.
+BaseFoldPCSEvalProof BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked(
+    const NTL::vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const FoldableCodeParams &params,
+    const BaseFoldPCSCommitArtifacts &commit_artifacts);
 
 // Verifies an evaluation proof for commitment `C` at point `z` with value `y`.
 //
@@ -220,6 +219,21 @@ BaseFoldPCSEvalProof BaseFoldPCSProveEvalWithChallengeConfigUnchecked(
     const NTL::vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
     const FieldElement &claimed_y, long num_queries,
     const FoldableCodeParams &params,
+    const BaseFoldPCSChallengeConfig &challenge_cfg);
+
+BaseFoldPCSEvalProof BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle(
+    const NTL::vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const FoldableCodeParams &params,
+    const BaseFoldPCSCommitArtifacts &commit_artifacts,
+    const BaseFoldPCSChallengeConfig &challenge_cfg);
+
+BaseFoldPCSEvalProof
+BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked(
+    const NTL::vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const FoldableCodeParams &params,
+    const BaseFoldPCSCommitArtifacts &commit_artifacts,
     const BaseFoldPCSChallengeConfig &challenge_cfg);
 
 bool BaseFoldPCSVerifyEvalWithChallengeConfig(

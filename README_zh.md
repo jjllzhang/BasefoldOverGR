@@ -150,8 +150,8 @@
 
 - BaseFold IOPP（Protocol 2/3）实现：
   - folding prover：`ProverCommitAll/ProverCommitRound`
-  - query verifier：`VerifyQueryFromOracles/VerifyQueryFromMerkleOpenings`
-  - Merkle 承诺与 opening：`MerkleCommitOracle/MerkleOpenOracle/MerkleVerifyOpening`
+  - query verifier：`VerifyQueryFromOracles`
+  - Merkle 承诺与 multiproof：`MerkleCommitOracle/MerkleOpenOracleMany/MerkleVerifyMultiproof`
 
 ### `include/BaseFold/Profile.hpp`
 
@@ -169,7 +169,7 @@
   - 新增配置化入口（保持旧接口不变）：`BaseFoldPCSProveEvalWithChallengeConfig` / `BaseFoldPCSProveEvalWithChallengeConfigUnchecked` / `BaseFoldPCSVerifyEvalWithChallengeConfig`
     - 当 `use_extension_challenges=false` 时，行为与旧接口一致；
     - 当 `use_extension_challenges=true` 时，Fiat–Shamir challenge 在 `ZZ_pE` 的外层扩环上采样，并把扩环参数绑定到 transcript；sumcheck / folding 在扩环内执行，并对扩环中间层 `π_0..π_{d-1}` 做可验证 Merkle 承诺，同时顶层 commitment（`π_d` 的 Merkle root）仍保持在原环上。
-    - 扩环 challenge 路径的 proof payload 已做去冗余压缩：不再重复携带 base 侧 `h_i / pi0_full`，`query_proofs` 只保留顶层 base opening；`extension.r_by_level` 允许省略（由 transcript 重采样恢复）。
+    - 扩环 challenge 路径的 proof payload 已收敛为 multiproof-only 且做了去冗余压缩：不再重复携带 base 侧 `h_i / pi0_full`，base 与 extension query payload 都使用共享的 Merkle multiproof；`extension.r_by_level` 允许省略（由 transcript 重采样恢复）。
     - `challenge_extension_modulus` 现在会校验代数条件：在域模式要求不可约；在环模式要求模 `p` 约化后不可约（basic irreducible）。
   - 支持 `k0=2^κ` 的情况（BaseFold 论文 Remark 3）：IOPP depth 为 `d`，多项式点维度为 `d+κ`；`κ=0` 时退化为 `Basefold_over_GR.pdf` 的 Protocol 4（`k0==1`）。
 
@@ -462,14 +462,14 @@ cat "$csv"
     ...
   [profile-verifier]
     BaseFoldPCSVerifyEval total: ... ms  (calls 1)
-    MerkleVerifyOpening:         ... ms  (calls ...)
+    MerkleVerifyMultiproof:      ... ms  (calls ...)
     EvalLineAt:                  ... ms  (calls ...)
     ...
 ```
 
 - `BaseFoldPCSProveEval total`：总 prover 时间（bench 里的 prover 段）。
 - `BaseFoldPCSVerifyEval total`：总 verifier 时间。
-- `MerkleTree::Build`（prover）与 `MerkleVerifyOpening`（verifier）等条目用于定位 Merkle 相关开销；`EvalLineAt`/`TryInvertUnit` 等条目用于定位折叠一致性与环算术开销。
+- `MerkleTree::Build`（prover）与 `MerkleVerifyMultiproof`（verifier）等条目用于定位 Merkle 相关开销；`EvalLineAt`/`TryInvertUnit` 等条目用于定位折叠一致性与环算术开销。
 
 #### 验证完整性说明（不会减少 proof 校验步骤）
 

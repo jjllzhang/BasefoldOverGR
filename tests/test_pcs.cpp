@@ -217,13 +217,20 @@ void TestPCS_EvalProof_GF4() {
   const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
 
   const basefold::MerkleRoot C = basefold::BaseFoldPCSCommit(f_coeffs, params);
+  const basefold::BaseFoldPCSCommitArtifacts commit_artifacts =
+      basefold::BaseFoldPCSBuildCommitArtifacts(f_coeffs, params);
+  CHECK(commit_artifacts.root_d == C);
   const long num_queries = 3;
   const basefold::BaseFoldPCSEvalProof proof =
       basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries, params);
+  const basefold::BaseFoldPCSEvalProof proof_from_committed =
+      basefold::BaseFoldPCSProveEvalFromCommittedTopOracle(
+          f_coeffs, z, y, num_queries, params, commit_artifacts);
 
   CHECK(static_cast<long>(proof.query_multiproofs.size()) == params.d + 1);
-  CHECK(proof.query_proofs.empty());
   CHECK(basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params));
+  CHECK(basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries,
+                                        proof_from_committed, params));
 
   const ZZ_pE y_bad = y + testutil::ConstZZpE(1);
   CHECK(!basefold::BaseFoldPCSVerifyEval(C, z, y_bad, num_queries, proof, params));
@@ -310,7 +317,6 @@ void TestPCS_EvalProof_GR42() {
       basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries, params);
 
   CHECK(static_cast<long>(proof.query_multiproofs.size()) == params.d + 1);
-  CHECK(proof.query_proofs.empty());
   CHECK(basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params));
 
   const ZZ_pE y_bad = y + testutil::ConstZZpE(1);
@@ -386,6 +392,8 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
   const std::vector<ZZ_pE> z = {alpha, alpha + testutil::ConstZZpE(1)};
   const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
   const basefold::MerkleRoot C = basefold::BaseFoldPCSCommit(f_coeffs, params);
+  const basefold::BaseFoldPCSCommitArtifacts commit_artifacts =
+      basefold::BaseFoldPCSBuildCommitArtifacts(f_coeffs, params);
 
   basefold::BaseFoldPCSChallengeConfig cfg;
   cfg.use_extension_challenges = true;
@@ -399,18 +407,21 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
   const basefold::BaseFoldPCSEvalProof proof =
       basefold::BaseFoldPCSProveEvalWithChallengeConfig(f_coeffs, z, y,
                                                         num_queries, params, cfg);
+  const basefold::BaseFoldPCSEvalProof proof_from_committed =
+      basefold::BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle(
+          f_coeffs, z, y, num_queries, params, commit_artifacts, cfg);
 
   CHECK(proof.extension.enabled);
   CHECK(proof.extension.r_by_level.empty());
   CHECK(static_cast<long>(proof.extension.roots_by_level.size()) == params.d);
-  CHECK(proof.query_proofs.empty());
-  CHECK(proof.extension.query_proofs.empty());
   CHECK(static_cast<long>(proof.extension.query_multiproofs.size()) == params.d);
   CHECK(!proof.extension.base_top_query_multiproof.queried_indices.empty());
   CHECK(proof.extension.base_top_query_multiproof.values.length() > 0);
 
   CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
       C, z, y, num_queries, proof, params, cfg));
+  CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      C, z, y, num_queries, proof_from_committed, params, cfg));
 
   CHECK(!basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params));
 
@@ -511,8 +522,6 @@ void TestPCS_EvalProof_ExtChallengeConfig_GR42() {
   CHECK(proof.extension.enabled);
   CHECK(proof.extension.r_by_level.empty());
   CHECK(static_cast<long>(proof.extension.roots_by_level.size()) == params.d);
-  CHECK(proof.query_proofs.empty());
-  CHECK(proof.extension.query_proofs.empty());
   CHECK(static_cast<long>(proof.extension.query_multiproofs.size()) == params.d);
   CHECK(!proof.extension.base_top_query_multiproof.queried_indices.empty());
   CHECK(proof.extension.base_top_query_multiproof.values.length() > 0);
@@ -582,12 +591,17 @@ void TestPCS_ProofSizeFixedWidth_GF4_HandCheck() {
   proof.query_multiproofs[0].sibling_hashes.resize(3);
   proof.extension.enabled = false;
 
-  const std::uint64_t expected_bytes = 216;
+  const std::uint64_t expected_bytes = 192;
   const std::uint64_t actual_bytes =
       basefold::BaseFoldPCSEvalProofSizeBytes(proof);
   CHECK_EQ(actual_bytes, expected_bytes);
   CHECK_EQ(basefold::BaseFoldPCSEvalProofSizeKB(proof),
            static_cast<double>(expected_bytes) / 1024.0);
+
+  basefold::BaseFoldPCSEvalProof proof_without_indices = proof;
+  proof_without_indices.query_multiproofs[0].queried_indices.clear();
+  CHECK_EQ(basefold::BaseFoldPCSEvalProofSizeBytes(proof_without_indices),
+           expected_bytes);
 }
 
 void TestPCS_ProofSizeFixedWidth_ExtensionWidthDerivation() {
@@ -605,6 +619,7 @@ void TestPCS_ProofSizeFixedWidth_ExtensionWidthDerivation() {
   basefold::BaseFoldPCSEvalProof proof;
   proof.extension.enabled = true;
   proof.extension.msg0_coeffs.resize(1);
+  proof.extension.r_by_level.resize(2);
 
   basefold::BaseFoldProofSizeOptions degree2;
   degree2.challenge_ext_degree = 2;

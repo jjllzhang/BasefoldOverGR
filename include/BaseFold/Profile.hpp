@@ -283,9 +283,9 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
     os << "  [profile-verifier]\n";
     os << "    BaseFoldPCSVerifyEval total: " << total_ms << " ms"
        << "  (calls " << p.pcs_verify_calls << ")\n";
-    os << "    VerifyQueryFromMerkleOpenings: " << query_ms << " ms"
+    os << "    VerifyQueryMultiproofs:       " << query_ms << " ms"
        << "  (calls " << p.verify_query_merkle_calls << ")\n";
-    os << "    MerkleVerifyOpening:         " << merkle_open_ms << " ms"
+    os << "    MerkleVerifyMultiproof:      " << merkle_open_ms << " ms"
        << "  (calls " << p.merkle_verify_opening_calls << ")\n";
     os << "    MerkleCommitOracle:          " << merkle_commit_ms << " ms"
        << "  (calls " << p.merkle_commit_oracle_calls << ")\n";
@@ -301,7 +301,7 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
     if (has_ext_verifier_breakdown) {
       os << "    ExtensionVerifyQuery:        " << ext_query_ms << " ms"
          << "  (calls " << p.ext_verify_query_merkle_calls << ")\n";
-      os << "    ExtensionMerkleVerify:       " << ext_merkle_open_ms << " ms"
+      os << "    ExtensionMerkleMultiproof:   " << ext_merkle_open_ms << " ms"
          << "  (calls " << p.ext_merkle_verify_opening_calls << ")\n";
       os << "    EvalLineAtExtension:         " << ext_eval_line_ms << " ms"
          << "  (calls " << p.ext_eval_line_at_calls << ")\n";
