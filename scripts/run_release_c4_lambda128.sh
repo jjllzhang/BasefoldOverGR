@@ -48,7 +48,6 @@ COMMIT_REPS="${COMMIT_REPS:-3}"
 EVAL_WARMUP="${EVAL_WARMUP:-1}"
 EVAL_REPS="${EVAL_REPS:-3}"
 SEED="${SEED:-0}"
-RUN_PROOF_SIZE="${RUN_PROOF_SIZE:-1}"
 CONTINUE_ON_ERROR="${CONTINUE_ON_ERROR:-1}"
 CMD_TIMEOUT_SEC="${CMD_TIMEOUT_SEC:-0}"
 CONTEXTS="${CONTEXTS:-all}"  # all or comma list, see valid ids in parsing block
@@ -150,10 +149,6 @@ if (( D_MIN < 0 || D_MAX < D_MIN )); then
 fi
 if [[ "$ISOLATE_BUILD_DIR" != "0" && "$ISOLATE_BUILD_DIR" != "1" ]]; then
   echo "ISOLATE_BUILD_DIR must be 0 or 1" >&2
-  exit 2
-fi
-if [[ "$RUN_PROOF_SIZE" != "0" && "$RUN_PROOF_SIZE" != "1" ]]; then
-  echo "RUN_PROOF_SIZE must be 0 or 1" >&2
   exit 2
 fi
 if [[ "$CONTINUE_ON_ERROR" != "0" && "$CONTINUE_ON_ERROR" != "1" ]]; then
@@ -619,7 +614,7 @@ run_one_context_d() {
       error="$(first_error_line "$commit_log")"
     fi
   else
-    commit_ms="$(parse_first "encode-only mean" 3 "$commit_log")"
+    commit_ms="$(parse_first "^  commit[[:space:]]+mean" 3 "$commit_log")"
     if [[ -z "$commit_ms" ]]; then
       commit_ms="NA"
     fi
@@ -646,13 +641,11 @@ run_one_context_d() {
       if [[ -z "$verifier_ms" ]]; then
         verifier_ms="NA"
       fi
-      if [[ "$RUN_PROOF_SIZE" == "1" ]]; then
-        proof_kb="$(parse_first "proof size" 3 "$eval_log")"
-        proof_bytes="$(awk '/proof size/{gsub(/[^0-9]/, "", $5); print $5; exit}' "$eval_log")"
-        if [[ -z "$proof_kb" || -z "$proof_bytes" ]]; then
-          status="proof_parse_failed"
-          error="missing proof size line in bench_pcs_eval output"
-        fi
+      proof_kb="$(parse_first "proof size" 3 "$eval_log")"
+      proof_bytes="$(awk '/proof size/{gsub(/[^0-9]/, "", $5); print $5; exit}' "$eval_log")"
+      if [[ -z "$proof_kb" || -z "$proof_bytes" ]]; then
+        status="proof_parse_failed"
+        error="missing proof size line in bench_pcs_eval output"
       fi
     fi
   fi
@@ -811,7 +804,6 @@ echo "[4/4] Build markdown summary"
     fi
   fi
   echo "- pin_build: $PIN_BUILD"
-  echo "- run_proof_size: $RUN_PROOF_SIZE"
   echo "- continue_on_error: $CONTINUE_ON_ERROR"
   echo "- cmd_timeout_sec: $CMD_TIMEOUT_SEC"
   echo ""

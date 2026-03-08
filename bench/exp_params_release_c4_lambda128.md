@@ -10,11 +10,13 @@
   - 在 bench 参数中对应 `d=3..29`（`k0=1` 时，`poly_dim = k_d = 2^d`）
 - 构建：`Release`
 - 指标：
-  - `commit time`：`bench_pcs_commit` 的 `encode-only mean`
+  - `commit time`：`bench_pcs_commit` 的 `commit mean`
   - `prover time`：`bench_pcs_eval` 的 `prover mean`
   - `verifier time`：`bench_pcs_eval` 的 `verifier mean`
   - `proof size`：`bench_pcs_eval` 对真实 proof 走 fixed-width `CountingSink`
-    得到的精确序列化大小（`proof_size_bytes` / `proof_size_kb`）
+    得到的精确 payload 大小（省略 verifier 可从 transcript 重建的
+    indices/challenges，如 `r_by_level`；输出 `proof_size_bytes` /
+    `proof_size_kb`）
 
 ## 2) 实验上下文（默认 `all` 共 12 组）
 
@@ -170,7 +172,8 @@ CONTEXTS=ring-gr-2p16-128-ext scripts/run_release_c4_lambda128.sh
 - 明细 csv：`results.csv`
   - 每行一个 `(context, d)` 点，含 `gamma/queries/4项指标/status/error`
   - 其中 `proof_size_bytes` / `proof_size_kb` 来自 `bench_pcs_eval` 对真实 proof
-    的 fixed-width counting 结果
+    的 fixed-width payload counting 结果（省略 verifier 可重建的
+    indices/challenges）
 - 汇总 markdown：`RESULTS.md`
 - 原始日志：`logs/*.log`（来自 `calc_iopp_params`、`bench_pcs_commit`、
   `bench_pcs_eval`）
