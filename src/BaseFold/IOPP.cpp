@@ -184,10 +184,10 @@ bool BaseModulusIsPrime() {
   return cached_is_prime;
 }
 
-bool IsUnit(const ZZ_pE &a) {
+bool IsUnitInCurrentZZpEContext(const ZZ_pE &a) {
   if (a == 0) return false;
   const long r = ZZ_pE::degree();
-  if (r <= 0) LogicError("IsUnit: invalid extension degree");
+  if (r <= 0) LogicError("IsUnitInCurrentZZpEContext: invalid extension degree");
   if (r == 1) {
     return IsUnitInBaseRing(coeff(rep(a), 0));
   }
@@ -198,14 +198,16 @@ bool IsUnit(const ZZ_pE &a) {
   return false;
 }
 
-bool TryInvertUnit(ZZ_pE &inv_out, const ZZ_pE &a) {
+bool TryInvertUnitInCurrentZZpEContext(ZZ_pE &inv_out, const ZZ_pE &a) {
   Profile *prof = ActiveProfile();
   ScopedTimer timer(prof ? &prof->try_invert_unit_ns : nullptr,
                     prof ? &prof->try_invert_unit_calls : nullptr);
 
   if (a == 0) return false;
   const long r = ZZ_pE::degree();
-  if (r <= 0) LogicError("TryInvertUnit: invalid extension degree");
+  if (r <= 0) {
+    LogicError("TryInvertUnitInCurrentZZpEContext: invalid extension degree");
+  }
 
   // Context-aware single-entry cache: inversions are often repeated (e.g. when
   // diag_T is constant, all folding denominators match).
@@ -237,9 +239,9 @@ bool TryInvertUnit(ZZ_pE &inv_out, const ZZ_pE &a) {
     bool is_unit = false;
     if (prof != nullptr) {
       ScopedTimer is_unit_timer(&prof->is_unit_ns, &prof->is_unit_calls);
-      is_unit = IsUnit(a);
+      is_unit = IsUnitInCurrentZZpEContext(a);
     } else {
-      is_unit = IsUnit(a);
+      is_unit = IsUnitInCurrentZZpEContext(a);
     }
     if (!is_unit) return false;
 
@@ -299,8 +301,8 @@ bool TryInvertUnit(ZZ_pE &inv_out, const ZZ_pE &a) {
   return true;
 }
 
-Digest HashWithPrefix(Byte prefix) {
-  return HashDigest(&prefix, 1, "HashWithPrefix");
+Digest HashWithDomainTagByte(Byte domain_tag_byte) {
+  return HashDigest(&domain_tag_byte, 1, "HashWithDomainTagByte");
 }
 
 Digest HashNode(const Digest &left, const Digest &right) {
@@ -370,7 +372,7 @@ using MerkleMultiproofPlanLevel = multiproof_planner::PlanLevel;
 
 Digest MerkleRootRaw(std::vector<Digest> level) {
   if (level.empty())
-    return HashWithPrefix(static_cast<Byte>(0x04));
+    return HashWithDomainTagByte(static_cast<Byte>(0x04));
 
   while (level.size() > 1) {
     if (level.size() % 2 == 1)
@@ -412,7 +414,7 @@ bool SolveLinearSystemRref(vec_ZZ_pE &x_out, mat_ZZ_pE &aug) {
 
     for (long c = col; c < n; ++c) {
       for (long r = row; r < m; ++r) {
-        if (TryInvertUnit(inv_pivot, aug[r][c])) {
+        if (TryInvertUnitInCurrentZZpEContext(inv_pivot, aug[r][c])) {
           pivot_row = r;
           pivot_col = c;
           break;
@@ -542,7 +544,7 @@ FieldElement EvalLineAt(const FieldElement &x, const FieldElement &x1,
   if (denom == 0)
     LogicError("EvalLineAt: x1 must not equal x2");
   ZZ_pE inv_denom;
-  if (!TryInvertUnit(inv_denom, denom)) {
+  if (!TryInvertUnitInCurrentZZpEContext(inv_denom, denom)) {
     LogicError("EvalLineAt: x2-x1 must be a unit");
   }
   return y1 + (x - x1) * (y2 - y1) * inv_denom;
@@ -707,7 +709,7 @@ MerkleRoot MerkleCommitOracle(const Oracle &oracle) {
   if (leaf_count < 0)
     LogicError("MerkleCommitOracle: invalid leaf count");
   if (leaf_count == 0)
-    return HashRootWithCount(0, HashWithPrefix(static_cast<Byte>(0x04)));
+    return HashRootWithCount(0, HashWithDomainTagByte(static_cast<Byte>(0x04)));
 
   std::vector<Digest> leaf_hashes;
   leaf_hashes.reserve(static_cast<std::size_t>(leaf_count));
@@ -750,7 +752,8 @@ bool MerkleVerifyMultiproof(const MerkleRoot &root, long leaf_count,
         !proof.sibling_hashes.empty()) {
       return false;
     }
-    return root == HashRootWithCount(0, HashWithPrefix(static_cast<Byte>(0x04)));
+    return root ==
+           HashRootWithCount(0, HashWithDomainTagByte(static_cast<Byte>(0x04)));
   }
 
   if (!multiproof_planner::IsSortedUniqueIndicesInRange(
@@ -804,7 +807,7 @@ MerkleTree MerkleTree::Build(const Oracle &oracle) {
   t.raw_root_ = Digest{};
 
   if (leaf_count == 0) {
-    t.raw_root_ = HashWithPrefix(static_cast<Byte>(0x04));
+    t.raw_root_ = HashWithDomainTagByte(static_cast<Byte>(0x04));
     return t;
   }
 
@@ -1007,7 +1010,7 @@ bool DecodeC0(vec_ZZ_pE &msg0_out, const Oracle &pi0,
     ZZ_pE inv_g;
     long pivot = -1;
     for (long j = 0; j < n0; ++j) {
-      if (TryInvertUnit(inv_g, params.G0[0][j])) {
+      if (TryInvertUnitInCurrentZZpEContext(inv_g, params.G0[0][j])) {
         pivot = j;
         break;
       }

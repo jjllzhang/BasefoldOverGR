@@ -630,7 +630,7 @@ void ValidateParamsOrThrow(const FoldableCodeParams &params) {
   (void)MessageLength(params);
 }
 
-ZZ PositiveMod(const ZZ &a, const ZZ &m) {
+ZZ NormalizeModNonNegative(const ZZ &a, const ZZ &m) {
   ZZ r = a % m;
   if (r < 0) {
     r += m;
@@ -661,7 +661,7 @@ ZZ_pX ReduceZZpXModPrime(const ZZ_pX &poly_over_pk, const ZZ &p) {
   const long d = NTL::deg(poly_over_pk);
   for (long i = 0; i <= d; ++i) {
     ZZ_p c_mod_p;
-    NTL::conv(c_mod_p, PositiveMod(rep(coeff(poly_over_pk, i)), p));
+    NTL::conv(c_mod_p, NormalizeModNonNegative(rep(coeff(poly_over_pk, i)), p));
     if (c_mod_p != 0) {
       NTL::SetCoeff(out, i, c_mod_p);
     }
@@ -670,8 +670,9 @@ ZZ_pX ReduceZZpXModPrime(const ZZ_pX &poly_over_pk, const ZZ &p) {
   return out;
 }
 
-ZZ_pEX ReduceZZ_pEXToResidueField(const ZZ_pEX &poly_over_pk_ext, const ZZ &p,
-                                  long base_degree) {
+ZZ_pEX ReduceExtensionPolynomialToResidueField(const ZZ_pEX &poly_over_pk_ext,
+                                               const ZZ &p,
+                                               long base_degree) {
   ZZ_pEX out;
   NTL::clear(out);
   const long d = NTL::deg(poly_over_pk_ext);
@@ -681,7 +682,8 @@ ZZ_pEX ReduceZZ_pEXToResidueField(const ZZ_pEX &poly_over_pk_ext, const ZZ &p,
     NTL::clear(coeff_poly_mod_p);
     for (long j = 0; j < base_degree; ++j) {
       ZZ_p c_mod_p;
-      NTL::conv(c_mod_p, PositiveMod(rep(coeff(coeff_poly_over_pk, j)), p));
+      NTL::conv(c_mod_p,
+                NormalizeModNonNegative(rep(coeff(coeff_poly_over_pk, j)), p));
       if (c_mod_p != 0) {
         NTL::SetCoeff(coeff_poly_mod_p, j, c_mod_p);
       }
@@ -776,7 +778,7 @@ void ValidateChallengeConfigOrThrow(
   }
   ZZ_pE::init(base_modulus_over_p);
 
-  const ZZ_pEX ext_modulus_over_p = ReduceZZ_pEXToResidueField(
+  const ZZ_pEX ext_modulus_over_p = ReduceExtensionPolynomialToResidueField(
       challenge_cfg.challenge_extension_modulus, base_prime, base_degree);
 
   if (NTL::deg(ext_modulus_over_p) != ext_degree) {
@@ -876,7 +878,7 @@ ZZ_pEX LiftBaseToExtension(const FieldElement &x) {
   return out;
 }
 
-FieldElement ProjectExtensionToBaseConstant(const ZZ_pEX &x) {
+FieldElement ExtractBaseConstantCoefficient(const ZZ_pEX &x) {
   return coeff(x, 0);
 }
 
@@ -1357,7 +1359,7 @@ public:
 
     const FieldElement one_base = BaseRingOne();
     const FieldElement z_k_base =
-        ProjectExtensionToBaseConstant(z_[static_cast<std::size_t>(k - 1)]);
+        ExtractBaseConstantCoefficient(z_[static_cast<std::size_t>(k - 1)]);
     const FieldElement factor0_base = one_base - z_k_base;
     const FieldElement delta_factor_base = z_k_base - factor0_base;
 
@@ -1369,7 +1371,7 @@ public:
     for (long mask = 0; mask < half; ++mask) {
       const ZZ_pEX &prefix_mask = prefix[static_cast<std::size_t>(mask)];
       const FieldElement prefix_mask_base =
-          ProjectExtensionToBaseConstant(prefix_mask);
+          ExtractBaseConstantCoefficient(prefix_mask);
       const ZZ_pEX common =
           MulExtensionByBaseConstant(suffix_eq_prod_, prefix_mask_base);
 
