@@ -403,10 +403,11 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
   CHECK(proof.extension.enabled);
   CHECK(proof.extension.r_by_level.empty());
   CHECK(static_cast<long>(proof.extension.roots_by_level.size()) == params.d);
-  CHECK(static_cast<long>(proof.query_proofs.size()) == num_queries);
-  CHECK(proof.query_proofs[0].left.size() == 1U);
-  CHECK(proof.query_proofs[0].right.size() == 1U);
-  CHECK(proof.query_proofs[0].folded.empty());
+  CHECK(proof.query_proofs.empty());
+  CHECK(proof.extension.query_proofs.empty());
+  CHECK(static_cast<long>(proof.extension.query_multiproofs.size()) == params.d);
+  CHECK(!proof.extension.base_top_query_multiproof.queried_indices.empty());
+  CHECK(proof.extension.base_top_query_multiproof.values.length() > 0);
 
   CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
       C, z, y, num_queries, proof, params, cfg));
@@ -414,13 +415,22 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
   CHECK(!basefold::BaseFoldPCSVerifyEval(C, z, y, num_queries, proof, params));
 
   basefold::BaseFoldPCSEvalProof proof_ext_tampered = proof;
+  CHECK(!proof_ext_tampered.extension.query_multiproofs.empty());
+  CHECK(!proof_ext_tampered.extension.query_multiproofs[0].values.empty());
   ZZ_pE coeff1 = NTL::coeff(
-      proof_ext_tampered.extension.query_proofs[0].folded[0].value, 1);
+      proof_ext_tampered.extension.query_multiproofs[0].values[0], 1);
   coeff1 += testutil::ConstZZpE(1);
-  NTL::SetCoeff(proof_ext_tampered.extension.query_proofs[0].folded[0].value, 1,
+  NTL::SetCoeff(proof_ext_tampered.extension.query_multiproofs[0].values[0], 1,
                 coeff1);
   CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
       C, z, y, num_queries, proof_ext_tampered, params, cfg));
+
+  basefold::BaseFoldPCSEvalProof proof_top_tampered = proof;
+  CHECK(proof_top_tampered.extension.base_top_query_multiproof.values.length() > 0);
+  proof_top_tampered.extension.base_top_query_multiproof.values[0] +=
+      testutil::ConstZZpE(1);
+  CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      C, z, y, num_queries, proof_top_tampered, params, cfg));
 
   basefold::BaseFoldPCSEvalProof proof_root_tampered = proof;
   proof_root_tampered.extension.roots_by_level[0][0] ^= static_cast<basefold::Byte>(0x01);
@@ -501,21 +511,31 @@ void TestPCS_EvalProof_ExtChallengeConfig_GR42() {
   CHECK(proof.extension.enabled);
   CHECK(proof.extension.r_by_level.empty());
   CHECK(static_cast<long>(proof.extension.roots_by_level.size()) == params.d);
-  CHECK(static_cast<long>(proof.query_proofs.size()) == num_queries);
-  CHECK(proof.query_proofs[0].left.size() == 1U);
-  CHECK(proof.query_proofs[0].right.size() == 1U);
-  CHECK(proof.query_proofs[0].folded.empty());
+  CHECK(proof.query_proofs.empty());
+  CHECK(proof.extension.query_proofs.empty());
+  CHECK(static_cast<long>(proof.extension.query_multiproofs.size()) == params.d);
+  CHECK(!proof.extension.base_top_query_multiproof.queried_indices.empty());
+  CHECK(proof.extension.base_top_query_multiproof.values.length() > 0);
   CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
       C, z, y, num_queries, proof, params, cfg));
 
   basefold::BaseFoldPCSEvalProof proof_open_tampered = proof;
+  CHECK(!proof_open_tampered.extension.query_multiproofs.empty());
+  CHECK(!proof_open_tampered.extension.query_multiproofs[0].values.empty());
   ZZ_pE coeff1 = NTL::coeff(
-      proof_open_tampered.extension.query_proofs[0].folded[0].value, 1);
+      proof_open_tampered.extension.query_multiproofs[0].values[0], 1);
   coeff1 += testutil::ConstZZpE(1);
-  NTL::SetCoeff(
-      proof_open_tampered.extension.query_proofs[0].folded[0].value, 1, coeff1);
+  NTL::SetCoeff(proof_open_tampered.extension.query_multiproofs[0].values[0], 1,
+                coeff1);
   CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
       C, z, y, num_queries, proof_open_tampered, params, cfg));
+
+  basefold::BaseFoldPCSEvalProof proof_top_tampered = proof;
+  CHECK(proof_top_tampered.extension.base_top_query_multiproof.values.length() > 0);
+  proof_top_tampered.extension.base_top_query_multiproof.values[0] +=
+      testutil::ConstZZpE(1);
+  CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      C, z, y, num_queries, proof_top_tampered, params, cfg));
 
   basefold::BaseFoldPCSEvalProof proof_root_tampered = proof;
   proof_root_tampered.extension.roots_by_level[0][0] ^=

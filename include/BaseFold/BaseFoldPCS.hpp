@@ -39,6 +39,13 @@ struct ExtensionMerkleOpening {
   MerkleAuthPath auth_path;
 };
 
+// A pruned Merkle multiproof for multiple leaves in the same extension oracle.
+struct ExtensionMerkleMultiproof {
+  std::vector<long> queried_indices;
+  std::vector<NTL::ZZ_pEX> values;
+  std::vector<Digest> sibling_hashes;
+};
+
 // One query repetition's values along the extension-ring folding chain.
 struct BaseFoldPCSQueryProofExtension {
   std::vector<ExtensionMerkleOpening> left;    // size == params.d
@@ -70,7 +77,16 @@ struct BaseFoldPCSExtensionProofData {
   // Full π_0 in E(U), derived from extension-ring folding.
   std::vector<NTL::ZZ_pEX> pi0_full;
 
-  // Query values in E(U).
+  // Shared base openings into the top-level base commitment C = MerkleRoot(π_d).
+  // Compact multiproof layout may use this and leave BaseFoldPCSEvalProof::
+  // query_proofs empty.
+  MerkleMultiproof base_top_query_multiproof;
+
+  // Shared extension openings grouped by extension oracle level π_0..π_{d-1}.
+  // Compact multiproof layout may populate this and leave query_proofs empty.
+  std::vector<ExtensionMerkleMultiproof> query_multiproofs;
+
+  // Legacy per-query extension openings.
   std::vector<BaseFoldPCSQueryProofExtension> query_proofs;
 };
 
