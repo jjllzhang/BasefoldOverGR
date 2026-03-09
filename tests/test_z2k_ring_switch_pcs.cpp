@@ -1486,6 +1486,43 @@ void TestRingSwitchVerifyEval_AcceptsHonestProof() {
                                           claimed_s, /*num_queries=*/2, proof));
 }
 
+void TestRingSwitchVerifyEval_AcceptsHonestProofFromDirectProvePath() {
+  testutil::PrintInfo("Ring-switch WP6: direct prove path verifies end-to-end");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::RingSwitchPCSParams params =
+      BuildRingSwitchParamsGR42(/*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
+  const vec_ZZ_pE t_table =
+      BuildBaseRingCoeffVector({3, 1, 0, 2, 1, 2, 3, 0});
+  const std::vector<ZZ_pE> z = {alpha + testutil::ConstZZpE(1), alpha,
+                                testutil::ConstZZpE(3)};
+  const ZZ_pE claimed_s = basefold::EvalMultilinearMonomialCoeffs(
+      basefold::BooleanHypercubeTableToMonomialCoeffs(t_table), z);
+
+  const basefold::MerkleRoot commitment =
+      basefold::RingSwitchPCSCommit(params, t_table);
+  const basefold::RingSwitchPCSEvalProof proof =
+      basefold::RingSwitchPCSProveEval(params, t_table, z, claimed_s,
+                                       /*num_queries=*/2);
+
+  CHECK(basefold::RingSwitchPCSVerifyEval(params, commitment, z, claimed_s,
+                                          /*num_queries=*/2, proof));
+}
+
 void TestRingSwitchVerifyEval_RejectsTampering() {
   testutil::PrintInfo("Ring-switch WP5: verifier rejects wrong claim, outer tampering, and backend tampering");
 
@@ -1820,6 +1857,7 @@ int main() {
     RUN_TEST(TestRingSwitchProveEvalFromCommitArtifacts_HonestProofIsSelfConsistent);
     RUN_TEST(TestRingSwitchProveEval_DirectAndArtifactPathsAgreeOnOuterMessages);
     RUN_TEST(TestRingSwitchVerifyEval_AcceptsHonestProof);
+    RUN_TEST(TestRingSwitchVerifyEval_AcceptsHonestProofFromDirectProvePath);
     RUN_TEST(TestRingSwitchVerifyEval_RejectsTampering);
     RUN_TEST(TestRingSwitchVerifyEval_DimensionZeroUsesNoSumcheckRounds);
     RUN_TEST(TestProductSumcheckProver_BooleanTablesPasses);
