@@ -52,6 +52,12 @@ struct Profile {
   std::uint64_t transcript_challenge_ns = 0;
   std::uint64_t transcript_challenge_calls = 0;
 
+  std::uint64_t z2k_backend_prove_ns = 0;
+  std::uint64_t z2k_backend_prove_calls = 0;
+
+  std::uint64_t z2k_backend_verify_ns = 0;
+  std::uint64_t z2k_backend_verify_calls = 0;
+
   std::uint64_t verify_query_merkle_ns = 0;
   std::uint64_t verify_query_merkle_calls = 0;
 
@@ -172,6 +178,7 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
     const double merkle_open_ms = NsToMs(p.merkle_tree_open_ns);
     const double absorb_ms = NsToMs(p.transcript_absorb_ns);
     const double challenge_ms = NsToMs(p.transcript_challenge_ns);
+    const double z2k_backend_prove_ms = NsToMs(p.z2k_backend_prove_ns);
     const double ext_sumcheck_init_ms = NsToMs(p.ext_sumcheck_init_ns);
     const double ext_sumcheck_poly_ms = NsToMs(p.ext_sumcheck_current_poly_ns);
     const double ext_sumcheck_recv_ms =
@@ -200,6 +207,7 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
                                       p.ext_prover_commit_round_ns +
                                       p.ext_merkle_tree_build_ns +
                                       p.ext_merkle_tree_open_ns +
+                                      p.z2k_backend_prove_ns +
                                       p.transcript_absorb_ns +
                                       p.transcript_challenge_ns;
     const double other_ms =
@@ -228,6 +236,10 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
        << "  (calls " << p.transcript_absorb_calls << ")\n";
     os << "    Transcript challenge:        " << challenge_ms << " ms"
        << "  (calls " << p.transcript_challenge_calls << ")\n";
+    if (p.z2k_backend_prove_calls > 0) {
+      os << "    Z2kBackendProveEval:        " << z2k_backend_prove_ms << " ms"
+         << "  (calls " << p.z2k_backend_prove_calls << ")\n";
+    }
     if (has_ext_prover_breakdown) {
       os << "    ExtensionSumcheck total:     " << ext_sumcheck_total_ms << " ms\n";
       os << "      init:                      " << ext_sumcheck_init_ms << " ms"
@@ -252,6 +264,7 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
     const double merkle_open_ms = NsToMs(p.merkle_verify_opening_ns);
     const double merkle_commit_ms = NsToMs(p.merkle_commit_oracle_ns);
     const double eval_line_ms = NsToMs(p.eval_line_at_ns);
+    const double z2k_backend_verify_ms = NsToMs(p.z2k_backend_verify_ns);
     const double inv_ms = NsToMs(p.try_invert_unit_ns);
     const double is_unit_ms = NsToMs(p.is_unit_ns);
     const double inv_fallback_ms = NsToMs(p.inv_fallback_ns);
@@ -276,8 +289,9 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
             ? NsToMs(total_query_ns - total_query_accounted_ns)
             : 0.0;
     const double outside_query_ms =
-        (p.pcs_verify_ns > total_query_ns)
-            ? NsToMs(p.pcs_verify_ns - total_query_ns)
+        (p.pcs_verify_ns > total_query_ns + p.z2k_backend_verify_ns)
+            ? NsToMs(p.pcs_verify_ns - total_query_ns -
+                     p.z2k_backend_verify_ns)
             : 0.0;
 
     os << "  [profile-verifier]\n";
@@ -291,6 +305,11 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
        << "  (calls " << p.merkle_commit_oracle_calls << ")\n";
     os << "    EvalLineAt:                  " << eval_line_ms << " ms"
        << "  (calls " << p.eval_line_at_calls << ")\n";
+    if (p.z2k_backend_verify_calls > 0) {
+      os << "    Z2kBackendVerifyEval:       " << z2k_backend_verify_ms
+         << " ms"
+         << "  (calls " << p.z2k_backend_verify_calls << ")\n";
+    }
     os << "    TryInvertUnit (subset):      " << inv_ms << " ms"
        << "  (calls " << p.try_invert_unit_calls << ", cache hits "
        << p.try_invert_unit_cache_hits << ")\n";

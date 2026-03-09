@@ -923,9 +923,15 @@ RingSwitchPCSEvalProof RingSwitchPCSProveEvalFromCommitArtifacts(
         "RingSwitchPCSProveEvalFromCommitArtifacts: honest Equality Check 3 failed");
   }
 
-  proof.backend_proof = Z2kPCSBackendProveEval(
-      params.backend, commit_artifacts.t_packed_monomial_coeffs, rprime_suffix,
-      proof.t_star, num_queries, &commit_artifacts.backend_commit_artifacts);
+  {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->z2k_backend_prove_ns : nullptr,
+                      prof ? &prof->z2k_backend_prove_calls : nullptr);
+    proof.backend_proof = Z2kPCSBackendProveEval(
+        params.backend, commit_artifacts.t_packed_monomial_coeffs,
+        rprime_suffix, proof.t_star, num_queries,
+        &commit_artifacts.backend_commit_artifacts);
+  }
   return proof;
 }
 
@@ -1009,9 +1015,14 @@ bool RingSwitchPCSVerifyEval(const RingSwitchPCSParams &params,
     return false;
   }
 
-  return Z2kPCSBackendVerifyEval(params.backend, commitment, rprime_suffix,
-                                 proof.t_star, num_queries,
-                                 proof.backend_proof);
+  {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->z2k_backend_verify_ns : nullptr,
+                      prof ? &prof->z2k_backend_verify_calls : nullptr);
+    return Z2kPCSBackendVerifyEval(params.backend, commitment, rprime_suffix,
+                                   proof.t_star, num_queries,
+                                   proof.backend_proof);
+  }
 }
 
 vec_ZZ_pE DecomposeGRElementToBaseCoeffsPolynomialBasis(

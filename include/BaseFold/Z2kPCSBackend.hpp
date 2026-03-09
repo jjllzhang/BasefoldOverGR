@@ -18,6 +18,11 @@ struct Z2kPCSBackendProofSizeOptions {
   long challenge_ext_degree = 0;
 };
 
+struct Z2kPCSBackendProofEncodingOptions {
+  bool include_version_byte = true;
+  long challenge_ext_degree = 0;
+};
+
 using Z2kPCSBackendOpaquePtr = std::shared_ptr<const void>;
 
 struct Z2kPCSBackendVTable {
@@ -43,6 +48,9 @@ struct Z2kPCSBackendVTable {
                       const FieldElement &claimed_y, long num_queries,
                       const void *backend_proof,
                       const void *backend_params) = nullptr;
+  Bytes (*serialize_eval_proof)(
+      const void *backend_proof,
+      const Z2kPCSBackendProofEncodingOptions &options) = nullptr;
   std::uint64_t (*eval_proof_size_bytes)(
       const void *backend_proof,
       const Z2kPCSBackendProofSizeOptions &options) = nullptr;
@@ -97,6 +105,10 @@ bool Z2kPCSBackendVerifyEval(const Z2kPCSBackendHandle &backend,
                              const std::vector<FieldElement> &z,
                              const FieldElement &claimed_y, long num_queries,
                              const Z2kPCSBackendEvalProof &proof);
+
+Bytes Z2kPCSBackendSerializeEvalProof(
+    const Z2kPCSBackendHandle &backend, const Z2kPCSBackendEvalProof &proof,
+    const Z2kPCSBackendProofEncodingOptions &options = {});
 
 std::uint64_t Z2kPCSBackendEvalProofSizeBytes(
     const Z2kPCSBackendHandle &backend, const Z2kPCSBackendEvalProof &proof,

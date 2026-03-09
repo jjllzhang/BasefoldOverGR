@@ -46,6 +46,7 @@ add_library(galoisring
   src/BaseFold/BaseFoldPCS.cpp
   src/BaseFold/Z2kPCSBackend.cpp
   src/BaseFold/Z2kRingSwitchPCS.cpp
+  src/BaseFold/Z2kRingSwitchProofSerialize.cpp
   src/BaseFold/ProofSerialize.cpp
   src/BaseFold/ProofSize.cpp
 )
@@ -105,6 +106,12 @@ target_link_libraries(bench_pcs_commit PRIVATE galoisring)
 
 add_executable(bench_pcs_eval bench/bench_pcs_eval.cpp)
 target_link_libraries(bench_pcs_eval PRIVATE galoisring)
+
+add_executable(bench_z2k_ring_switch_commit bench/bench_z2k_ring_switch_commit.cpp)
+target_link_libraries(bench_z2k_ring_switch_commit PRIVATE galoisring)
+
+add_executable(bench_z2k_ring_switch_eval bench/bench_z2k_ring_switch_eval.cpp)
+target_link_libraries(bench_z2k_ring_switch_eval PRIVATE galoisring)
 
 add_executable(calc_iopp_params bench/calc_iopp_params.cpp)
 target_compile_features(calc_iopp_params PRIVATE cxx_std_17)

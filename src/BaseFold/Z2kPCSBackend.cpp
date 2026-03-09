@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 
+#include "BaseFold/ProofSerialize.hpp"
 #include "BaseFold/ProofSize.hpp"
 
 using NTL::LogicError;
@@ -40,6 +41,7 @@ void ValidateBackendVTableOrThrow(const Z2kPCSBackendVTable &vtable,
       vtable.commit == nullptr || vtable.build_commit_artifacts == nullptr ||
       vtable.commitment_from_artifacts == nullptr ||
       vtable.prove_eval == nullptr || vtable.verify_eval == nullptr ||
+      vtable.serialize_eval_proof == nullptr ||
       vtable.eval_proof_size_bytes == nullptr) {
     LogicError((std::string(func_name) +
                 ": backend vtable is missing required callbacks")
@@ -260,6 +262,17 @@ bool BaseFoldBackendVerifyEval(const MerkleRoot &commitment,
                                params);
 }
 
+Bytes BaseFoldBackendSerializeEvalProof(
+    const void *backend_proof,
+    const Z2kPCSBackendProofEncodingOptions &options) {
+  const BaseFoldPCSEvalProof &proof =
+      AsBaseFoldEvalProof(backend_proof, "BaseFoldBackendSerializeEvalProof");
+  FixedProofEncodingOptions basefold_options;
+  basefold_options.include_version_byte = options.include_version_byte;
+  basefold_options.challenge_ext_degree = options.challenge_ext_degree;
+  return SerializeBaseFoldPCSEvalProofFixedBytes(proof, basefold_options);
+}
+
 std::uint64_t BaseFoldBackendEvalProofSizeBytes(
     const void *backend_proof, const Z2kPCSBackendProofSizeOptions &options) {
   const BaseFoldPCSEvalProof &proof =
@@ -280,6 +293,7 @@ const Z2kPCSBackendVTable kBaseFoldBackendVTable = {
     &BaseFoldBackendCommitmentFromArtifacts,
     &BaseFoldBackendProveEval,
     &BaseFoldBackendVerifyEval,
+    &BaseFoldBackendSerializeEvalProof,
     &BaseFoldBackendEvalProofSizeBytes,
 };
 
@@ -383,6 +397,13 @@ bool Z2kPCSBackendVerifyEval(const Z2kPCSBackendHandle &backend,
   return backend.vtable->verify_eval(commitment, z, claimed_y, num_queries,
                                      proof.payload.get(),
                                      backend.params.get());
+}
+
+Bytes Z2kPCSBackendSerializeEvalProof(
+    const Z2kPCSBackendHandle &backend, const Z2kPCSBackendEvalProof &proof,
+    const Z2kPCSBackendProofEncodingOptions &options) {
+  ValidateEvalProofOrThrow(backend, proof, "Z2kPCSBackendSerializeEvalProof");
+  return backend.vtable->serialize_eval_proof(proof.payload.get(), options);
 }
 
 std::uint64_t Z2kPCSBackendEvalProofSizeBytes(
