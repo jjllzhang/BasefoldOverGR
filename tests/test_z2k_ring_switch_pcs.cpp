@@ -11,6 +11,7 @@
 #include <exception>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -90,6 +91,28 @@ basefold::FoldableCodeParams BuildParamsGR42Variant(const ZZ &p,
   params.diag_T[0][1] = one;
   params.diag_T[1][0] = one;
   params.diag_T[1][2] = alpha + one;
+  return params;
+}
+
+basefold::FoldableCodeParams BuildParamsGR42D0(const ZZ &p, const ZZ_pE &alpha) {
+  const long c = 2;
+  const long k0 = 1;
+  const long d = 0;
+  const long n0 = c * k0;
+
+  basefold::FoldableCodeParams params;
+  params.c = c;
+  params.k0 = k0;
+  params.d = d;
+  params.p = p;
+  params.zeta = alpha;
+
+  mat_ZZ_pE G0;
+  G0.SetDims(k0, n0);
+  const ZZ_pE one = testutil::ConstZZpE(1);
+  G0[0][0] = one;
+  G0[0][1] = alpha;
+  params.G0 = G0;
   return params;
 }
 
@@ -355,6 +378,43 @@ basefold::RingSwitchPCSParams BuildRingSwitchParamsGR42(long ell, long kappa,
   input.beta_basis = basefold::ActivePolynomialBasisDescriptor();
   input.backend = basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
   return basefold::RingSwitchPCSSetup(input);
+}
+
+basefold::RingSwitchPCSParams BuildRingSwitchParamsGR42D0(
+    long ell, long kappa, const ZZ &base_modulus, const ZZ_pX &F, const ZZ &p,
+    const ZZ_pE &alpha) {
+  basefold::RingSwitchPCSSetupInput input;
+  input.ell = ell;
+  input.kappa = kappa;
+  input.base_modulus = base_modulus;
+  input.extension_modulus = F;
+  input.alpha_basis = basefold::ActivePolynomialBasisDescriptor();
+  input.beta_basis = basefold::ActivePolynomialBasisDescriptor();
+  input.backend =
+      basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42D0(p, alpha));
+  return basefold::RingSwitchPCSSetup(input);
+}
+
+basefold::Z2kPCSBackendEvalProof MutateBaseFoldBackendSubproof(
+    const basefold::Z2kPCSBackendEvalProof &opaque_proof) {
+  const auto basefold_ptr =
+      std::static_pointer_cast<const basefold::BaseFoldPCSEvalProof>(
+          opaque_proof.payload);
+  CHECK(static_cast<bool>(basefold_ptr));
+
+  basefold::BaseFoldPCSEvalProof mutated = *basefold_ptr;
+  if (!mutated.h_by_level.empty()) {
+    mutated.h_by_level[0].a0 += testutil::ConstZZpE(1);
+  } else if (mutated.pi0_codeword.length() > 0) {
+    mutated.pi0_codeword[0] += testutil::ConstZZpE(1);
+  } else {
+    CHECK_MSG(false, "MutateBaseFoldBackendSubproof: no mutable payload found");
+  }
+
+  basefold::Z2kPCSBackendEvalProof out = opaque_proof;
+  out.payload = std::static_pointer_cast<const void>(
+      std::make_shared<basefold::BaseFoldPCSEvalProof>(std::move(mutated)));
+  return out;
 }
 
 void ExpectChildFailureContains(const function<void()> &fn, const string &needle,
@@ -1389,6 +1449,145 @@ void TestRingSwitchProveEval_DirectAndArtifactPathsAgreeOnOuterMessages() {
                                                      cached.backend_proof));
 }
 
+void TestRingSwitchVerifyEval_AcceptsHonestProof() {
+  testutil::PrintInfo("Ring-switch WP5: verifier accepts an honest proof");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::RingSwitchPCSParams params =
+      BuildRingSwitchParamsGR42(/*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
+  const vec_ZZ_pE t_table =
+      BuildBaseRingCoeffVector({0, 1, 2, 3, 1, 0, 3, 2});
+  const std::vector<ZZ_pE> z = {alpha, testutil::ConstZZpE(1),
+                                alpha + testutil::ConstZZpE(1)};
+  const ZZ_pE claimed_s = basefold::EvalMultilinearMonomialCoeffs(
+      basefold::BooleanHypercubeTableToMonomialCoeffs(t_table), z);
+
+  const basefold::RingSwitchPCSCommitArtifacts artifacts =
+      basefold::RingSwitchPCSBuildCommitArtifacts(params, t_table);
+  const basefold::RingSwitchPCSEvalProof proof =
+      basefold::RingSwitchPCSProveEvalFromCommitArtifacts(
+          params, t_table, z, claimed_s, /*num_queries=*/2, artifacts);
+
+  CHECK(basefold::RingSwitchPCSVerifyEval(params, artifacts.commitment, z,
+                                          claimed_s, /*num_queries=*/2, proof));
+}
+
+void TestRingSwitchVerifyEval_RejectsTampering() {
+  testutil::PrintInfo("Ring-switch WP5: verifier rejects wrong claim, outer tampering, and backend tampering");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::RingSwitchPCSParams params =
+      BuildRingSwitchParamsGR42(/*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
+  const vec_ZZ_pE t_table =
+      BuildBaseRingCoeffVector({3, 1, 0, 2, 1, 2, 3, 0});
+  const std::vector<ZZ_pE> z = {alpha + testutil::ConstZZpE(1), alpha,
+                                testutil::ConstZZpE(3)};
+  const ZZ_pE claimed_s = basefold::EvalMultilinearMonomialCoeffs(
+      basefold::BooleanHypercubeTableToMonomialCoeffs(t_table), z);
+
+  const basefold::RingSwitchPCSCommitArtifacts artifacts =
+      basefold::RingSwitchPCSBuildCommitArtifacts(params, t_table);
+  const basefold::RingSwitchPCSEvalProof proof =
+      basefold::RingSwitchPCSProveEvalFromCommitArtifacts(
+          params, t_table, z, claimed_s, /*num_queries=*/2, artifacts);
+
+  CHECK(basefold::RingSwitchPCSVerifyEval(params, artifacts.commitment, z,
+                                          claimed_s, /*num_queries=*/2, proof));
+
+  CHECK(!basefold::RingSwitchPCSVerifyEval(
+      params, artifacts.commitment, z, claimed_s + testutil::ConstZZpE(1),
+      /*num_queries=*/2, proof));
+
+  basefold::RingSwitchPCSEvalProof tampered_s_by_u = proof;
+  tampered_s_by_u.s_by_u[0] += testutil::ConstZZpE(1);
+  CHECK(!basefold::RingSwitchPCSVerifyEval(
+      params, artifacts.commitment, z, claimed_s, /*num_queries=*/2,
+      tampered_s_by_u));
+
+  basefold::RingSwitchPCSEvalProof tampered_h = proof;
+  tampered_h.h_by_level[0].a0 += testutil::ConstZZpE(1);
+  CHECK(!basefold::RingSwitchPCSVerifyEval(
+      params, artifacts.commitment, z, claimed_s, /*num_queries=*/2,
+      tampered_h));
+
+  basefold::RingSwitchPCSEvalProof tampered_t_star = proof;
+  tampered_t_star.t_star += testutil::ConstZZpE(1);
+  CHECK(!basefold::RingSwitchPCSVerifyEval(
+      params, artifacts.commitment, z, claimed_s, /*num_queries=*/2,
+      tampered_t_star));
+
+  basefold::RingSwitchPCSEvalProof tampered_backend = proof;
+  tampered_backend.backend_proof =
+      MutateBaseFoldBackendSubproof(proof.backend_proof);
+  CHECK(!basefold::RingSwitchPCSVerifyEval(
+      params, artifacts.commitment, z, claimed_s, /*num_queries=*/2,
+      tampered_backend));
+}
+
+void TestRingSwitchVerifyEval_DimensionZeroUsesNoSumcheckRounds() {
+  testutil::PrintInfo("Ring-switch WP5: verifier handles ell_prime=0 as a zero-round sumcheck");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::RingSwitchPCSParams params = BuildRingSwitchParamsGR42D0(
+      /*ell=*/1, /*kappa=*/1, modulus, F, p, alpha);
+  const vec_ZZ_pE t_table = BuildBaseRingCoeffVector({1, 3});
+  const std::vector<ZZ_pE> z = {alpha + testutil::ConstZZpE(1)};
+  const ZZ_pE claimed_s = basefold::EvalMultilinearMonomialCoeffs(
+      basefold::BooleanHypercubeTableToMonomialCoeffs(t_table), z);
+
+  const basefold::RingSwitchPCSCommitArtifacts artifacts =
+      basefold::RingSwitchPCSBuildCommitArtifacts(params, t_table);
+  const basefold::RingSwitchPCSEvalProof proof =
+      basefold::RingSwitchPCSProveEvalFromCommitArtifacts(
+          params, t_table, z, claimed_s, /*num_queries=*/2, artifacts);
+
+  CHECK(proof.h_by_level.empty());
+  CHECK(basefold::RingSwitchPCSVerifyEval(params, artifacts.commitment, z,
+                                          claimed_s, /*num_queries=*/2, proof));
+}
+
 void TestProductSumcheckProver_BooleanTablesPasses() {
   testutil::PrintInfo("Ring-switch WP2: product sumcheck passes on honest Boolean tables");
 
@@ -1620,6 +1819,9 @@ int main() {
     RUN_TEST(TestRingSwitchBuildCommitArtifacts_CachesPackedRepresentations);
     RUN_TEST(TestRingSwitchProveEvalFromCommitArtifacts_HonestProofIsSelfConsistent);
     RUN_TEST(TestRingSwitchProveEval_DirectAndArtifactPathsAgreeOnOuterMessages);
+    RUN_TEST(TestRingSwitchVerifyEval_AcceptsHonestProof);
+    RUN_TEST(TestRingSwitchVerifyEval_RejectsTampering);
+    RUN_TEST(TestRingSwitchVerifyEval_DimensionZeroUsesNoSumcheckRounds);
     RUN_TEST(TestProductSumcheckProver_BooleanTablesPasses);
     RUN_TEST(TestProductSumcheckChain_RejectsTamperedPolynomial);
     RUN_TEST(TestProductSumcheckProver_FromMonomialCoeffsMatchesTables);

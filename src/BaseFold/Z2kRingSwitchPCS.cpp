@@ -458,6 +458,20 @@ void ValidateCommitArtifactsOrThrow(const RingSwitchPCSParams &params,
   }
 }
 
+bool HasExpectedEvalProofShape(const RingSwitchPCSParams &params,
+                               const RingSwitchPCSEvalProof &proof) {
+  return static_cast<long>(proof.s_by_u.size()) ==
+             params.beta_basis.dimension &&
+         static_cast<long>(proof.h_by_level.size()) == params.ell_prime;
+}
+
+bool HasCompatibleBackendEvalSubproof(const RingSwitchPCSParams &params,
+                                      const Z2kPCSBackendEvalProof &proof) {
+  return proof.vtable == params.backend.vtable && proof.payload &&
+         proof.params_owner &&
+         proof.params_owner.get() == params.backend.params.get();
+}
+
 std::vector<FieldElement> SlicePoint(const std::vector<FieldElement> &z,
                                      long begin, long count) {
   return std::vector<FieldElement>(z.begin() + begin, z.begin() + begin + count);
@@ -913,6 +927,91 @@ RingSwitchPCSEvalProof RingSwitchPCSProveEvalFromCommitArtifacts(
       params.backend, commit_artifacts.t_packed_monomial_coeffs, rprime_suffix,
       proof.t_star, num_queries, &commit_artifacts.backend_commit_artifacts);
   return proof;
+}
+
+bool RingSwitchPCSVerifyEval(const RingSwitchPCSParams &params,
+                             const MerkleRoot &commitment,
+                             const std::vector<FieldElement> &z,
+                             const FieldElement &claimed_s, long num_queries,
+                             const RingSwitchPCSEvalProof &proof) {
+  ValidateRingSwitchPCSParamsOrThrow(params);
+  if (static_cast<long>(z.size()) != params.ell) {
+    return false;
+  }
+  if (num_queries < 0) {
+    return false;
+  }
+  if (!HasExpectedEvalProofShape(params, proof)) {
+    return false;
+  }
+  if (!HasCompatibleBackendEvalSubproof(params, proof.backend_proof)) {
+    return false;
+  }
+
+  const std::vector<FieldElement> z_prefix = SlicePoint(z, 0, params.kappa);
+  const std::vector<FieldElement> z_suffix =
+      SlicePoint(z, params.kappa, params.ell_prime);
+  const RingSwitchComponentTensor tensor =
+      BuildRingSwitchComponentTensor(params, z_suffix);
+
+  const std::vector<FieldElement> recovered_partials =
+      RecoverPartialEvaluationsFromSByU(params, proof.s_by_u);
+  if (RecombineClaimFromPartials(recovered_partials, z_prefix) != claimed_s) {
+    return false;
+  }
+
+  RingSwitchHashTranscript transcript;
+  AbsorbPublicInput(transcript, commitment, z, claimed_s);
+  for (const FieldElement &s_u : proof.s_by_u) {
+    transcript.AbsorbFieldElement(s_u);
+  }
+
+  std::vector<FieldElement> rprime_prefix(
+      static_cast<std::size_t>(params.kappa));
+  for (long i = 0; i < params.kappa; ++i) {
+    rprime_prefix[static_cast<std::size_t>(i)] =
+        transcript.ChallengeFieldElement("rprime/prefix/" + std::to_string(i));
+  }
+
+  const FieldElement initial_claim =
+      ComputeInitialBatchedClaim(proof.s_by_u, rprime_prefix);
+
+  std::vector<FieldElement> rprime_suffix(
+      static_cast<std::size_t>(params.ell_prime));
+  if (params.ell_prime > 0) {
+    transcript.AbsorbQuadraticPoly(
+        proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)]);
+    for (long i = params.ell_prime; i-- > 0;) {
+      rprime_suffix[static_cast<std::size_t>(i)] = transcript.ChallengeFieldElement(
+          "rprime/suffix/" + std::to_string(i));
+      if (i > 0) {
+        transcript.AbsorbQuadraticPoly(
+            proof.h_by_level[static_cast<std::size_t>(i - 1)]);
+      }
+    }
+  }
+
+  if (!CheckProductSumcheckChain(initial_claim, proof.h_by_level,
+                                 rprime_suffix)) {
+    return false;
+  }
+
+  std::vector<FieldElement> rprime_full = rprime_prefix;
+  rprime_full.insert(rprime_full.end(), rprime_suffix.begin(),
+                     rprime_suffix.end());
+  const FieldElement g_star =
+      EvalMultilinearMonomialCoeffs(tensor.r_monomial_coeffs, rprime_full);
+  const FieldElement final_sumcheck_claim =
+      (params.ell_prime == 0)
+          ? initial_claim
+          : proof.h_by_level[0].Eval(rprime_suffix[0]);
+  if (final_sumcheck_claim != proof.t_star * g_star) {
+    return false;
+  }
+
+  return Z2kPCSBackendVerifyEval(params.backend, commitment, rprime_suffix,
+                                 proof.t_star, num_queries,
+                                 proof.backend_proof);
 }
 
 vec_ZZ_pE DecomposeGRElementToBaseCoeffsPolynomialBasis(

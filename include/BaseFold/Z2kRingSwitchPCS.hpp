@@ -106,6 +106,12 @@ RingSwitchPCSEvalProof RingSwitchPCSProveEvalFromCommitArtifacts(
     const std::vector<FieldElement> &z, const FieldElement &claimed_s,
     long num_queries, const RingSwitchPCSCommitArtifacts &commit_artifacts);
 
+bool RingSwitchPCSVerifyEval(const RingSwitchPCSParams &params,
+                             const MerkleRoot &commitment,
+                             const std::vector<FieldElement> &z,
+                             const FieldElement &claimed_s, long num_queries,
+                             const RingSwitchPCSEvalProof &proof);
+
 NTL::vec_ZZ_pE DecomposeGRElementToBaseCoeffsPolynomialBasis(
     const RingSwitchPCSParams &params, const NTL::ZZ_pE &element);
 
