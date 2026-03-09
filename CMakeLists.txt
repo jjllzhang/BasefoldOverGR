@@ -44,6 +44,8 @@ add_library(galoisring
   src/BaseFold/Multilinear.cpp
   src/BaseFold/Sumcheck.cpp
   src/BaseFold/BaseFoldPCS.cpp
+  src/BaseFold/Z2kPCSBackend.cpp
+  src/BaseFold/Z2kRingSwitchPCS.cpp
   src/BaseFold/ProofSerialize.cpp
   src/BaseFold/ProofSize.cpp
 )
@@ -94,6 +96,10 @@ add_executable(test_pcs tests/test_pcs.cpp)
 target_link_libraries(test_pcs PRIVATE galoisring)
 target_include_directories(test_pcs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+add_executable(test_z2k_ring_switch_pcs tests/test_z2k_ring_switch_pcs.cpp)
+target_link_libraries(test_z2k_ring_switch_pcs PRIVATE galoisring)
+target_include_directories(test_z2k_ring_switch_pcs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_executable(bench_pcs_commit bench/bench_pcs_commit.cpp)
 target_link_libraries(bench_pcs_commit PRIVATE galoisring)
 
@@ -108,3 +114,4 @@ add_test(NAME test_galois_ring COMMAND $<TARGET_FILE:test_galois_ring>)
 add_test(NAME test_foldable_codes COMMAND $<TARGET_FILE:test_foldable_codes>)
 add_test(NAME test_iopp COMMAND $<TARGET_FILE:test_iopp>)
 add_test(NAME test_pcs COMMAND $<TARGET_FILE:test_pcs>)
+add_test(NAME test_z2k_ring_switch_pcs COMMAND $<TARGET_FILE:test_z2k_ring_switch_pcs>)
