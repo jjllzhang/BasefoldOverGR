@@ -62,6 +62,13 @@ struct RingSwitchPCSCommitArtifacts {
   MerkleRoot commitment;
 };
 
+struct RingSwitchPCSEvalProof {
+  std::vector<NTL::ZZ_pE> s_by_u;
+  std::vector<QuadraticPoly> h_by_level;
+  NTL::ZZ_pE t_star;
+  Z2kPCSBackendEvalProof backend_proof;
+};
+
 RingSwitchBasisDescriptor ActivePolynomialBasisDescriptor();
 
 void ValidateCurrentZ2kRingContextOrThrow(const NTL::ZZ &base_modulus,
@@ -88,6 +95,16 @@ MerkleRoot RingSwitchPCSCommit(const RingSwitchPCSParams &params,
 
 RingSwitchPCSCommitArtifacts RingSwitchPCSBuildCommitArtifacts(
     const RingSwitchPCSParams &params, const NTL::vec_ZZ_pE &t_table);
+
+RingSwitchPCSEvalProof RingSwitchPCSProveEval(
+    const RingSwitchPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries);
+
+RingSwitchPCSEvalProof RingSwitchPCSProveEvalFromCommitArtifacts(
+    const RingSwitchPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const RingSwitchPCSCommitArtifacts &commit_artifacts);
 
 NTL::vec_ZZ_pE DecomposeGRElementToBaseCoeffsPolynomialBasis(
     const RingSwitchPCSParams &params, const NTL::ZZ_pE &element);

@@ -5,6 +5,9 @@
 #include <NTL/mat_ZZ_pE.h>
 #include <NTL/vec_ZZ_pE.h>
 
+#include <algorithm>
+#include <cstdint>
+#include <cstring>
 #include <exception>
 #include <functional>
 #include <iostream>
@@ -16,6 +19,7 @@
 #include <unistd.h>
 #endif
 
+#include "BaseFold/Hash.hpp"
 #include "BaseFold/Multilinear.hpp"
 #include "BaseFold/Sumcheck.hpp"
 #include "BaseFold/Z2kPCSBackend.hpp"
@@ -121,6 +125,209 @@ ZZ_pE PolynomialBasisElement(long degree) {
   ZZ_pE out;
   conv(out, poly);
   return out;
+}
+
+void AppendU64ForTranscript(basefold::Bytes &out, std::uint64_t value) {
+  for (int i = 0; i < 8; ++i) {
+    out.push_back(static_cast<basefold::Byte>((value >> (8 * i)) & 0xff));
+  }
+}
+
+void AppendSerializedFieldElementForTranscript(basefold::Bytes &out,
+                                               const ZZ_pE &x) {
+  const long r = ZZ_pE::degree();
+  CHECK_MSG(r > 0, "AppendSerializedFieldElementForTranscript: invalid extension degree");
+  const ZZ_pX poly = NTL::rep(x);
+  AppendU64ForTranscript(out, static_cast<std::uint64_t>(r));
+  for (long i = 0; i < r; ++i) {
+    const ZZ coeff = NTL::rep(NTL::coeff(poly, i));
+    const long n = NTL::NumBytes(coeff);
+    AppendU64ForTranscript(out, static_cast<std::uint64_t>(n));
+    if (n > 0) {
+      const std::size_t old_size = out.size();
+      out.resize(old_size + static_cast<std::size_t>(n));
+      NTL::BytesFromZZ(
+          reinterpret_cast<unsigned char *>(out.data() + old_size), coeff, n);
+    }
+  }
+}
+
+basefold::Bytes SerializeFieldElementForTranscript(const ZZ_pE &x) {
+  basefold::Bytes out;
+  AppendSerializedFieldElementForTranscript(out, x);
+  return out;
+}
+
+basefold::Bytes TaggedHashForTranscript(basefold::Byte tag,
+                                        const basefold::Bytes &state,
+                                        const basefold::Bytes &payload) {
+  basefold::Bytes in;
+  in.push_back(tag);
+  in.insert(in.end(), state.begin(), state.end());
+  AppendU64ForTranscript(in, static_cast<std::uint64_t>(payload.size()));
+  in.insert(in.end(), payload.begin(), payload.end());
+  return basefold::HashBytes(in);
+}
+
+basefold::Bytes TaggedHashForTranscript(basefold::Byte tag,
+                                        const basefold::Bytes &state,
+                                        const std::string &payload) {
+  basefold::Bytes bytes(payload.begin(), payload.end());
+  return TaggedHashForTranscript(tag, state, bytes);
+}
+
+class TestRingSwitchTranscript {
+ public:
+  TestRingSwitchTranscript() {
+    const std::string domain = "RingSwitchPCS/v1";
+    state_ = TaggedHashForTranscript(static_cast<basefold::Byte>(0x42),
+                                     basefold::Bytes{}, domain);
+  }
+
+  void AbsorbDigest(const basefold::Digest &digest) {
+    const basefold::Bytes bytes(digest.begin(), digest.end());
+    state_ = TaggedHashForTranscript(static_cast<basefold::Byte>(0x01), state_,
+                                     bytes);
+  }
+
+  void AbsorbFieldElement(const ZZ_pE &x) {
+    state_ = TaggedHashForTranscript(static_cast<basefold::Byte>(0x02), state_,
+                                     SerializeFieldElementForTranscript(x));
+  }
+
+  void AbsorbQuadraticPoly(const basefold::QuadraticPoly &poly) {
+    AbsorbFieldElement(poly.a0);
+    AbsorbFieldElement(poly.a1);
+    AbsorbFieldElement(poly.a2);
+  }
+
+  ZZ_pE ChallengeFieldElement(const std::string &label) const {
+    const long r = ZZ_pE::degree();
+    CHECK_MSG(r > 0, "TestRingSwitchTranscript::ChallengeFieldElement: invalid extension degree");
+    const ZZ modulus = NTL::ZZ_p::modulus();
+    CHECK_MSG(modulus > 1, "TestRingSwitchTranscript::ChallengeFieldElement: invalid base modulus");
+
+    ChallengeStream stream(state_, "fe/" + label);
+    ZZ_pX poly;
+    clear(poly);
+    for (long i = 0; i < r; ++i) {
+      NTL::ZZ_p coeff;
+      conv(coeff, stream.SampleZZLessThan(modulus));
+      SetCoeff(poly, i, coeff);
+    }
+    ZZ_pE out;
+    conv(out, poly);
+    return out;
+  }
+
+ private:
+  class ChallengeStream {
+   public:
+    ChallengeStream(const basefold::Bytes &state, const std::string &label)
+        : state_(state), label_(label) {}
+
+    ZZ SampleZZLessThan(const ZZ &upper_bound) {
+      CHECK_MSG(upper_bound > 0, "ChallengeStream::SampleZZLessThan: upper_bound must be positive");
+      if (upper_bound == 1) {
+        return ZZ(0);
+      }
+
+      const ZZ upper_minus_one = upper_bound - 1;
+      const long bits = NTL::NumBits(upper_minus_one);
+      if (bits <= 0) {
+        return ZZ(0);
+      }
+      const long byte_len = (bits + 7) / 8;
+      const ZZ two_to_bits = ZZ(1) << bits;
+
+      basefold::Bytes tmp(static_cast<std::size_t>(byte_len));
+      while (true) {
+        ReadBytes(reinterpret_cast<std::uint8_t *>(tmp.data()),
+                  static_cast<std::size_t>(byte_len));
+        ZZ x = NTL::ZZFromBytes(
+            reinterpret_cast<const unsigned char *>(tmp.data()), byte_len);
+        x %= two_to_bits;
+        if (x < upper_bound) {
+          return x;
+        }
+      }
+    }
+
+   private:
+    void ReadBytes(std::uint8_t *out, std::size_t len) {
+      std::size_t written = 0;
+      while (written < len) {
+        if (offset_ == buf_.size()) {
+          buf_ = Digest(counter_++);
+          offset_ = 0;
+        }
+        const std::size_t take =
+            std::min(len - written, buf_.size() - offset_);
+        std::memcpy(out + written, buf_.data() + offset_, take);
+        written += take;
+        offset_ += take;
+      }
+    }
+
+    basefold::Bytes Digest(std::uint64_t counter) const {
+      basefold::Bytes payload;
+      AppendU64ForTranscript(payload, counter);
+      const basefold::Bytes stream_state = TaggedHashForTranscript(
+          static_cast<basefold::Byte>(0x20), state_, label_);
+      return TaggedHashForTranscript(static_cast<basefold::Byte>(0x21),
+                                     stream_state, payload);
+    }
+
+    basefold::Bytes state_;
+    std::string label_;
+    std::uint64_t counter_ = 0;
+    basefold::Bytes buf_;
+    std::size_t offset_ = 0;
+  };
+
+  basefold::Bytes state_;
+};
+
+struct RingSwitchChallengeTrace {
+  std::vector<ZZ_pE> rprime_prefix;
+  std::vector<ZZ_pE> rprime_suffix;
+};
+
+RingSwitchChallengeTrace ReplayRingSwitchChallenges(
+    const basefold::MerkleRoot &commitment, const std::vector<ZZ_pE> &z,
+    const ZZ_pE &claimed_s, const basefold::RingSwitchPCSEvalProof &proof,
+    long kappa, long ell_prime) {
+  TestRingSwitchTranscript transcript;
+  transcript.AbsorbDigest(commitment);
+  for (const ZZ_pE &zi : z) {
+    transcript.AbsorbFieldElement(zi);
+  }
+  transcript.AbsorbFieldElement(claimed_s);
+  for (const ZZ_pE &s_u : proof.s_by_u) {
+    transcript.AbsorbFieldElement(s_u);
+  }
+
+  RingSwitchChallengeTrace trace;
+  trace.rprime_prefix.resize(static_cast<std::size_t>(kappa));
+  for (long i = 0; i < kappa; ++i) {
+    trace.rprime_prefix[static_cast<std::size_t>(i)] =
+        transcript.ChallengeFieldElement("rprime/prefix/" + std::to_string(i));
+  }
+
+  trace.rprime_suffix.resize(static_cast<std::size_t>(ell_prime));
+  if (ell_prime == 0) {
+    return trace;
+  }
+
+  transcript.AbsorbQuadraticPoly(proof.h_by_level[static_cast<std::size_t>(ell_prime - 1)]);
+  for (long i = ell_prime; i-- > 0;) {
+    trace.rprime_suffix[static_cast<std::size_t>(i)] =
+        transcript.ChallengeFieldElement("rprime/suffix/" + std::to_string(i));
+    if (i > 0) {
+      transcript.AbsorbQuadraticPoly(proof.h_by_level[static_cast<std::size_t>(i - 1)]);
+    }
+  }
+  return trace;
 }
 
 ZZ_pE SumOfPointwiseProducts(const vec_ZZ_pE &f_table,
@@ -1031,6 +1238,157 @@ void TestRingSwitchBuildCommitArtifacts_CachesPackedRepresentations() {
            direct_backend_commitment);
 }
 
+void TestRingSwitchProveEvalFromCommitArtifacts_HonestProofIsSelfConsistent() {
+  testutil::PrintInfo("Ring-switch WP4: artifact-backed prove path yields a self-consistent honest proof");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::RingSwitchPCSParams params =
+      BuildRingSwitchParamsGR42(/*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
+  const vec_ZZ_pE t_table =
+      BuildBaseRingCoeffVector({0, 1, 2, 3, 1, 0, 3, 2});
+  const std::vector<ZZ_pE> z = {alpha, testutil::ConstZZpE(1),
+                                alpha + testutil::ConstZZpE(1)};
+  const ZZ_pE claimed_s = basefold::EvalMultilinearMonomialCoeffs(
+      basefold::BooleanHypercubeTableToMonomialCoeffs(t_table), z);
+
+  const basefold::RingSwitchPCSCommitArtifacts artifacts =
+      basefold::RingSwitchPCSBuildCommitArtifacts(params, t_table);
+  const basefold::RingSwitchPCSEvalProof proof =
+      basefold::RingSwitchPCSProveEvalFromCommitArtifacts(
+          params, t_table, z, claimed_s, /*num_queries=*/2, artifacts);
+
+  CHECK_EQ(static_cast<long>(proof.s_by_u.size()), Pow2ForTest(params.kappa));
+  CHECK_EQ(static_cast<long>(proof.h_by_level.size()), params.ell_prime);
+
+  const std::vector<ZZ_pE> z_suffix(z.begin() + params.kappa, z.end());
+  const basefold::RingSwitchComponentTensor tensor =
+      basefold::BuildRingSwitchComponentTensor(params, z_suffix);
+
+  const ZZ_pE basis_x = PolynomialBasisElement(1);
+  const long num_w = Pow2ForTest(params.ell_prime);
+  for (long v = 0; v < tensor.basis_dimension; ++v) {
+    ZZ_pE recovered_partial;
+    clear(recovered_partial);
+    for (long u = 0; u < tensor.basis_dimension; ++u) {
+      const vec_ZZ_pE s_u_coeffs =
+          basefold::DecomposeGRElementToBaseCoeffsPolynomialBasis(
+              params, proof.s_by_u[static_cast<std::size_t>(u)]);
+      const ZZ_pE alpha_u = (u == 0) ? testutil::ConstZZpE(1) : basis_x;
+      recovered_partial += s_u_coeffs[v] * alpha_u;
+    }
+
+    vec_ZZ_pE slice;
+    slice.SetLength(num_w);
+    for (long w = 0; w < num_w; ++w) {
+      slice[w] = t_table[v + (w << params.kappa)];
+    }
+    const ZZ_pE direct_partial = basefold::EvalMultilinearMonomialCoeffs(
+        basefold::BooleanHypercubeTableToMonomialCoeffs(slice), z_suffix);
+    CHECK_EQ(recovered_partial, direct_partial);
+  }
+
+  const RingSwitchChallengeTrace trace = ReplayRingSwitchChallenges(
+      artifacts.commitment, z, claimed_s, proof, params.kappa, params.ell_prime);
+  ZZ_pE initial_claim;
+  clear(initial_claim);
+  for (long u = 0; u < tensor.basis_dimension; ++u) {
+    initial_claim +=
+        proof.s_by_u[static_cast<std::size_t>(u)] *
+        basefold::EqPolynomial(
+            trace.rprime_prefix,
+            BooleanPointFromIndex(u, params.kappa));
+  }
+  CHECK(basefold::CheckProductSumcheckChain(initial_claim, proof.h_by_level,
+                                            trace.rprime_suffix));
+
+  CHECK_EQ(proof.t_star, basefold::EvalMultilinearMonomialCoeffs(
+                             artifacts.t_packed_monomial_coeffs,
+                             trace.rprime_suffix));
+
+  std::vector<ZZ_pE> rprime_full = trace.rprime_prefix;
+  rprime_full.insert(rprime_full.end(), trace.rprime_suffix.begin(),
+                     trace.rprime_suffix.end());
+  const ZZ_pE g_star =
+      basefold::EvalMultilinearMonomialCoeffs(tensor.r_monomial_coeffs,
+                                              rprime_full);
+  const ZZ_pE final_claim = proof.h_by_level.empty()
+                                ? initial_claim
+                                : proof.h_by_level[0].Eval(trace.rprime_suffix[0]);
+  CHECK_EQ(final_claim, proof.t_star * g_star);
+
+  CHECK(basefold::Z2kPCSBackendVerifyEval(
+      params.backend, artifacts.commitment, trace.rprime_suffix, proof.t_star,
+      /*num_queries=*/2, proof.backend_proof));
+}
+
+void TestRingSwitchProveEval_DirectAndArtifactPathsAgreeOnOuterMessages() {
+  testutil::PrintInfo("Ring-switch WP4: direct and artifact-backed prove paths agree on outer proof messages");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::RingSwitchPCSParams params =
+      BuildRingSwitchParamsGR42(/*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
+  const vec_ZZ_pE t_table =
+      BuildBaseRingCoeffVector({3, 1, 0, 2, 1, 2, 3, 0});
+  const std::vector<ZZ_pE> z = {alpha + testutil::ConstZZpE(1), alpha,
+                                testutil::ConstZZpE(3)};
+  const ZZ_pE claimed_s = basefold::EvalMultilinearMonomialCoeffs(
+      basefold::BooleanHypercubeTableToMonomialCoeffs(t_table), z);
+
+  const basefold::RingSwitchPCSCommitArtifacts artifacts =
+      basefold::RingSwitchPCSBuildCommitArtifacts(params, t_table);
+  const basefold::RingSwitchPCSEvalProof direct =
+      basefold::RingSwitchPCSProveEval(params, t_table, z, claimed_s,
+                                      /*num_queries=*/2);
+  const basefold::RingSwitchPCSEvalProof cached =
+      basefold::RingSwitchPCSProveEvalFromCommitArtifacts(
+          params, t_table, z, claimed_s, /*num_queries=*/2, artifacts);
+
+  CHECK_EQ(direct.s_by_u, cached.s_by_u);
+  CHECK_EQ(static_cast<long>(direct.h_by_level.size()),
+           static_cast<long>(cached.h_by_level.size()));
+  for (long i = 0; i < static_cast<long>(direct.h_by_level.size()); ++i) {
+    CHECK_EQ(direct.h_by_level[static_cast<std::size_t>(i)].a0,
+             cached.h_by_level[static_cast<std::size_t>(i)].a0);
+    CHECK_EQ(direct.h_by_level[static_cast<std::size_t>(i)].a1,
+             cached.h_by_level[static_cast<std::size_t>(i)].a1);
+    CHECK_EQ(direct.h_by_level[static_cast<std::size_t>(i)].a2,
+             cached.h_by_level[static_cast<std::size_t>(i)].a2);
+  }
+  CHECK_EQ(direct.t_star, cached.t_star);
+  CHECK_EQ(basefold::Z2kPCSBackendEvalProofSizeBytes(params.backend,
+                                                     direct.backend_proof),
+           basefold::Z2kPCSBackendEvalProofSizeBytes(params.backend,
+                                                     cached.backend_proof));
+}
+
 void TestProductSumcheckProver_BooleanTablesPasses() {
   testutil::PrintInfo("Ring-switch WP2: product sumcheck passes on honest Boolean tables");
 
@@ -1260,6 +1618,8 @@ int main() {
     RUN_TEST(TestBuildRingSwitchComponentTensor_RejectsWrongSuffixDimension);
     RUN_TEST(TestRingSwitchCommit_MatchesDirectBackendCommit);
     RUN_TEST(TestRingSwitchBuildCommitArtifacts_CachesPackedRepresentations);
+    RUN_TEST(TestRingSwitchProveEvalFromCommitArtifacts_HonestProofIsSelfConsistent);
+    RUN_TEST(TestRingSwitchProveEval_DirectAndArtifactPathsAgreeOnOuterMessages);
     RUN_TEST(TestProductSumcheckProver_BooleanTablesPasses);
     RUN_TEST(TestProductSumcheckChain_RejectsTamperedPolynomial);
     RUN_TEST(TestProductSumcheckProver_FromMonomialCoeffsMatchesTables);

@@ -1,13 +1,19 @@
 #include "BaseFold/Z2kRingSwitchPCS.hpp"
 
+#include <NTL/ZZ.h>
 #include <NTL/ZZ_p.h>
 #include <NTL/ZZ_pE.h>
 #include <NTL/ZZ_pXFactoring.h>
 
+#include <algorithm>
+#include <cstdint>
+#include <cstring>
 #include <limits>
 #include <string>
 
+#include "BaseFold/Hash.hpp"
 #include "BaseFold/Multilinear.hpp"
+#include "BaseFold/Profile.hpp"
 
 using NTL::LogicError;
 using NTL::ZZ;
@@ -209,6 +215,400 @@ PackedCommitInputs BuildPackedCommitInputs(const RingSwitchPCSParams &params,
   return out;
 }
 
+void AppendU64(Bytes &out, std::uint64_t v) {
+  for (int i = 0; i < 8; ++i) {
+    out.push_back(static_cast<Byte>((v >> (8 * i)) & 0xff));
+  }
+}
+
+void AppendSerializedFieldElement(Bytes &out, const FieldElement &x,
+                                  const char *func_name) {
+  const long r = ZZ_pE::degree();
+  if (r <= 0) {
+    const std::string msg =
+        std::string(func_name) + ": invalid extension degree";
+    LogicError(msg.c_str());
+  }
+
+  const ZZ_pX &poly = NTL::rep(x);
+  AppendU64(out, static_cast<std::uint64_t>(r));
+  for (long i = 0; i < r; ++i) {
+    const ZZ c = NTL::rep(NTL::coeff(poly, i));
+    const long n = NTL::NumBytes(c);
+    AppendU64(out, static_cast<std::uint64_t>(n));
+    if (n > 0) {
+      const std::size_t old_size = out.size();
+      out.resize(old_size + static_cast<std::size_t>(n));
+      NTL::BytesFromZZ(
+          reinterpret_cast<unsigned char *>(out.data() + old_size), c, n);
+    }
+  }
+}
+
+Bytes SerializeFieldElement(const FieldElement &x) {
+  Bytes out;
+  AppendSerializedFieldElement(out, x, "SerializeFieldElement");
+  return out;
+}
+
+Bytes TaggedHash(Byte tag, const Bytes &state, const Bytes &payload) {
+  Bytes in;
+  in.push_back(tag);
+  in.insert(in.end(), state.begin(), state.end());
+  AppendU64(in, static_cast<std::uint64_t>(payload.size()));
+  in.insert(in.end(), payload.begin(), payload.end());
+  return HashBytes(in);
+}
+
+Bytes TaggedHash(Byte tag, const Bytes &state, const std::string &payload) {
+  Bytes p;
+  p.insert(p.end(), payload.begin(), payload.end());
+  return TaggedHash(tag, state, p);
+}
+
+class RingSwitchHashTranscript {
+ public:
+  RingSwitchHashTranscript() {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->transcript_absorb_ns : nullptr,
+                      prof ? &prof->transcript_absorb_calls : nullptr);
+
+    const std::string domain = "RingSwitchPCS/v1";
+    state_ = TaggedHash(static_cast<Byte>(0x42), Bytes{}, domain);
+  }
+
+  void AbsorbDigest(const Digest &digest) {
+    const Bytes tmp(digest.begin(), digest.end());
+    AbsorbBytes(tmp);
+  }
+
+  void AbsorbFieldElement(const FieldElement &x) {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->transcript_absorb_ns : nullptr,
+                      prof ? &prof->transcript_absorb_calls : nullptr);
+    state_ =
+        TaggedHash(static_cast<Byte>(0x02), state_, SerializeFieldElement(x));
+  }
+
+  void AbsorbQuadraticPoly(const QuadraticPoly &poly) {
+    AbsorbFieldElement(poly.a0);
+    AbsorbFieldElement(poly.a1);
+    AbsorbFieldElement(poly.a2);
+  }
+
+  FieldElement ChallengeFieldElement(const std::string &label) const {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->transcript_challenge_ns : nullptr,
+                      prof ? &prof->transcript_challenge_calls : nullptr);
+
+    const long r = ZZ_pE::degree();
+    if (r <= 0) {
+      LogicError(
+          "RingSwitchHashTranscript::ChallengeFieldElement: invalid extension degree");
+    }
+
+    const ZZ modulus = ZZ_p::modulus();
+    if (modulus <= 1) {
+      LogicError(
+          "RingSwitchHashTranscript::ChallengeFieldElement: invalid base modulus");
+    }
+
+    ChallengeStream stream(state_, "fe/" + label);
+    ZZ_pX poly;
+    NTL::clear(poly);
+    for (long i = 0; i < r; ++i) {
+      const ZZ c = stream.SampleZZLessThan(modulus);
+      ZZ_p c_base;
+      NTL::conv(c_base, c);
+      NTL::SetCoeff(poly, i, c_base);
+    }
+    FieldElement out;
+    NTL::conv(out, poly);
+    return out;
+  }
+
+ private:
+  void AbsorbBytes(const Bytes &data) {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->transcript_absorb_ns : nullptr,
+                      prof ? &prof->transcript_absorb_calls : nullptr);
+    state_ = TaggedHash(static_cast<Byte>(0x01), state_, data);
+  }
+
+  class ChallengeStream {
+   public:
+    ChallengeStream(const Bytes &state, const std::string &label)
+        : state_(state), label_(label) {}
+
+    void ReadBytes(std::uint8_t *out, std::size_t len) {
+      std::size_t written = 0;
+      while (written < len) {
+        if (offset_ == buf_.size()) {
+          buf_ = Digest(counter_++);
+          offset_ = 0;
+        }
+        const std::size_t take = std::min(len - written, buf_.size() - offset_);
+        std::memcpy(out + written, buf_.data() + offset_, take);
+        offset_ += take;
+        written += take;
+      }
+    }
+
+    ZZ SampleZZLessThan(const ZZ &upper_bound) {
+      if (upper_bound <= 0) {
+        LogicError("RingSwitchHashTranscript::SampleZZLessThan: upper_bound must be positive");
+      }
+      if (upper_bound == 1) {
+        return ZZ(0);
+      }
+
+      const ZZ ub_minus_1 = upper_bound - 1;
+      const long bits = NTL::NumBits(ub_minus_1);
+      if (bits <= 0) {
+        return ZZ(0);
+      }
+      const long byte_len = (bits + 7) / 8;
+      const ZZ two_to_bits = ZZ(1) << bits;
+
+      Bytes tmp(static_cast<std::size_t>(byte_len));
+      while (true) {
+        ReadBytes(reinterpret_cast<std::uint8_t *>(tmp.data()),
+                  static_cast<std::size_t>(byte_len));
+        ZZ x = NTL::ZZFromBytes(
+            reinterpret_cast<const unsigned char *>(tmp.data()), byte_len);
+        x %= two_to_bits;
+        if (x < upper_bound) {
+          return x;
+        }
+      }
+    }
+
+   private:
+    Bytes Digest(std::uint64_t ctr) const {
+      Bytes payload;
+      payload.reserve(8);
+      AppendU64(payload, ctr);
+      const Bytes st = TaggedHash(static_cast<Byte>(0x20), state_, label_);
+      return TaggedHash(static_cast<Byte>(0x21), st, payload);
+    }
+
+    Bytes state_;
+    std::string label_;
+    mutable std::uint64_t counter_ = 0;
+    mutable Bytes buf_;
+    mutable std::size_t offset_ = 0;
+  };
+
+  Bytes state_;
+};
+
+void AbsorbPublicInput(RingSwitchHashTranscript &transcript,
+                       const MerkleRoot &commitment,
+                       const std::vector<FieldElement> &z,
+                       const FieldElement &claimed_s) {
+  transcript.AbsorbDigest(commitment);
+  for (const FieldElement &zi : z) {
+    transcript.AbsorbFieldElement(zi);
+  }
+  transcript.AbsorbFieldElement(claimed_s);
+}
+
+void ValidateEvalInputsOrThrow(const RingSwitchPCSParams &params,
+                               const vec_ZZ_pE &t_table,
+                               const std::vector<FieldElement> &z,
+                               long num_queries, const char *func_name) {
+  ValidateRingSwitchPCSParamsOrThrow(params);
+  const long expected_t_length = Pow2LongOrThrow(
+      params.ell, (std::string(func_name) + ": ell is too large for long").c_str());
+  if (t_table.length() != expected_t_length) {
+    LogicError((std::string(func_name) + ": t_table length must equal 2^ell")
+                   .c_str());
+  }
+  ValidateBaseRingVectorOrThrow(t_table, "t_table", func_name);
+  if (static_cast<long>(z.size()) != params.ell) {
+    LogicError((std::string(func_name) + ": z dimension must equal ell").c_str());
+  }
+  if (num_queries < 0) {
+    LogicError((std::string(func_name) + ": num_queries must be non-negative")
+                   .c_str());
+  }
+}
+
+void ValidateCommitArtifactsOrThrow(const RingSwitchPCSParams &params,
+                                    const RingSwitchPCSCommitArtifacts &artifacts,
+                                    const char *func_name) {
+  ValidateRingSwitchPCSParamsOrThrow(params);
+  const long expected_packed_length = Pow2LongOrThrow(
+      params.ell_prime,
+      (std::string(func_name) + ": ell_prime is too large for long").c_str());
+  if (artifacts.t_packed_table.length() != expected_packed_length) {
+    LogicError((std::string(func_name) +
+                ": t_packed_table length must equal 2^(ell-kappa)")
+                   .c_str());
+  }
+  if (artifacts.t_packed_monomial_coeffs.length() != expected_packed_length) {
+    LogicError((std::string(func_name) +
+                ": t_packed_monomial_coeffs length must equal 2^(ell-kappa)")
+                   .c_str());
+  }
+  if (artifacts.commitment != artifacts.backend_commit_artifacts.commitment) {
+    LogicError((std::string(func_name) +
+                ": commitment must match backend_commit_artifacts.commitment")
+                   .c_str());
+  }
+}
+
+std::vector<FieldElement> SlicePoint(const std::vector<FieldElement> &z,
+                                     long begin, long count) {
+  return std::vector<FieldElement>(z.begin() + begin, z.begin() + begin + count);
+}
+
+vec_ZZ_pE BuildEqualityTable(const std::vector<FieldElement> &point) {
+  const long dimension = static_cast<long>(point.size());
+  const long length = Pow2LongOrThrow(
+      dimension, "BuildEqualityTable: dimension is too large for long");
+  vec_ZZ_pE table;
+  table.SetLength(length);
+  for (long idx = 0; idx < length; ++idx) {
+    table[idx] = EqPolynomial(point, BooleanPointFromIndex(idx, dimension));
+  }
+  return table;
+}
+
+std::vector<FieldElement> RecoverPartialEvaluationsFromSByU(
+    const RingSwitchPCSParams &params,
+    const std::vector<FieldElement> &s_by_u) {
+  const long basis_dimension = params.alpha_basis.dimension;
+  if (static_cast<long>(s_by_u.size()) != basis_dimension) {
+    LogicError(
+        "RecoverPartialEvaluationsFromSByU: s_by_u size must equal basis dimension");
+  }
+
+  std::vector<FieldVec> coeff_rows(static_cast<std::size_t>(basis_dimension));
+  for (long u = 0; u < basis_dimension; ++u) {
+    coeff_rows[static_cast<std::size_t>(u)] =
+        DecomposeGRElementToBaseCoeffsPolynomialBasis(params,
+                                                      s_by_u[static_cast<std::size_t>(u)]);
+  }
+
+  std::vector<FieldElement> alpha_basis(static_cast<std::size_t>(basis_dimension));
+  for (long u = 0; u < basis_dimension; ++u) {
+    ZZ_pX alpha_u_poly;
+    NTL::SetCoeff(alpha_u_poly, u, NTL::to_ZZ_p(1));
+    NTL::conv(alpha_basis[static_cast<std::size_t>(u)], alpha_u_poly);
+  }
+
+  std::vector<FieldElement> partials(static_cast<std::size_t>(basis_dimension),
+                                     FieldElement(0));
+  for (long v = 0; v < basis_dimension; ++v) {
+    FieldElement acc = FieldElement(0);
+    for (long u = 0; u < basis_dimension; ++u) {
+      acc += coeff_rows[static_cast<std::size_t>(u)][v] *
+             alpha_basis[static_cast<std::size_t>(u)];
+    }
+    partials[static_cast<std::size_t>(v)] = acc;
+  }
+  return partials;
+}
+
+std::vector<FieldElement> ComputeDirectPartialEvaluations(
+    const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table,
+    const std::vector<FieldElement> &z_suffix) {
+  const long basis_dimension = params.alpha_basis.dimension;
+  const long num_w = Pow2LongOrThrow(
+      params.ell_prime,
+      "ComputeDirectPartialEvaluations: ell_prime is too large for long");
+  std::vector<FieldElement> partials(static_cast<std::size_t>(basis_dimension),
+                                     FieldElement(0));
+  for (long v = 0; v < basis_dimension; ++v) {
+    vec_ZZ_pE slice;
+    slice.SetLength(num_w);
+    for (long w = 0; w < num_w; ++w) {
+      slice[w] = t_table[v + (w << params.kappa)];
+    }
+    const vec_ZZ_pE slice_monomial = BooleanHypercubeTableToMonomialCoeffs(slice);
+    partials[static_cast<std::size_t>(v)] =
+        EvalMultilinearMonomialCoeffs(slice_monomial, z_suffix);
+  }
+  return partials;
+}
+
+FieldElement RecombineClaimFromPartials(const std::vector<FieldElement> &partials,
+                                        const std::vector<FieldElement> &z_prefix) {
+  FieldElement acc = FieldElement(0);
+  for (long v = 0; v < static_cast<long>(partials.size()); ++v) {
+    acc += partials[static_cast<std::size_t>(v)] *
+           EqPolynomial(z_prefix, BooleanPointFromIndex(v,
+                                                        static_cast<long>(z_prefix.size())));
+  }
+  return acc;
+}
+
+std::vector<FieldElement> ComputeSByU(const RingSwitchComponentTensor &tensor,
+                                      const vec_ZZ_pE &t_packed_table) {
+  const long num_u = tensor.basis_dimension;
+  const long num_w = Pow2LongOrThrow(
+      tensor.ell_prime, "ComputeSByU: ell_prime is too large for long");
+  if (t_packed_table.length() != num_w) {
+    LogicError("ComputeSByU: t_packed_table length mismatch");
+  }
+
+  std::vector<FieldElement> s_by_u(static_cast<std::size_t>(num_u),
+                                   FieldElement(0));
+  for (long u = 0; u < num_u; ++u) {
+    FieldElement acc = FieldElement(0);
+    for (long w = 0; w < num_w; ++w) {
+      acc += tensor.a_by_u_then_w[u * num_w + w] * t_packed_table[w];
+    }
+    s_by_u[static_cast<std::size_t>(u)] = acc;
+  }
+  return s_by_u;
+}
+
+vec_ZZ_pE BuildBatchedGTable(const RingSwitchComponentTensor &tensor,
+                             const std::vector<FieldElement> &rprime_prefix) {
+  const long num_u = tensor.basis_dimension;
+  const long num_w = Pow2LongOrThrow(
+      tensor.ell_prime, "BuildBatchedGTable: ell_prime is too large for long");
+  vec_ZZ_pE out;
+  out.SetLength(num_w);
+
+  const vec_ZZ_pE eq_prefix = BuildEqualityTable(rprime_prefix);
+  if (eq_prefix.length() != num_u) {
+    LogicError("BuildBatchedGTable: prefix equality table length mismatch");
+  }
+
+  for (long w = 0; w < num_w; ++w) {
+    FieldElement acc = FieldElement(0);
+    for (long u = 0; u < num_u; ++u) {
+      acc += tensor.a_by_u_then_w[u * num_w + w] * eq_prefix[u];
+    }
+    out[w] = acc;
+  }
+  return out;
+}
+
+FieldElement ComputeInitialBatchedClaim(const std::vector<FieldElement> &s_by_u,
+                                        const std::vector<FieldElement> &rprime_prefix) {
+  const vec_ZZ_pE eq_prefix = BuildEqualityTable(rprime_prefix);
+  if (eq_prefix.length() != static_cast<long>(s_by_u.size())) {
+    LogicError(
+        "ComputeInitialBatchedClaim: prefix equality table length mismatch");
+  }
+
+  FieldElement acc = FieldElement(0);
+  for (long u = 0; u < static_cast<long>(s_by_u.size()); ++u) {
+    acc += s_by_u[static_cast<std::size_t>(u)] * eq_prefix[u];
+  }
+  return acc;
+}
+
+FieldElement ComputeOriginalEvaluation(const vec_ZZ_pE &t_table,
+                                       const std::vector<FieldElement> &z) {
+  const vec_ZZ_pE t_monomial = BooleanHypercubeTableToMonomialCoeffs(t_table);
+  return EvalMultilinearMonomialCoeffs(t_monomial, z);
+}
+
 }  // namespace
 
 RingSwitchBasisDescriptor ActivePolynomialBasisDescriptor() {
@@ -398,6 +798,121 @@ RingSwitchPCSCommitArtifacts RingSwitchPCSBuildCommitArtifacts(
                                         out.t_packed_monomial_coeffs);
   out.commitment = out.backend_commit_artifacts.commitment;
   return out;
+}
+
+RingSwitchPCSEvalProof RingSwitchPCSProveEval(
+    const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries) {
+  const RingSwitchPCSCommitArtifacts commit_artifacts =
+      RingSwitchPCSBuildCommitArtifacts(params, t_table);
+  return RingSwitchPCSProveEvalFromCommitArtifacts(
+      params, t_table, z, claimed_s, num_queries, commit_artifacts);
+}
+
+RingSwitchPCSEvalProof RingSwitchPCSProveEvalFromCommitArtifacts(
+    const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const RingSwitchPCSCommitArtifacts &commit_artifacts) {
+  ValidateEvalInputsOrThrow(params, t_table, z, num_queries,
+                            "RingSwitchPCSProveEvalFromCommitArtifacts");
+  ValidateCommitArtifactsOrThrow(params, commit_artifacts,
+                                 "RingSwitchPCSProveEvalFromCommitArtifacts");
+
+  const FieldElement direct_eval = ComputeOriginalEvaluation(t_table, z);
+  if (direct_eval != claimed_s) {
+    LogicError(
+        "RingSwitchPCSProveEvalFromCommitArtifacts: claimed_s must equal t(z)");
+  }
+
+  const std::vector<FieldElement> z_prefix = SlicePoint(z, 0, params.kappa);
+  const std::vector<FieldElement> z_suffix =
+      SlicePoint(z, params.kappa, params.ell_prime);
+  const RingSwitchComponentTensor tensor =
+      BuildRingSwitchComponentTensor(params, z_suffix);
+
+  RingSwitchPCSEvalProof proof;
+  proof.s_by_u = ComputeSByU(tensor, commit_artifacts.t_packed_table);
+  proof.h_by_level.resize(static_cast<std::size_t>(params.ell_prime));
+
+  const std::vector<FieldElement> recovered_partials =
+      RecoverPartialEvaluationsFromSByU(params, proof.s_by_u);
+  const std::vector<FieldElement> direct_partials =
+      ComputeDirectPartialEvaluations(params, t_table, z_suffix);
+  if (recovered_partials != direct_partials) {
+    LogicError(
+        "RingSwitchPCSProveEvalFromCommitArtifacts: recovered partial evaluations do not match Appendix C.1 reconstruction");
+  }
+  if (RecombineClaimFromPartials(recovered_partials, z_prefix) != claimed_s) {
+    LogicError(
+        "RingSwitchPCSProveEvalFromCommitArtifacts: Equality Check 1 failed on honest witness");
+  }
+
+  RingSwitchHashTranscript transcript;
+  AbsorbPublicInput(transcript, commit_artifacts.commitment, z, claimed_s);
+  for (const FieldElement &s_u : proof.s_by_u) {
+    transcript.AbsorbFieldElement(s_u);
+  }
+
+  std::vector<FieldElement> rprime_prefix(static_cast<std::size_t>(params.kappa));
+  for (long i = 0; i < params.kappa; ++i) {
+    rprime_prefix[static_cast<std::size_t>(i)] =
+        transcript.ChallengeFieldElement("rprime/prefix/" + std::to_string(i));
+  }
+
+  const FieldElement initial_claim =
+      ComputeInitialBatchedClaim(proof.s_by_u, rprime_prefix);
+  const vec_ZZ_pE g_table = BuildBatchedGTable(tensor, rprime_prefix);
+
+  std::vector<FieldElement> rprime_suffix(static_cast<std::size_t>(params.ell_prime));
+  if (params.ell_prime > 0) {
+    ProductSumcheckProver sumcheck(commit_artifacts.t_packed_table, g_table);
+    proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)] =
+        sumcheck.CurrentPolynomial();
+    transcript.AbsorbQuadraticPoly(
+        proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)]);
+
+    for (long i = params.ell_prime; i-- > 0;) {
+      const FieldElement r_i = transcript.ChallengeFieldElement(
+          "rprime/suffix/" + std::to_string(i));
+      rprime_suffix[static_cast<std::size_t>(i)] = r_i;
+      sumcheck.ReceiveChallenge(r_i);
+      if (i > 0) {
+        proof.h_by_level[static_cast<std::size_t>(i - 1)] =
+            sumcheck.CurrentPolynomial();
+        transcript.AbsorbQuadraticPoly(
+            proof.h_by_level[static_cast<std::size_t>(i - 1)]);
+      }
+    }
+
+    if (!CheckProductSumcheckChain(initial_claim, proof.h_by_level,
+                                   rprime_suffix)) {
+      LogicError(
+          "RingSwitchPCSProveEvalFromCommitArtifacts: honest product sumcheck chain is inconsistent");
+    }
+  }
+
+  proof.t_star = EvalMultilinearMonomialCoeffs(
+      commit_artifacts.t_packed_monomial_coeffs, rprime_suffix);
+
+  std::vector<FieldElement> rprime_full = rprime_prefix;
+  rprime_full.insert(rprime_full.end(), rprime_suffix.begin(),
+                     rprime_suffix.end());
+  const FieldElement g_star =
+      EvalMultilinearMonomialCoeffs(tensor.r_monomial_coeffs, rprime_full);
+  const FieldElement final_sumcheck_claim =
+      (params.ell_prime == 0)
+          ? initial_claim
+          : proof.h_by_level[0].Eval(rprime_suffix[0]);
+  if (final_sumcheck_claim != proof.t_star * g_star) {
+    LogicError(
+        "RingSwitchPCSProveEvalFromCommitArtifacts: honest Equality Check 3 failed");
+  }
+
+  proof.backend_proof = Z2kPCSBackendProveEval(
+      params.backend, commit_artifacts.t_packed_monomial_coeffs, rprime_suffix,
+      proof.t_star, num_queries, &commit_artifacts.backend_commit_artifacts);
+  return proof;
 }
 
 vec_ZZ_pE DecomposeGRElementToBaseCoeffsPolynomialBasis(
