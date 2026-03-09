@@ -54,6 +54,54 @@ vec_ZZ_pE BooleanEvalTableFromMonomialCoeffs(const vec_ZZ_pE &coeffs, long k) {
   return eval;
 }
 
+long ValidateEvalTableLengthOrThrow(const vec_ZZ_pE &table,
+                                    const char *func_name) {
+  const long n = table.length();
+  if (!IsPowerOfTwoLong(n)) {
+    LogicError((std::string(func_name) +
+                ": table length must be a power of two")
+                   .c_str());
+  }
+  return Log2ExactPowerOfTwoLong(n);
+}
+
+void ValidateSameEvalTableShapeOrThrow(const vec_ZZ_pE &f_table,
+                                       const vec_ZZ_pE &g_table,
+                                       const char *func_name) {
+  const long f_dim = ValidateEvalTableLengthOrThrow(f_table, func_name);
+  const long g_dim = ValidateEvalTableLengthOrThrow(g_table, func_name);
+  if (f_dim != g_dim) {
+    LogicError((std::string(func_name) +
+                ": f and g table dimensions must match")
+                   .c_str());
+  }
+}
+
+bool CheckQuadraticSumcheckChain(const std::vector<QuadraticPoly> &h_by_level,
+                                 const std::vector<FieldElement> &r,
+                                 const FieldElement &initial_claim) {
+  const long d = static_cast<long>(h_by_level.size());
+  if (d < 0) return false;
+  if (static_cast<long>(r.size()) != d) return false;
+  if (d == 0) return true;
+
+  const ZZ_pE one = One();
+  const ZZ_pE zero = ZZ_pE(0);
+
+  const QuadraticPoly &h_d = h_by_level[static_cast<std::size_t>(d - 1)];
+  if (h_d.Eval(zero) + h_d.Eval(one) != initial_claim) return false;
+
+  for (long k = 1; k < d; ++k) {
+    const QuadraticPoly &h_k = h_by_level[static_cast<std::size_t>(k - 1)];
+    const QuadraticPoly &h_kp1 = h_by_level[static_cast<std::size_t>(k)];
+    const ZZ_pE lhs = h_k.Eval(zero) + h_k.Eval(one);
+    const ZZ_pE rhs = h_kp1.Eval(r[static_cast<std::size_t>(k)]);
+    if (lhs != rhs) return false;
+  }
+
+  return true;
+}
+
 std::vector<vec_ZZ_pE> PrecomputePrefixEqByVars(
     const std::vector<ZZ_pE> &z) {
   const long d = static_cast<long>(z.size());
@@ -91,6 +139,91 @@ std::vector<vec_ZZ_pE> PrecomputePrefixEqByVars(
 
 FieldElement QuadraticPoly::Eval(const FieldElement &x) const {
   return a0 + a1 * x + a2 * x * x;
+}
+
+ProductSumcheckProver::ProductSumcheckProver(const FieldVec &f_eval_table,
+                                             const FieldVec &g_eval_table) {
+  ValidateSameEvalTableShapeOrThrow(
+      f_eval_table, g_eval_table, "ProductSumcheckProver");
+  d_ = ValidateEvalTableLengthOrThrow(f_eval_table, "ProductSumcheckProver");
+  cur_k_ = d_;
+  f_eval_table_ = f_eval_table;
+  g_eval_table_ = g_eval_table;
+}
+
+ProductSumcheckProver ProductSumcheckProver::FromMonomialCoeffs(
+    const FieldVec &f_coeffs, const FieldVec &g_coeffs) {
+  if (f_coeffs.length() != g_coeffs.length()) {
+    LogicError(
+        "ProductSumcheckProver::FromMonomialCoeffs: f and g lengths must match");
+  }
+  const long d = ValidateEvalTableLengthOrThrow(
+      f_coeffs, "ProductSumcheckProver::FromMonomialCoeffs");
+  return ProductSumcheckProver(
+      BooleanEvalTableFromMonomialCoeffs(f_coeffs, d),
+      BooleanEvalTableFromMonomialCoeffs(g_coeffs, d));
+}
+
+QuadraticPoly ProductSumcheckProver::CurrentPolynomial() const {
+  if (cur_k_ <= 0) {
+    LogicError("ProductSumcheckProver::CurrentPolynomial: no remaining variables");
+  }
+
+  const long k = cur_k_;
+  const long n = f_eval_table_.length();
+  if (n != (1L << k) || g_eval_table_.length() != n) {
+    LogicError(
+        "ProductSumcheckProver::CurrentPolynomial: internal length mismatch");
+  }
+
+  const long half = 1L << (k - 1);
+  QuadraticPoly out;
+  out.a0 = ZZ_pE(0);
+  out.a1 = ZZ_pE(0);
+  out.a2 = ZZ_pE(0);
+
+  for (long mask = 0; mask < half; ++mask) {
+    const ZZ_pE f0 = f_eval_table_[mask];
+    const ZZ_pE f1 = f_eval_table_[mask + half];
+    const ZZ_pE delta_f = f1 - f0;
+
+    const ZZ_pE g0 = g_eval_table_[mask];
+    const ZZ_pE g1 = g_eval_table_[mask + half];
+    const ZZ_pE delta_g = g1 - g0;
+
+    out.a0 += f0 * g0;
+    out.a1 += f0 * delta_g + delta_f * g0;
+    out.a2 += delta_f * delta_g;
+  }
+
+  return out;
+}
+
+void ProductSumcheckProver::ReceiveChallenge(const FieldElement &r_kminus1) {
+  if (cur_k_ <= 0) {
+    LogicError("ProductSumcheckProver::ReceiveChallenge: no remaining variables");
+  }
+
+  const long k = cur_k_;
+  const long n = f_eval_table_.length();
+  if (n != (1L << k) || g_eval_table_.length() != n) {
+    LogicError(
+        "ProductSumcheckProver::ReceiveChallenge: internal length mismatch");
+  }
+
+  const long half = n / 2;
+  for (long i = 0; i < half; ++i) {
+    const ZZ_pE f0 = f_eval_table_[i];
+    const ZZ_pE f1 = f_eval_table_[i + half];
+    f_eval_table_[i] = f0 + (f1 - f0) * r_kminus1;
+
+    const ZZ_pE g0 = g_eval_table_[i];
+    const ZZ_pE g1 = g_eval_table_[i + half];
+    g_eval_table_[i] = g0 + (g1 - g0) * r_kminus1;
+  }
+  f_eval_table_.SetLength(half);
+  g_eval_table_.SetLength(half);
+  --cur_k_;
 }
 
 SumcheckProver::SumcheckProver(const FieldVec &f_coeffs,
@@ -193,32 +326,13 @@ void SumcheckProver::ReceiveChallenge(const FieldElement &r_kminus1) {
 bool CheckSumcheckRelations(const std::vector<QuadraticPoly> &h_by_level,
                             const std::vector<FieldElement> &r,
                             const FieldElement &claimed_y) {
-  const long d = static_cast<long>(h_by_level.size());
-  if (d < 0)
-    return false;
-  if (static_cast<long>(r.size()) != d)
-    return false;
-  if (d == 0) {
-    return claimed_y == claimed_y;
-  }
+  return CheckQuadraticSumcheckChain(h_by_level, r, claimed_y);
+}
 
-  const ZZ_pE one = One();
-  const ZZ_pE zero = ZZ_pE(0);
-
-  const QuadraticPoly &h_d = h_by_level[static_cast<std::size_t>(d - 1)];
-  if (h_d.Eval(zero) + h_d.Eval(one) != claimed_y)
-    return false;
-
-  for (long k = 1; k < d; ++k) {
-    const QuadraticPoly &h_k = h_by_level[static_cast<std::size_t>(k - 1)];
-    const QuadraticPoly &h_kp1 = h_by_level[static_cast<std::size_t>(k)];
-    const ZZ_pE lhs = h_k.Eval(zero) + h_k.Eval(one);
-    const ZZ_pE rhs = h_kp1.Eval(r[static_cast<std::size_t>(k)]);
-    if (lhs != rhs)
-      return false;
-  }
-
-  return true;
+bool CheckProductSumcheckChain(const FieldElement &initial_claim,
+                               const std::vector<QuadraticPoly> &h_by_level,
+                               const std::vector<FieldElement> &r) {
+  return CheckQuadraticSumcheckChain(h_by_level, r, initial_claim);
 }
 
 }  // namespace basefold

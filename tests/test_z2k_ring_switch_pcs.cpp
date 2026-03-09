@@ -17,6 +17,7 @@
 #endif
 
 #include "BaseFold/Multilinear.hpp"
+#include "BaseFold/Sumcheck.hpp"
 #include "BaseFold/Z2kPCSBackend.hpp"
 #include "BaseFold/Z2kRingSwitchPCS.hpp"
 #include "GaloisRing/utils.hpp"
@@ -120,6 +121,17 @@ ZZ_pE PolynomialBasisElement(long degree) {
   ZZ_pE out;
   conv(out, poly);
   return out;
+}
+
+ZZ_pE SumOfPointwiseProducts(const vec_ZZ_pE &f_table,
+                             const vec_ZZ_pE &g_table) {
+  CHECK_EQ(f_table.length(), g_table.length());
+  ZZ_pE acc;
+  clear(acc);
+  for (long i = 0; i < f_table.length(); ++i) {
+    acc += f_table[i] * g_table[i];
+  }
+  return acc;
 }
 
 basefold::RingSwitchPCSParams BuildRingSwitchParamsGR42(long ell, long kappa,
@@ -942,6 +954,209 @@ void TestBuildRingSwitchComponentTensor_RejectsWrongSuffixDimension() {
       "TestBuildRingSwitchComponentTensor_RejectsWrongSuffixDimension");
 }
 
+void TestProductSumcheckProver_BooleanTablesPasses() {
+  testutil::PrintInfo("Ring-switch WP2: product sumcheck passes on honest Boolean tables");
+
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  vec_ZZ_pE f_table;
+  f_table.SetLength(4);
+  f_table[0] = testutil::ConstZZpE(1);
+  f_table[1] = alpha;
+  f_table[2] = testutil::ConstZZpE(3);
+  f_table[3] = alpha + testutil::ConstZZpE(1);
+
+  vec_ZZ_pE g_table;
+  g_table.SetLength(4);
+  g_table[0] = alpha + testutil::ConstZZpE(2);
+  g_table[1] = testutil::ConstZZpE(1);
+  g_table[2] = alpha;
+  g_table[3] = testutil::ConstZZpE(0);
+
+  const ZZ_pE initial_claim = SumOfPointwiseProducts(f_table, g_table);
+  basefold::ProductSumcheckProver prover(f_table, g_table);
+
+  std::vector<basefold::QuadraticPoly> h_by_level(2);
+  h_by_level[1] = prover.CurrentPolynomial();
+
+  std::vector<ZZ_pE> r_by_level = {alpha + testutil::ConstZZpE(1),
+                                   testutil::ConstZZpE(3)};
+  prover.ReceiveChallenge(r_by_level[1]);
+  h_by_level[0] = prover.CurrentPolynomial();
+  prover.ReceiveChallenge(r_by_level[0]);
+
+  CHECK(basefold::CheckProductSumcheckChain(initial_claim, h_by_level,
+                                            r_by_level));
+
+  const vec_ZZ_pE f_monomial =
+      basefold::BooleanHypercubeTableToMonomialCoeffs(f_table);
+  const vec_ZZ_pE g_monomial =
+      basefold::BooleanHypercubeTableToMonomialCoeffs(g_table);
+  const ZZ_pE expected_final =
+      basefold::EvalMultilinearMonomialCoeffs(f_monomial, r_by_level) *
+      basefold::EvalMultilinearMonomialCoeffs(g_monomial, r_by_level);
+  CHECK_EQ(h_by_level[0].Eval(r_by_level[0]), expected_final);
+}
+
+void TestProductSumcheckChain_RejectsTamperedPolynomial() {
+  testutil::PrintInfo("Ring-switch WP2: product sumcheck chain rejects tampering");
+
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  vec_ZZ_pE f_table;
+  f_table.SetLength(4);
+  f_table[0] = testutil::ConstZZpE(0);
+  f_table[1] = testutil::ConstZZpE(1);
+  f_table[2] = alpha;
+  f_table[3] = testutil::ConstZZpE(2);
+
+  vec_ZZ_pE g_table;
+  g_table.SetLength(4);
+  g_table[0] = alpha + testutil::ConstZZpE(1);
+  g_table[1] = testutil::ConstZZpE(3);
+  g_table[2] = testutil::ConstZZpE(1);
+  g_table[3] = alpha;
+
+  const ZZ_pE initial_claim = SumOfPointwiseProducts(f_table, g_table);
+  basefold::ProductSumcheckProver prover(f_table, g_table);
+
+  std::vector<basefold::QuadraticPoly> h_by_level(2);
+  h_by_level[1] = prover.CurrentPolynomial();
+
+  const std::vector<ZZ_pE> r_by_level = {alpha, testutil::ConstZZpE(1)};
+  prover.ReceiveChallenge(r_by_level[1]);
+  h_by_level[0] = prover.CurrentPolynomial();
+
+  CHECK(basefold::CheckProductSumcheckChain(initial_claim, h_by_level,
+                                            r_by_level));
+
+  std::vector<basefold::QuadraticPoly> tampered = h_by_level;
+  tampered[0].a0 += testutil::ConstZZpE(1);
+  CHECK(!basefold::CheckProductSumcheckChain(initial_claim, tampered,
+                                             r_by_level));
+}
+
+void TestProductSumcheckProver_FromMonomialCoeffsMatchesTables() {
+  testutil::PrintInfo("Ring-switch WP2: monomial helper matches table-native product sumcheck");
+
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  vec_ZZ_pE f_coeffs;
+  f_coeffs.SetLength(4);
+  f_coeffs[0] = testutil::ConstZZpE(1);
+  f_coeffs[1] = alpha;
+  f_coeffs[2] = testutil::ConstZZpE(2);
+  f_coeffs[3] = alpha + testutil::ConstZZpE(1);
+
+  vec_ZZ_pE g_coeffs;
+  g_coeffs.SetLength(4);
+  g_coeffs[0] = alpha + testutil::ConstZZpE(1);
+  g_coeffs[1] = testutil::ConstZZpE(3);
+  g_coeffs[2] = testutil::ConstZZpE(0);
+  g_coeffs[3] = testutil::ConstZZpE(1);
+
+  vec_ZZ_pE f_table;
+  vec_ZZ_pE g_table;
+  f_table.SetLength(4);
+  g_table.SetLength(4);
+  for (long i = 0; i < 4; ++i) {
+    const std::vector<ZZ_pE> point = BooleanPointFromIndex(i, 2);
+    f_table[i] = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, point);
+    g_table[i] = basefold::EvalMultilinearMonomialCoeffs(g_coeffs, point);
+  }
+
+  basefold::ProductSumcheckProver from_tables(f_table, g_table);
+  basefold::ProductSumcheckProver from_coeffs =
+      basefold::ProductSumcheckProver::FromMonomialCoeffs(f_coeffs, g_coeffs);
+
+  CHECK_EQ(from_tables.CurrentPolynomial().a0, from_coeffs.CurrentPolynomial().a0);
+  CHECK_EQ(from_tables.CurrentPolynomial().a1, from_coeffs.CurrentPolynomial().a1);
+  CHECK_EQ(from_tables.CurrentPolynomial().a2, from_coeffs.CurrentPolynomial().a2);
+
+  const std::vector<ZZ_pE> r_by_level = {alpha + testutil::ConstZZpE(1),
+                                         testutil::ConstZZpE(2)};
+  from_tables.ReceiveChallenge(r_by_level[1]);
+  from_coeffs.ReceiveChallenge(r_by_level[1]);
+
+  CHECK_EQ(from_tables.CurrentPolynomial().a0, from_coeffs.CurrentPolynomial().a0);
+  CHECK_EQ(from_tables.CurrentPolynomial().a1, from_coeffs.CurrentPolynomial().a1);
+  CHECK_EQ(from_tables.CurrentPolynomial().a2, from_coeffs.CurrentPolynomial().a2);
+
+  from_tables.ReceiveChallenge(r_by_level[0]);
+  from_coeffs.ReceiveChallenge(r_by_level[0]);
+}
+
+void TestProductSumcheckProver_DimensionZeroUsesNoRounds() {
+  testutil::PrintInfo("Ring-switch WP2: product sumcheck has an explicit d=0 no-round contract");
+
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  vec_ZZ_pE f_table;
+  f_table.SetLength(1);
+  f_table[0] = alpha + testutil::ConstZZpE(1);
+
+  vec_ZZ_pE g_table;
+  g_table.SetLength(1);
+  g_table[0] = alpha;
+
+  basefold::ProductSumcheckProver prover(f_table, g_table);
+  CHECK_EQ(prover.Dimension(), 0L);
+  CHECK_EQ(prover.RemainingVars(), 0L);
+
+  std::vector<basefold::QuadraticPoly> h_by_level;
+  std::vector<ZZ_pE> r_by_level;
+  CHECK(basefold::CheckProductSumcheckChain(
+      f_table[0] * g_table[0], h_by_level, r_by_level));
+}
+
 }  // namespace
 
 int main() {
@@ -966,6 +1181,10 @@ int main() {
     RUN_TEST(TestBuildRingSwitchComponentTensor_RecoversPartialEvaluations);
     RUN_TEST(TestBuildRingSwitchComponentTensor_RCoeffsEvaluateAsExpected);
     RUN_TEST(TestBuildRingSwitchComponentTensor_RejectsWrongSuffixDimension);
+    RUN_TEST(TestProductSumcheckProver_BooleanTablesPasses);
+    RUN_TEST(TestProductSumcheckChain_RejectsTamperedPolynomial);
+    RUN_TEST(TestProductSumcheckProver_FromMonomialCoeffsMatchesTables);
+    RUN_TEST(TestProductSumcheckProver_DimensionZeroUsesNoRounds);
   } catch (const exception &e) {
     cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;

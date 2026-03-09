@@ -1,7 +1,12 @@
 # Compiler I Ring-Switching Implementation Plan
 
-Status: planning only. Clarifying decisions are now fixed below; do not start
-code implementation until the plan itself is explicitly approved for execution.
+Status: implementation tracking.
+
+Current progress:
+
+- `WP0` complete and committed.
+- `WP1` complete and committed.
+- `WP2` complete in the working tree for this turn.
 
 Branch: `feat/compiler1-ring-switching`
 

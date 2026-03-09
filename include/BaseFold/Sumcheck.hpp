@@ -20,6 +20,39 @@ struct QuadraticPoly {
   FieldElement Eval(const FieldElement &x) const;
 };
 
+// Computes the sumcheck messages for h(X)=f(X)*g(X), where f and g are
+// multilinear polynomials given by their Boolean-hypercube evaluation tables.
+//
+// The main constructor is table-native for Compiler I. `FromMonomialCoeffs(...)`
+// is a thin convenience factory that first evaluates both multilinears on the
+// Boolean hypercube and then delegates to the table-native path.
+class ProductSumcheckProver {
+ public:
+  // Preconditions:
+  // - f_eval_table.length() == g_eval_table.length() == 2^d for some d>=0
+  ProductSumcheckProver(const FieldVec &f_eval_table,
+                        const FieldVec &g_eval_table);
+
+  static ProductSumcheckProver FromMonomialCoeffs(const FieldVec &f_coeffs,
+                                                  const FieldVec &g_coeffs);
+
+  long Dimension() const { return d_; }
+  long RemainingVars() const { return cur_k_; }
+
+  // Returns h_{cur_k_}(X), where cur_k_ counts the remaining variables.
+  QuadraticPoly CurrentPolynomial() const;
+
+  // Applies the verifier challenge r_{cur_k_-1} for the current variable,
+  // updating internal state to the next round (cur_k_ := cur_k_-1).
+  void ReceiveChallenge(const FieldElement &r_kminus1);
+
+ private:
+  long d_ = 0;
+  long cur_k_ = 0;
+  FieldVec f_eval_table_;
+  FieldVec g_eval_table_;
+};
+
 // Computes the sumcheck messages for g(X)=f(X)*eq_z(X), where f is multilinear
 // (given in monomial-basis coefficients).
 //
@@ -71,6 +104,15 @@ class SumcheckProver {
 bool CheckSumcheckRelations(const std::vector<QuadraticPoly> &h_by_level,
                             const std::vector<FieldElement> &r,
                             const FieldElement &claimed_y);
+
+// Verifier-side consistency checks for a generic product sumcheck.
+//
+// Conventions:
+// - h_by_level[i] stores h_{i+1}(X) (so h_by_level.back() is h_d).
+// - r[i] stores r_i, the challenge for variable X_{i+1}.
+bool CheckProductSumcheckChain(const FieldElement &initial_claim,
+                               const std::vector<QuadraticPoly> &h_by_level,
+                               const std::vector<FieldElement> &r);
 
 }  // namespace basefold
 
