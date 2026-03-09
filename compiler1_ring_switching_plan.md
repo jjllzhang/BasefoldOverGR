@@ -7,6 +7,7 @@ Current progress:
 - `WP0` complete and committed.
 - `WP1` complete and committed.
 - `WP2` complete in the working tree for this turn.
+- `WP3` complete in the working tree for this turn.
 
 Branch: `feat/compiler1-ring-switching`
 

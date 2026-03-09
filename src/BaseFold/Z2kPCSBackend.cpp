@@ -38,6 +38,7 @@ void ValidateBackendVTableOrThrow(const Z2kPCSBackendVTable &vtable,
   if (vtable.validate_params_or_throw == nullptr ||
       vtable.message_length == nullptr || vtable.point_dimension == nullptr ||
       vtable.commit == nullptr || vtable.build_commit_artifacts == nullptr ||
+      vtable.commitment_from_artifacts == nullptr ||
       vtable.prove_eval == nullptr || vtable.verify_eval == nullptr ||
       vtable.eval_proof_size_bytes == nullptr) {
     LogicError((std::string(func_name) +
@@ -218,6 +219,14 @@ Z2kPCSBackendOpaquePtr BaseFoldBackendBuildCommitArtifacts(
           BaseFoldPCSBuildCommitArtifacts(f_coeffs, params)));
 }
 
+MerkleRoot BaseFoldBackendCommitmentFromArtifacts(const void *commit_artifacts,
+                                                  const void *backend_params) {
+  (void)backend_params;
+  const BaseFoldPCSCommitArtifacts &artifacts = AsBaseFoldCommitArtifacts(
+      commit_artifacts, "BaseFoldBackendCommitmentFromArtifacts");
+  return artifacts.root_d;
+}
+
 Z2kPCSBackendOpaquePtr BaseFoldBackendProveEval(
     const NTL::vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
     const FieldElement &claimed_y, long num_queries, const void *backend_params,
@@ -268,6 +277,7 @@ const Z2kPCSBackendVTable kBaseFoldBackendVTable = {
     &BaseFoldBackendPointDimension,
     &BaseFoldBackendCommit,
     &BaseFoldBackendBuildCommitArtifacts,
+    &BaseFoldBackendCommitmentFromArtifacts,
     &BaseFoldBackendProveEval,
     &BaseFoldBackendVerifyEval,
     &BaseFoldBackendEvalProofSizeBytes,
@@ -335,6 +345,9 @@ Z2kPCSBackendCommitArtifacts Z2kPCSBackendBuildCommitArtifacts(
     LogicError(
         "Z2kPCSBackendBuildCommitArtifacts: backend returned empty payload");
   }
+  out.commitment =
+      backend.vtable->commitment_from_artifacts(out.payload.get(),
+                                                backend.params.get());
   return out;
 }
 

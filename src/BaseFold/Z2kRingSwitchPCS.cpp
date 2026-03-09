@@ -156,6 +156,11 @@ vec_ZZ_pE DecomposeGRElementToBaseCoeffsPolynomialBasisUnchecked(
   return coeffs;
 }
 
+struct PackedCommitInputs {
+  vec_ZZ_pE t_packed_table;
+  vec_ZZ_pE t_packed_monomial_coeffs;
+};
+
 void ValidateBasisDescriptorOrThrow(const RingSwitchBasisDescriptor &basis,
                                     long expected_dimension,
                                     const char *label,
@@ -193,6 +198,15 @@ void ValidateBasicIrreducibilityModTwoOrThrow(const ZZ_pX &extension_modulus,
                 ": extension_modulus must be basic irreducible modulo 2")
                    .c_str());
   }
+}
+
+PackedCommitInputs BuildPackedCommitInputs(const RingSwitchPCSParams &params,
+                                           const vec_ZZ_pE &t_table) {
+  PackedCommitInputs out;
+  out.t_packed_table = PackZ2kCoeffsToGREvals(params, t_table);
+  out.t_packed_monomial_coeffs =
+      BooleanHypercubeTableToMonomialCoeffs(out.t_packed_table);
+  return out;
 }
 
 }  // namespace
@@ -364,6 +378,26 @@ vec_ZZ_pE PackZ2kCoeffsToGREvals(const RingSwitchPCSParams &params,
   }
 
   return packed;
+}
+
+MerkleRoot RingSwitchPCSCommit(const RingSwitchPCSParams &params,
+                               const vec_ZZ_pE &t_table) {
+  return RingSwitchPCSBuildCommitArtifacts(params, t_table).commitment;
+}
+
+RingSwitchPCSCommitArtifacts RingSwitchPCSBuildCommitArtifacts(
+    const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table) {
+  ValidateRingSwitchPCSParamsOrThrow(params);
+  const PackedCommitInputs packed = BuildPackedCommitInputs(params, t_table);
+
+  RingSwitchPCSCommitArtifacts out;
+  out.t_packed_table = packed.t_packed_table;
+  out.t_packed_monomial_coeffs = packed.t_packed_monomial_coeffs;
+  out.backend_commit_artifacts =
+      Z2kPCSBackendBuildCommitArtifacts(params.backend,
+                                        out.t_packed_monomial_coeffs);
+  out.commitment = out.backend_commit_artifacts.commitment;
+  return out;
 }
 
 vec_ZZ_pE DecomposeGRElementToBaseCoeffsPolynomialBasis(

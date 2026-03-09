@@ -31,6 +31,9 @@ struct Z2kPCSBackendVTable {
                        const void *backend_params) = nullptr;
   Z2kPCSBackendOpaquePtr (*build_commit_artifacts)(
       const NTL::vec_ZZ_pE &f_coeffs, const void *backend_params) = nullptr;
+  MerkleRoot (*commitment_from_artifacts)(
+      const void *commit_artifacts,
+      const void *backend_params) = nullptr;
   Z2kPCSBackendOpaquePtr (*prove_eval)(
       const NTL::vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
       const FieldElement &claimed_y, long num_queries,
@@ -57,6 +60,7 @@ struct Z2kPCSBackendCommitArtifacts {
   const Z2kPCSBackendVTable *vtable = nullptr;
   Z2kPCSBackendOpaquePtr payload;
   Z2kPCSBackendOpaquePtr params_owner;
+  MerkleRoot commitment;
 };
 
 struct Z2kPCSBackendEvalProof {

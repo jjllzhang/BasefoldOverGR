@@ -55,6 +55,13 @@ struct RingSwitchComponentTensor {
   NTL::vec_ZZ_pE r_monomial_coeffs;
 };
 
+struct RingSwitchPCSCommitArtifacts {
+  NTL::vec_ZZ_pE t_packed_table;
+  NTL::vec_ZZ_pE t_packed_monomial_coeffs;
+  Z2kPCSBackendCommitArtifacts backend_commit_artifacts;
+  MerkleRoot commitment;
+};
+
 RingSwitchBasisDescriptor ActivePolynomialBasisDescriptor();
 
 void ValidateCurrentZ2kRingContextOrThrow(const NTL::ZZ &base_modulus,
@@ -75,6 +82,12 @@ NTL::vec_ZZ_pE BooleanHypercubeTableToMonomialCoeffs(
 // paper-style Boolean-hypercube table of t' over GR(2^k, 2^kappa).
 NTL::vec_ZZ_pE PackZ2kCoeffsToGREvals(const RingSwitchPCSParams &params,
                                       const NTL::vec_ZZ_pE &t_table);
+
+MerkleRoot RingSwitchPCSCommit(const RingSwitchPCSParams &params,
+                               const NTL::vec_ZZ_pE &t_table);
+
+RingSwitchPCSCommitArtifacts RingSwitchPCSBuildCommitArtifacts(
+    const RingSwitchPCSParams &params, const NTL::vec_ZZ_pE &t_table);
 
 NTL::vec_ZZ_pE DecomposeGRElementToBaseCoeffsPolynomialBasis(
     const RingSwitchPCSParams &params, const NTL::ZZ_pE &element);

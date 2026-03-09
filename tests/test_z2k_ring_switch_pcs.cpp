@@ -249,6 +249,8 @@ void TestBaseFoldBackendAdapter_Smoke() {
       basefold::Z2kPCSBackendCommit(backend, f_coeffs);
   const basefold::Z2kPCSBackendCommitArtifacts commit_artifacts =
       basefold::Z2kPCSBackendBuildCommitArtifacts(backend, f_coeffs);
+
+  CHECK_EQ(commit_artifacts.commitment, commitment);
   const basefold::Z2kPCSBackendEvalProof proof = basefold::Z2kPCSBackendProveEval(
       backend, f_coeffs, z, y, /*num_queries=*/3, &commit_artifacts);
 
@@ -954,6 +956,81 @@ void TestBuildRingSwitchComponentTensor_RejectsWrongSuffixDimension() {
       "TestBuildRingSwitchComponentTensor_RejectsWrongSuffixDimension");
 }
 
+void TestRingSwitchCommit_MatchesDirectBackendCommit() {
+  testutil::PrintInfo("Ring-switch WP3: compiler commitment matches direct backend commitment on packed polynomial");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::RingSwitchPCSParams params =
+      BuildRingSwitchParamsGR42(/*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
+  const vec_ZZ_pE t_table =
+      BuildBaseRingCoeffVector({0, 1, 2, 3, 1, 0, 3, 2});
+
+  const basefold::MerkleRoot compiler_commitment =
+      basefold::RingSwitchPCSCommit(params, t_table);
+
+  const vec_ZZ_pE packed_table = basefold::PackZ2kCoeffsToGREvals(params, t_table);
+  const vec_ZZ_pE packed_monomial =
+      basefold::BooleanHypercubeTableToMonomialCoeffs(packed_table);
+  const basefold::MerkleRoot direct_backend_commitment =
+      basefold::Z2kPCSBackendCommit(params.backend, packed_monomial);
+
+  CHECK_EQ(compiler_commitment, direct_backend_commitment);
+}
+
+void TestRingSwitchBuildCommitArtifacts_CachesPackedRepresentations() {
+  testutil::PrintInfo("Ring-switch WP3: commit artifacts cache both packed representations and backend artifacts");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::RingSwitchPCSParams params =
+      BuildRingSwitchParamsGR42(/*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
+  const vec_ZZ_pE t_table =
+      BuildBaseRingCoeffVector({3, 2, 1, 0, 1, 2, 3, 0});
+
+  const basefold::RingSwitchPCSCommitArtifacts artifacts =
+      basefold::RingSwitchPCSBuildCommitArtifacts(params, t_table);
+
+  const vec_ZZ_pE expected_packed_table =
+      basefold::PackZ2kCoeffsToGREvals(params, t_table);
+  const vec_ZZ_pE expected_packed_monomial =
+      basefold::BooleanHypercubeTableToMonomialCoeffs(expected_packed_table);
+  const basefold::MerkleRoot direct_backend_commitment =
+      basefold::Z2kPCSBackendCommit(params.backend, expected_packed_monomial);
+
+  CHECK_EQ(artifacts.t_packed_table, expected_packed_table);
+  CHECK_EQ(artifacts.t_packed_monomial_coeffs, expected_packed_monomial);
+  CHECK_EQ(artifacts.commitment, direct_backend_commitment);
+  CHECK_EQ(artifacts.backend_commit_artifacts.commitment,
+           direct_backend_commitment);
+}
+
 void TestProductSumcheckProver_BooleanTablesPasses() {
   testutil::PrintInfo("Ring-switch WP2: product sumcheck passes on honest Boolean tables");
 
@@ -1181,6 +1258,8 @@ int main() {
     RUN_TEST(TestBuildRingSwitchComponentTensor_RecoversPartialEvaluations);
     RUN_TEST(TestBuildRingSwitchComponentTensor_RCoeffsEvaluateAsExpected);
     RUN_TEST(TestBuildRingSwitchComponentTensor_RejectsWrongSuffixDimension);
+    RUN_TEST(TestRingSwitchCommit_MatchesDirectBackendCommit);
+    RUN_TEST(TestRingSwitchBuildCommitArtifacts_CachesPackedRepresentations);
     RUN_TEST(TestProductSumcheckProver_BooleanTablesPasses);
     RUN_TEST(TestProductSumcheckChain_RejectsTamperedPolynomial);
     RUN_TEST(TestProductSumcheckProver_FromMonomialCoeffsMatchesTables);
