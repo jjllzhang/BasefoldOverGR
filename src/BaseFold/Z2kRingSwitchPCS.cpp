@@ -4,7 +4,10 @@
 #include <NTL/ZZ_pE.h>
 #include <NTL/ZZ_pXFactoring.h>
 
+#include <limits>
 #include <string>
+
+#include "BaseFold/Multilinear.hpp"
 
 using NTL::LogicError;
 using NTL::ZZ;
@@ -13,6 +16,7 @@ using NTL::ZZ_pE;
 using NTL::ZZ_pEBak;
 using NTL::ZZ_pX;
 using NTL::ZZ_pBak;
+using NTL::vec_ZZ_pE;
 
 namespace basefold {
 namespace {
@@ -61,6 +65,95 @@ ZZ_pX ReduceZZpXModPrime(const ZZ_pX &poly_over_pk, const ZZ &prime) {
   }
   out.normalize();
   return out;
+}
+
+bool IsPowerOfTwoLong(long value) {
+  return value > 0 && (value & (value - 1)) == 0;
+}
+
+long Log2ExactPowerOfTwoLongOrThrow(long value, const char *what) {
+  if (!IsPowerOfTwoLong(value)) {
+    LogicError(what);
+  }
+  long out = 0;
+  while (value > 1) {
+    value >>= 1;
+    ++out;
+  }
+  return out;
+}
+
+ZZ_pE BaseRingConstant(const ZZ_p &value) {
+  ZZ_pX poly;
+  if (value != 0) {
+    NTL::SetCoeff(poly, 0, value);
+  }
+  ZZ_pE out;
+  NTL::conv(out, poly);
+  return out;
+}
+
+ZZ_pE BaseRingConstant(long value) {
+  return BaseRingConstant(NTL::to_ZZ_p(value));
+}
+
+bool IsBaseRingConstant(const ZZ_pE &value) {
+  const ZZ_pX poly = NTL::rep(value);
+  const long degree = NTL::deg(poly);
+  for (long i = 1; i <= degree; ++i) {
+    if (NTL::coeff(poly, i) != 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void ValidateBaseRingConstantOrThrow(const ZZ_pE &value, const char *label,
+                                     long index, const char *func_name) {
+  if (!IsBaseRingConstant(value)) {
+    LogicError((std::string(func_name) + ": " + label + "[" +
+                std::to_string(index) + "] must be a base-ring constant")
+                   .c_str());
+  }
+}
+
+void ValidateBaseRingVectorOrThrow(const vec_ZZ_pE &values, const char *label,
+                                   const char *func_name) {
+  for (long i = 0; i < values.length(); ++i) {
+    ValidateBaseRingConstantOrThrow(values[i], label, i, func_name);
+  }
+}
+
+std::vector<ZZ_pE> BooleanPointFromIndex(long index, long dimension) {
+  std::vector<ZZ_pE> point(static_cast<std::size_t>(dimension));
+  for (long i = 0; i < dimension; ++i) {
+    point[static_cast<std::size_t>(i)] = BaseRingConstant((index >> i) & 1L);
+  }
+  return point;
+}
+
+long CheckedMultiplyLong(long a, long b, const char *what) {
+  if (a < 0 || b < 0) {
+    LogicError(what);
+  }
+  if (a == 0 || b == 0) {
+    return 0;
+  }
+  if (a > std::numeric_limits<long>::max() / b) {
+    LogicError(what);
+  }
+  return a * b;
+}
+
+vec_ZZ_pE DecomposeGRElementToBaseCoeffsPolynomialBasisUnchecked(
+    long basis_dimension, const ZZ_pE &element) {
+  vec_ZZ_pE coeffs;
+  coeffs.SetLength(basis_dimension);
+  const ZZ_pX poly = NTL::rep(element);
+  for (long i = 0; i < basis_dimension; ++i) {
+    coeffs[i] = BaseRingConstant(NTL::coeff(poly, i));
+  }
+  return coeffs;
 }
 
 void ValidateBasisDescriptorOrThrow(const RingSwitchBasisDescriptor &basis,
@@ -212,6 +305,127 @@ RingSwitchPCSParams RingSwitchPCSSetup(const RingSwitchPCSSetupInput &input) {
   params.backend = input.backend;
   ValidateRingSwitchPCSParamsOrThrow(params);
   return params;
+}
+
+vec_ZZ_pE BooleanHypercubeTableToMonomialCoeffs(const vec_ZZ_pE &table_values) {
+  const long n = table_values.length();
+  if (!IsPowerOfTwoLong(n)) {
+    LogicError(
+        "BooleanHypercubeTableToMonomialCoeffs: table length must be a power of two");
+  }
+  const long dimension = Log2ExactPowerOfTwoLongOrThrow(
+      n,
+      "BooleanHypercubeTableToMonomialCoeffs: table length must be a power of two");
+  vec_ZZ_pE coeffs = table_values;
+  for (long bit = 0; bit < dimension; ++bit) {
+    const long step = 1L << bit;
+    for (long mask = 0; mask < n; ++mask) {
+      if (mask & step) {
+        coeffs[mask] -= coeffs[mask ^ step];
+      }
+    }
+  }
+  return coeffs;
+}
+
+vec_ZZ_pE PackZ2kCoeffsToGREvals(const RingSwitchPCSParams &params,
+                                 const vec_ZZ_pE &t_table) {
+  ValidateRingSwitchPCSParamsOrThrow(params);
+  const long expected_length = Pow2LongOrThrow(
+      params.ell, "PackZ2kCoeffsToGREvals: ell is too large for long");
+  if (t_table.length() != expected_length) {
+    LogicError("PackZ2kCoeffsToGREvals: t_table length must equal 2^ell");
+  }
+  ValidateBaseRingVectorOrThrow(t_table, "t_table",
+                                "PackZ2kCoeffsToGREvals");
+
+  const long basis_dimension = params.beta_basis.dimension;
+  const long packed_length = Pow2LongOrThrow(
+      params.ell_prime,
+      "PackZ2kCoeffsToGREvals: ell_prime is too large for long");
+  vec_ZZ_pE packed;
+  packed.SetLength(packed_length);
+
+  if (params.beta_basis.kind != RingSwitchBasisKind::kPolynomial) {
+    LogicError(
+        "PackZ2kCoeffsToGREvals: beta_basis must be the active polynomial basis");
+  }
+
+  for (long w = 0; w < packed_length; ++w) {
+    ZZ_pX poly;
+    for (long v = 0; v < basis_dimension; ++v) {
+      const long coeff_index = v + w * basis_dimension;
+      const ZZ_p constant_coeff = NTL::coeff(NTL::rep(t_table[coeff_index]), 0);
+      if (constant_coeff != 0) {
+        NTL::SetCoeff(poly, v, constant_coeff);
+      }
+    }
+    NTL::conv(packed[w], poly);
+  }
+
+  return packed;
+}
+
+vec_ZZ_pE DecomposeGRElementToBaseCoeffsPolynomialBasis(
+    const RingSwitchPCSParams &params, const ZZ_pE &element) {
+  ValidateRingSwitchPCSParamsOrThrow(params);
+  return DecomposeGRElementToBaseCoeffsPolynomialBasisUnchecked(
+      params.alpha_basis.dimension, element);
+}
+
+vec_ZZ_pE DecomposeGRElementToBaseCoeffs(
+    const RingSwitchPCSParams &params, const ZZ_pE &element,
+    const RingSwitchBasisDescriptor &basis) {
+  ValidateRingSwitchPCSParamsOrThrow(params);
+  ValidateBasisDescriptorOrThrow(basis, ZZ_pE::degree(), "basis",
+                                 "DecomposeGRElementToBaseCoeffs");
+  if (basis.kind != RingSwitchBasisKind::kPolynomial) {
+    LogicError("DecomposeGRElementToBaseCoeffs: unsupported basis kind");
+  }
+  return DecomposeGRElementToBaseCoeffsPolynomialBasisUnchecked(
+      basis.dimension, element);
+}
+
+RingSwitchComponentTensor BuildRingSwitchComponentTensor(
+    const RingSwitchPCSParams &params, const std::vector<ZZ_pE> &r_suffix) {
+  ValidateRingSwitchPCSParamsOrThrow(params);
+  if (static_cast<long>(r_suffix.size()) != params.ell_prime) {
+    LogicError(
+        "BuildRingSwitchComponentTensor: r_suffix dimension must equal ell_prime");
+  }
+
+  const long basis_dimension = params.alpha_basis.dimension;
+  const long num_w = Pow2LongOrThrow(
+      params.ell_prime,
+      "BuildRingSwitchComponentTensor: ell_prime is too large for long");
+  const long total_coeffs = CheckedMultiplyLong(
+      basis_dimension, num_w,
+      "BuildRingSwitchComponentTensor: coefficient table is too large for long");
+
+  RingSwitchComponentTensor tensor;
+  tensor.basis_dimension = basis_dimension;
+  tensor.ell_prime = params.ell_prime;
+  tensor.a_by_u_then_w.SetLength(total_coeffs);
+  tensor.r_table.SetLength(total_coeffs);
+
+  for (long w = 0; w < num_w; ++w) {
+    const std::vector<ZZ_pE> bool_point =
+        BooleanPointFromIndex(w, params.ell_prime);
+    const ZZ_pE eq_at_w = EqPolynomial(r_suffix, bool_point);
+    const vec_ZZ_pE coeffs =
+        DecomposeGRElementToBaseCoeffsPolynomialBasisUnchecked(basis_dimension,
+                                                               eq_at_w);
+    for (long u = 0; u < basis_dimension; ++u) {
+      const long row_major_index = u * num_w + w;
+      const long flat_index = u + w * basis_dimension;
+      tensor.a_by_u_then_w[row_major_index] = coeffs[u];
+      tensor.r_table[flat_index] = coeffs[u];
+    }
+  }
+  tensor.r_monomial_coeffs =
+      BooleanHypercubeTableToMonomialCoeffs(tensor.r_table);
+
+  return tensor;
 }
 
 }  // namespace basefold

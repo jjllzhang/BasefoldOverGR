@@ -19,9 +19,11 @@
 #include "BaseFold/Multilinear.hpp"
 #include "BaseFold/Z2kPCSBackend.hpp"
 #include "BaseFold/Z2kRingSwitchPCS.hpp"
+#include "GaloisRing/utils.hpp"
 #include "tests/test_common.hpp"
 
 using NTL::conv;
+using NTL::clear;
 using NTL::mat_ZZ_pE;
 using NTL::SetCoeff;
 using NTL::to_ZZ;
@@ -84,6 +86,56 @@ basefold::FoldableCodeParams BuildParamsGR42Variant(const ZZ &p,
   params.diag_T[1][0] = one;
   params.diag_T[1][2] = alpha + one;
   return params;
+}
+
+long Pow2ForTest(long exponent) {
+  CHECK_MSG(exponent >= 0, "Pow2ForTest: exponent must be non-negative");
+  if (exponent < 0) {
+    return 0;
+  }
+  return 1L << exponent;
+}
+
+vec_ZZ_pE BuildBaseRingCoeffVector(const std::vector<long> &coeffs) {
+  vec_ZZ_pE out;
+  out.SetLength(static_cast<long>(coeffs.size()));
+  for (long i = 0; i < static_cast<long>(coeffs.size()); ++i) {
+    out[i] = testutil::ConstZZpE(coeffs[static_cast<std::size_t>(i)]);
+  }
+  return out;
+}
+
+std::vector<ZZ_pE> BooleanPointFromIndex(long index, long dimension) {
+  std::vector<ZZ_pE> point(static_cast<std::size_t>(dimension));
+  for (long i = 0; i < dimension; ++i) {
+    point[static_cast<std::size_t>(i)] =
+        testutil::ConstZZpE((index >> i) & 1L);
+  }
+  return point;
+}
+
+ZZ_pE PolynomialBasisElement(long degree) {
+  ZZ_pX poly;
+  SetCoeff(poly, degree, 1);
+  ZZ_pE out;
+  conv(out, poly);
+  return out;
+}
+
+basefold::RingSwitchPCSParams BuildRingSwitchParamsGR42(long ell, long kappa,
+                                                        const ZZ &base_modulus,
+                                                        const ZZ_pX &F,
+                                                        const ZZ &p,
+                                                        const ZZ_pE &alpha) {
+  basefold::RingSwitchPCSSetupInput input;
+  input.ell = ell;
+  input.kappa = kappa;
+  input.base_modulus = base_modulus;
+  input.extension_modulus = F;
+  input.alpha_basis = basefold::ActivePolynomialBasisDescriptor();
+  input.beta_basis = basefold::ActivePolynomialBasisDescriptor();
+  input.backend = basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
+  return basefold::RingSwitchPCSSetup(input);
 }
 
 void ExpectChildFailureContains(const function<void()> &fn, const string &needle,
@@ -601,6 +653,295 @@ void TestRingSwitchSetup_RejectsBackendDimensionMismatch() {
       "TestRingSwitchSetup_RejectsBackendDimensionMismatch");
 }
 
+void TestPackZ2kCoeffsToGREvals_RoundTripsSmallExample() {
+  testutil::PrintInfo("Ring-switch WP1: packing follows the polynomial-basis block layout");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::RingSwitchPCSParams params =
+      BuildRingSwitchParamsGR42(/*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
+  const vec_ZZ_pE t_coeffs =
+      BuildBaseRingCoeffVector({0, 1, 2, 3, 1, 0, 3, 2});
+
+  const vec_ZZ_pE packed = basefold::PackZ2kCoeffsToGREvals(params, t_coeffs);
+  CHECK_EQ(packed.length(), 4L);
+  CHECK_EQ(packed[0], LongVecToZZpE({0, 1}));
+  CHECK_EQ(packed[1], LongVecToZZpE({2, 3}));
+  CHECK_EQ(packed[2], LongVecToZZpE({1, 0}));
+  CHECK_EQ(packed[3], LongVecToZZpE({3, 2}));
+
+  for (long w = 0; w < packed.length(); ++w) {
+    const vec_ZZ_pE decomposed =
+        basefold::DecomposeGRElementToBaseCoeffsPolynomialBasis(params,
+                                                                packed[w]);
+    CHECK_EQ(decomposed.length(), Pow2ForTest(params.kappa));
+    for (long v = 0; v < decomposed.length(); ++v) {
+      CHECK_EQ(decomposed[v], t_coeffs[v + (w << params.kappa)]);
+    }
+  }
+}
+
+void TestBooleanHypercubeTableToMonomialCoeffs_EvaluatesTableCorrectly() {
+  testutil::PrintInfo("Ring-switch WP1: Boolean-table to monomial conversion matches table semantics");
+
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  const vec_ZZ_pE table = BuildBaseRingCoeffVector({1, 2, 3, 0});
+  const vec_ZZ_pE monomial =
+      basefold::BooleanHypercubeTableToMonomialCoeffs(table);
+
+  CHECK_EQ(basefold::EvalMultilinearMonomialCoeffs(
+               monomial, BooleanPointFromIndex(/*index=*/0, /*dimension=*/2)),
+           table[0]);
+  CHECK_EQ(basefold::EvalMultilinearMonomialCoeffs(
+               monomial, BooleanPointFromIndex(/*index=*/1, /*dimension=*/2)),
+           table[1]);
+  CHECK_EQ(basefold::EvalMultilinearMonomialCoeffs(
+               monomial, BooleanPointFromIndex(/*index=*/2, /*dimension=*/2)),
+           table[2]);
+  CHECK_EQ(basefold::EvalMultilinearMonomialCoeffs(
+               monomial, BooleanPointFromIndex(/*index=*/3, /*dimension=*/2)),
+           table[3]);
+}
+
+void TestPackZ2kCoeffsToGREvals_RejectsNonBaseRingInputs() {
+  testutil::PrintInfo("Ring-switch WP1: packing rejects non-constant Z2k inputs");
+
+  ExpectChildFailureContains(
+      [&]() {
+        const ZZ p = to_ZZ(2);
+        const ZZ modulus = to_ZZ(4);
+        ZZ_pPush mod_push(modulus);
+
+        ZZ_pX F;
+        SetCoeff(F, 2, 1);
+        SetCoeff(F, 1, 1);
+        SetCoeff(F, 0, 1);
+        ZZ_pEPush ext_push(F);
+
+        ZZ_pX xpoly;
+        SetCoeff(xpoly, 1, 1);
+        ZZ_pE alpha;
+        conv(alpha, xpoly);
+
+        const basefold::RingSwitchPCSParams params = BuildRingSwitchParamsGR42(
+            /*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
+        vec_ZZ_pE t_coeffs = BuildBaseRingCoeffVector({0, 1, 2, 3, 1, 0, 3, 2});
+        t_coeffs[3] = alpha;
+        (void)basefold::PackZ2kCoeffsToGREvals(params, t_coeffs);
+      },
+      "must be a base-ring constant",
+      "TestPackZ2kCoeffsToGREvals_RejectsNonBaseRingInputs");
+}
+
+void TestBuildRingSwitchComponentTensor_ReconstructsSuffixEqualityValues() {
+  testutil::PrintInfo("Ring-switch WP1: A_{u||w} reconstructs suffix equalities");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::RingSwitchPCSParams params =
+      BuildRingSwitchParamsGR42(/*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
+  const std::vector<ZZ_pE> r_suffix = {alpha + testutil::ConstZZpE(1),
+                                       testutil::ConstZZpE(3)};
+  const basefold::RingSwitchComponentTensor tensor =
+      basefold::BuildRingSwitchComponentTensor(params, r_suffix);
+
+  CHECK_EQ(tensor.basis_dimension, Pow2ForTest(params.kappa));
+  CHECK_EQ(tensor.ell_prime, params.ell_prime);
+  CHECK_EQ(tensor.a_by_u_then_w.length(), Pow2ForTest(params.ell));
+  CHECK_EQ(tensor.r_table.length(), Pow2ForTest(params.ell));
+  CHECK_EQ(tensor.r_monomial_coeffs.length(), Pow2ForTest(params.ell));
+  CHECK_EQ(tensor.r_monomial_coeffs,
+           basefold::BooleanHypercubeTableToMonomialCoeffs(tensor.r_table));
+
+  const ZZ_pE x = PolynomialBasisElement(1);
+  const long num_w = Pow2ForTest(params.ell_prime);
+  for (long w = 0; w < num_w; ++w) {
+    ZZ_pE reconstructed = tensor.a_by_u_then_w[w];
+    reconstructed += tensor.a_by_u_then_w[num_w + w] * x;
+    const ZZ_pE expected =
+        basefold::EqPolynomial(r_suffix, BooleanPointFromIndex(w, params.ell_prime));
+    CHECK_EQ(reconstructed, expected);
+  }
+}
+
+void TestBuildRingSwitchComponentTensor_RecoversPartialEvaluations() {
+  testutil::PrintInfo("Ring-switch WP1: s_u recovers the Appendix C.1 partial evaluations");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::RingSwitchPCSParams params =
+      BuildRingSwitchParamsGR42(/*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
+  const vec_ZZ_pE t_coeffs =
+      BuildBaseRingCoeffVector({0, 1, 2, 3, 1, 0, 3, 2});
+  const vec_ZZ_pE packed = basefold::PackZ2kCoeffsToGREvals(params, t_coeffs);
+  const std::vector<ZZ_pE> r_suffix = {alpha + testutil::ConstZZpE(1),
+                                       testutil::ConstZZpE(3)};
+  const basefold::RingSwitchComponentTensor tensor =
+      basefold::BuildRingSwitchComponentTensor(params, r_suffix);
+
+  vec_ZZ_pE s_by_u;
+  s_by_u.SetLength(tensor.basis_dimension);
+  const long num_w = Pow2ForTest(params.ell_prime);
+  for (long u = 0; u < tensor.basis_dimension; ++u) {
+    ZZ_pE acc;
+    clear(acc);
+    for (long w = 0; w < num_w; ++w) {
+      acc += tensor.a_by_u_then_w[u * num_w + w] * packed[w];
+    }
+    s_by_u[u] = acc;
+  }
+
+  const ZZ_pE x = PolynomialBasisElement(1);
+  for (long v = 0; v < tensor.basis_dimension; ++v) {
+    ZZ_pE recovered_partial;
+    clear(recovered_partial);
+    for (long u = 0; u < tensor.basis_dimension; ++u) {
+      const vec_ZZ_pE s_u_coeffs =
+          basefold::DecomposeGRElementToBaseCoeffsPolynomialBasis(params,
+                                                                  s_by_u[u]);
+      const ZZ_pE alpha_u = (u == 0) ? testutil::ConstZZpE(1) : x;
+      recovered_partial += s_u_coeffs[v] * alpha_u;
+    }
+
+    vec_ZZ_pE slice;
+    slice.SetLength(num_w);
+    for (long w = 0; w < num_w; ++w) {
+      slice[w] = t_coeffs[v + (w << params.kappa)];
+    }
+    const vec_ZZ_pE slice_monomial =
+        basefold::BooleanHypercubeTableToMonomialCoeffs(slice);
+    const ZZ_pE direct_partial =
+        basefold::EvalMultilinearMonomialCoeffs(slice_monomial, r_suffix);
+    CHECK_EQ(recovered_partial, direct_partial);
+  }
+}
+
+void TestBuildRingSwitchComponentTensor_RCoeffsEvaluateAsExpected() {
+  testutil::PrintInfo("Ring-switch WP1: verifier polynomial r evaluates with v||w flattening");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::RingSwitchPCSParams params =
+      BuildRingSwitchParamsGR42(/*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
+  const std::vector<ZZ_pE> r_suffix = {alpha + testutil::ConstZZpE(1),
+                                       testutil::ConstZZpE(3)};
+  const basefold::RingSwitchComponentTensor tensor =
+      basefold::BuildRingSwitchComponentTensor(params, r_suffix);
+
+  const std::vector<ZZ_pE> r_prime = {alpha, testutil::ConstZZpE(1),
+                                      alpha + testutil::ConstZZpE(1)};
+  const ZZ_pE got =
+      basefold::EvalMultilinearMonomialCoeffs(tensor.r_monomial_coeffs, r_prime);
+
+  const std::vector<ZZ_pE> r_prefix = {r_prime[0]};
+  const std::vector<ZZ_pE> r_suffix_prime = {r_prime[1], r_prime[2]};
+  ZZ_pE expected;
+  clear(expected);
+  const long num_w = Pow2ForTest(params.ell_prime);
+  for (long w = 0; w < num_w; ++w) {
+    const ZZ_pE eq_w =
+        basefold::EqPolynomial(r_suffix_prime, BooleanPointFromIndex(w, params.ell_prime));
+    ZZ_pE inner;
+    clear(inner);
+    for (long u = 0; u < tensor.basis_dimension; ++u) {
+      const ZZ_pE eq_u =
+          basefold::EqPolynomial(r_prefix, BooleanPointFromIndex(u, params.kappa));
+      inner += tensor.a_by_u_then_w[u * num_w + w] * eq_u;
+    }
+    expected += inner * eq_w;
+  }
+  CHECK_EQ(got, expected);
+}
+
+void TestBuildRingSwitchComponentTensor_RejectsWrongSuffixDimension() {
+  testutil::PrintInfo("Ring-switch WP1: component tensor rejects wrong suffix dimension");
+
+  ExpectChildFailureContains(
+      [&]() {
+        const ZZ p = to_ZZ(2);
+        const ZZ modulus = to_ZZ(4);
+        ZZ_pPush mod_push(modulus);
+
+        ZZ_pX F;
+        SetCoeff(F, 2, 1);
+        SetCoeff(F, 1, 1);
+        SetCoeff(F, 0, 1);
+        ZZ_pEPush ext_push(F);
+
+        ZZ_pX xpoly;
+        SetCoeff(xpoly, 1, 1);
+        ZZ_pE alpha;
+        conv(alpha, xpoly);
+
+        const basefold::RingSwitchPCSParams params = BuildRingSwitchParamsGR42(
+            /*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
+        const std::vector<ZZ_pE> wrong_suffix = {alpha};
+        (void)basefold::BuildRingSwitchComponentTensor(params, wrong_suffix);
+      },
+      "r_suffix dimension must equal ell_prime",
+      "TestBuildRingSwitchComponentTensor_RejectsWrongSuffixDimension");
+}
+
 }  // namespace
 
 int main() {
@@ -618,6 +959,13 @@ int main() {
     RUN_TEST(TestRingSwitchSetup_RejectsMismatchedExtensionModulus);
     RUN_TEST(TestRingSwitchSetup_RejectsNonPolynomialBasis);
     RUN_TEST(TestRingSwitchSetup_RejectsBackendDimensionMismatch);
+    RUN_TEST(TestPackZ2kCoeffsToGREvals_RoundTripsSmallExample);
+    RUN_TEST(TestBooleanHypercubeTableToMonomialCoeffs_EvaluatesTableCorrectly);
+    RUN_TEST(TestPackZ2kCoeffsToGREvals_RejectsNonBaseRingInputs);
+    RUN_TEST(TestBuildRingSwitchComponentTensor_ReconstructsSuffixEqualityValues);
+    RUN_TEST(TestBuildRingSwitchComponentTensor_RecoversPartialEvaluations);
+    RUN_TEST(TestBuildRingSwitchComponentTensor_RCoeffsEvaluateAsExpected);
+    RUN_TEST(TestBuildRingSwitchComponentTensor_RejectsWrongSuffixDimension);
   } catch (const exception &e) {
     cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;
