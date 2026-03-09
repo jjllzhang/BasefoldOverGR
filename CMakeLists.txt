@@ -33,88 +33,119 @@ if(NOT (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|X86_64|amd64|AMD64)$" AND UNIX 
   )
 endif()
 
-add_library(galoisring
+function(configure_repo_cxx_target target_name)
+  target_include_directories(${target_name} PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+  target_compile_features(${target_name} PUBLIC cxx_std_17)
+
+  if(MSVC)
+    target_compile_options(${target_name} PRIVATE /W4)
+  else()
+    target_compile_options(${target_name} PRIVATE -Wall -Wextra -pedantic)
+  endif()
+endfunction()
+
+add_library(galoisring_algebra
   src/GaloisRing/utils.cpp
   src/GaloisRing/Inverse.cpp
   src/GaloisRing/HenselLift.cpp
   src/GaloisRing/PrimitiveElement.cpp
+)
+
+add_library(pcs_common
   src/PCS/Common/Hash.cpp
   src/PCS/Common/Merkle.cpp
   src/PCS/Common/Transcript.cpp
   src/PCS/Common/Multilinear.cpp
   src/PCS/Common/Sumcheck.cpp
   src/PCS/Common/Profile.cpp
+)
+
+add_library(basefold_core
   src/PCS/BaseFold/FoldableCode.cpp
   src/PCS/BaseFold/IOPP.cpp
   src/PCS/BaseFold/BaseFoldPCS.cpp
   src/PCS/BaseFold/ProofSerialize.cpp
   src/PCS/BaseFold/ProofSize.cpp
+)
+
+add_library(z2k_compiler_core
   src/Compiler/Z2k/PCSBackend.cpp
   src/Compiler/Z2k/RingSwitchPCS.cpp
   src/Compiler/Z2k/RingSwitchProofSerialize.cpp
 )
 
-target_include_directories(galoisring PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-
-target_compile_features(galoisring PUBLIC cxx_std_17)
-
-if(MSVC)
-  target_compile_options(galoisring PRIVATE /W4)
-else()
-  target_compile_options(galoisring PRIVATE -Wall -Wextra -pedantic)
-endif()
+configure_repo_cxx_target(galoisring_algebra)
+configure_repo_cxx_target(pcs_common)
+configure_repo_cxx_target(basefold_core)
+configure_repo_cxx_target(z2k_compiler_core)
 
 find_library(NTL_LIBRARY NAMES ntl REQUIRED)
 find_library(GMP_LIBRARY NAMES gmp REQUIRED)
 find_library(M_LIBRARY NAMES m)
 find_package(OpenMP)
 
-target_link_libraries(galoisring PUBLIC
+target_link_libraries(galoisring_algebra PUBLIC
   ${NTL_LIBRARY}
   ${GMP_LIBRARY}
 )
-target_link_libraries(galoisring PUBLIC pcs_hash_blake3)
-if(OpenMP_CXX_FOUND)
-  target_link_libraries(galoisring PUBLIC OpenMP::OpenMP_CXX)
-  target_compile_definitions(galoisring PUBLIC BASEFOLD_USE_OPENMP=1)
-endif()
+
 if(M_LIBRARY)
-  target_link_libraries(galoisring PUBLIC ${M_LIBRARY})
+  target_link_libraries(galoisring_algebra PUBLIC ${M_LIBRARY})
+endif()
+
+target_link_libraries(pcs_common PUBLIC
+  galoisring_algebra
+  pcs_hash_blake3
+)
+
+target_link_libraries(basefold_core PUBLIC
+  pcs_common
+)
+
+target_link_libraries(z2k_compiler_core PUBLIC
+  basefold_core
+)
+
+if(OpenMP_CXX_FOUND)
+  target_link_libraries(pcs_common PUBLIC OpenMP::OpenMP_CXX)
+  target_compile_definitions(pcs_common PUBLIC BASEFOLD_USE_OPENMP=1)
+  target_link_libraries(basefold_core PUBLIC OpenMP::OpenMP_CXX)
+  target_compile_definitions(basefold_core PUBLIC BASEFOLD_USE_OPENMP=1)
 endif()
 
 add_executable(test_galois_ring tests/test_galois_ring_basic.cpp)
-target_link_libraries(test_galois_ring PRIVATE galoisring)
+target_link_libraries(test_galois_ring PRIVATE galoisring_algebra)
 target_include_directories(test_galois_ring PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(test_foldable_codes tests/test_foldable_codes.cpp)
-target_link_libraries(test_foldable_codes PRIVATE galoisring)
+target_link_libraries(test_foldable_codes PRIVATE basefold_core)
 target_include_directories(test_foldable_codes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(test_iopp tests/test_iopp.cpp)
-target_link_libraries(test_iopp PRIVATE galoisring)
+target_link_libraries(test_iopp PRIVATE basefold_core)
 target_include_directories(test_iopp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(test_pcs tests/test_pcs.cpp)
-target_link_libraries(test_pcs PRIVATE galoisring)
+target_link_libraries(test_pcs PRIVATE basefold_core)
 target_include_directories(test_pcs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(test_z2k_ring_switch_pcs tests/test_z2k_ring_switch_pcs.cpp)
-target_link_libraries(test_z2k_ring_switch_pcs PRIVATE galoisring)
+target_link_libraries(test_z2k_ring_switch_pcs PRIVATE z2k_compiler_core)
 target_include_directories(test_z2k_ring_switch_pcs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(bench_pcs_commit bench/bench_pcs_commit.cpp)
-target_link_libraries(bench_pcs_commit PRIVATE galoisring)
+target_link_libraries(bench_pcs_commit PRIVATE basefold_core)
 
 add_executable(bench_pcs_eval bench/bench_pcs_eval.cpp)
-target_link_libraries(bench_pcs_eval PRIVATE galoisring)
+target_link_libraries(bench_pcs_eval PRIVATE basefold_core)
 
 add_executable(bench_z2k_ring_switch_commit bench/bench_z2k_ring_switch_commit.cpp)
-target_link_libraries(bench_z2k_ring_switch_commit PRIVATE galoisring)
+target_link_libraries(bench_z2k_ring_switch_commit PRIVATE z2k_compiler_core)
 
 add_executable(bench_z2k_ring_switch_eval bench/bench_z2k_ring_switch_eval.cpp)
-target_link_libraries(bench_z2k_ring_switch_eval PRIVATE galoisring)
+target_link_libraries(bench_z2k_ring_switch_eval PRIVATE z2k_compiler_core)
 
 add_executable(calc_iopp_params bench/calc_iopp_params.cpp)
 target_compile_features(calc_iopp_params PRIVATE cxx_std_17)

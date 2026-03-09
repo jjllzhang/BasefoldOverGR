@@ -321,7 +321,7 @@ z2k_compiler_core
 
 - `galoisring_algebra`
   - `src/GaloisRing/*.cpp`
-  - 对外导出 `include/GaloisRing`
+  - `PUBLIC` 导出仓库根 `include/`
   - `PUBLIC` 链接 `NTL / GMP / m`
 
 - `pcs_common`
@@ -331,18 +331,19 @@ z2k_compiler_core
   - `src/PCS/Common/Multilinear.cpp`
   - `src/PCS/Common/Sumcheck.cpp`
   - `src/PCS/Common/Profile.cpp`
-  - 对外导出 `include/PCS/Common`
+  - `PUBLIC` 导出仓库根 `include/`
   - `PUBLIC` 依赖 `galoisring_algebra` 和 `pcs_hash_blake3`
+  - OpenMP compile definitions / link 也在这一层生效，因为 `Merkle.cpp` 直接使用并行 Merkle 构建
 
 - `basefold_core`
   - `src/PCS/BaseFold/*.cpp`
-  - 对外导出 `include/PCS/BaseFold`
+  - `PUBLIC` 导出仓库根 `include/`
   - `PUBLIC` 依赖 `pcs_common`
   - 这里继续挂 OpenMP 相关 compile definitions
 
 - `z2k_compiler_core`
   - `src/Compiler/Z2k/*.cpp`
-  - 对外导出 `include/Compiler/Z2k`
+  - `PUBLIC` 导出仓库根 `include/`
   - `PUBLIC` 依赖 `basefold_core`
 
 ### 7.3 tests / bench 的链接建议
@@ -463,11 +464,19 @@ Phase 1 完成说明：
 
 ## Phase 2: CMake target 拆分
 
-- [ ] 引入 `galoisring_algebra`
-- [ ] 引入 `pcs_common`
-- [ ] 引入 `basefold_core`
-- [ ] 引入 `z2k_compiler_core`
-- [ ] 逐个切换 tests / bench 的链接目标
+- [x] 引入 `galoisring_algebra`
+- [x] 引入 `pcs_common`
+- [x] 引入 `basefold_core`
+- [x] 引入 `z2k_compiler_core`
+- [x] 逐个切换 tests / bench 的链接目标
+
+Phase 2 完成说明：
+
+- 旧的聚合 `galoisring` target 已移除，CMake 现在直接以 `galoisring_algebra -> pcs_common -> basefold_core -> z2k_compiler_core` 表达依赖方向。
+- 由于仓库内头文件路径采用 `#include "PCS/..."`、`#include "Compiler/..."`、`#include "GaloisRing/..."`，四个库 target 都 `PUBLIC` 导出仓库根 `include/`，而不是只导出各自子目录。
+- `test_galois_ring` 仅链接 `galoisring_algebra`；`test_foldable_codes / test_iopp / test_pcs / bench_pcs_*` 仅链接 `basefold_core`；`test_z2k_ring_switch_pcs / bench_z2k_ring_switch_*` 仅链接 `z2k_compiler_core`。
+- `calc_iopp_params` 继续保持独立可执行文件，不强行接入库 target 依赖链。
+- OpenMP 相关 compile definitions / link 同时作用于 `pcs_common` 与 `basefold_core`，以覆盖 `Merkle.cpp` 和 BaseFold core 中的并行代码路径。
 
 验收条件：
 
