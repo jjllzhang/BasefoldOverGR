@@ -4,13 +4,11 @@
 #include <NTL/ZZ_pE.h>
 #include <NTL/vec_ZZ_pE.h>
 
-#include <array>
-#include <cstddef>
-#include <cstdint>
-#include <string>
 #include <vector>
 
-#include "BaseFold/FoldableCode.hpp"
+#include "PCS/BaseFold/FoldableCode.hpp"
+#include "PCS/Common/Merkle.hpp"
+#include "PCS/Common/Transcript.hpp"
 
 namespace basefold {
 
@@ -46,10 +44,6 @@ namespace basefold {
 
 using FieldElement = NTL::ZZ_pE;
 using Oracle = NTL::vec_ZZ_pE;
-
-using Byte = std::uint8_t;
-using Bytes = std::vector<Byte>;
-using Digest = std::array<Byte, 32>;
 
 // Returns k_i = k0 * 2^i (message length of C_i).
 long MessageLengthAtLevel(const FoldableCodeParams &params, long level);
@@ -166,133 +160,6 @@ bool VerifyQueryFromOracles(const IOPPQueryPlan &plan,
                             const IOPPChallenges &challenges,
                             const IOPPOracles &oracles,
                             const FoldableCodeParams &params);
-
-// -----------------------------------------------------------------------------
-// Merkle instantiation and Fiat-Shamir transform (optional)
-// -----------------------------------------------------------------------------
-//
-// In the IOP model, the verifier has oracle access to π_i. To instantiate this
-// into a non-interactive argument (or a PCS backend), one typically:
-//   1) Commits to each oracle π_i using a Merkle tree, sending only its root.
-//   2) Replaces the verifier's public-coin randomness (α_i, µ, ...) using
-//      Fiat-Shamir challenges derived from a transcript that absorbs the roots.
-//   3) Replaces oracle queries with Merkle openings (value + authentication
-//      path), which the verifier checks against the corresponding roots.
-//
-// This section provides data types and interface stubs for those steps. No hash
-// function choice is enforced here; implementations should define a concrete
-// transcript and Merkle hashing/serialization that are consistent between prover
-// and verifier.
-
-struct MerkleMultiproofStats {
-  std::uint64_t opened_leaf_count = 0;
-  std::uint64_t unique_sibling_count = 0;
-  std::uint64_t verifier_hashes = 0;
-};
-
-// A pruned Merkle multiproof for multiple leaves in the same oracle.
-// Conventions:
-// - queried_indices is sorted, unique, and names the opened leaves.
-// - values[i] is the opened payload for queried_indices[i].
-// - sibling_hashes stores the unique pruned authentication siblings in the
-//   planner-defined order used by MerkleVerifyMultiproof.
-struct MerkleMultiproof {
-  std::vector<long> queried_indices;
-  Oracle values;
-  std::vector<Digest> sibling_hashes;
-};
-
-// A Merkle commitment to an oracle π_i (root digest).
-using MerkleRoot = Digest;
-
-// Runtime tuning knobs for MerkleTree::Build parallelization.
-// Defaults can also be provided via environment variables:
-// - BASEFOLD_MERKLE_LEAVES_PER_THREAD
-// - BASEFOLD_MERKLE_PARALLEL_LEVEL_THRESHOLD
-// - BASEFOLD_MERKLE_MAX_THREADS
-struct MerkleBuildParallelConfig {
-  long leaves_per_thread = 32768;
-  long parallel_level_threshold = 8192;
-  int max_threads = 8;
-};
-
-// Loads merkle build parallel config from environment variables and applies it.
-void ResetMerkleBuildParallelConfigFromEnv();
-
-// Applies merkle build parallel config for the current process.
-void SetMerkleBuildParallelConfig(const MerkleBuildParallelConfig &cfg);
-
-// Returns the currently active merkle build parallel config.
-MerkleBuildParallelConfig GetMerkleBuildParallelConfig();
-
-// Computes the Merkle root for an oracle.
-MerkleRoot MerkleCommitOracle(const Oracle &oracle);
-
-// Produces a pruned Merkle multiproof for a set of queried indices.
-// `queried_indices` may contain duplicates and need not be sorted.
-MerkleMultiproof MerkleOpenOracleMany(const Oracle &oracle,
-                                      const std::vector<long> &queried_indices);
-
-// Returns multiproof planning statistics for a queried index set.
-MerkleMultiproofStats PlanMerkleMultiproof(
-    long leaf_count, const std::vector<long> &queried_indices);
-
-// Verifies that `proof` is a valid pruned multiproof for `root`.
-bool MerkleVerifyMultiproof(const MerkleRoot &root, long leaf_count,
-                            const MerkleMultiproof &proof);
-
-// Verifies that `proof` is a valid pruned multiproof for `root`, using
-// verifier-supplied queried indices (for example, transcript-derived indices)
-// instead of any indices stored in `proof`.
-bool MerkleVerifyMultiproof(const MerkleRoot &root, long leaf_count,
-                            const std::vector<long> &queried_indices,
-                            const MerkleMultiproof &proof);
-
-// A reusable Merkle tree for an oracle, allowing one build and many multiproofs.
-//
-// - Build(oracle) runs in O(n).
-// - OpenMany(indices) runs in O(k log n) on the requested leaves.
-//
-// Hashing is identical to MerkleCommitOracle/MerkleOpenOracleMany/
-// MerkleVerifyMultiproof.
-class MerkleTree {
- public:
-  MerkleTree() = default;
-
-  static MerkleTree Build(const Oracle &oracle);
-
-  long LeafCount() const { return leaf_count_; }
-
-  MerkleRoot Root() const;
-
-  // Produces a pruned Merkle multiproof for queried_indices using this tree's
-  // cached nodes. queried_indices may contain duplicates and need not be
-  // sorted.
-  MerkleMultiproof OpenMany(const Oracle &oracle,
-                            const std::vector<long> &queried_indices) const;
-
- private:
-  long leaf_count_ = 0;
-  Digest raw_root_{};
-  std::vector<std::vector<Digest>> levels_;  // padded levels used for openings
-};
-
-// Minimal Fiat-Shamir transcript interface.
-// Implementations should provide:
-// - domain separation via labels (e.g., "alpha", "mu", plus a round index)
-// - uniform field sampling for ChallengeFieldElement()
-// - uniform integer sampling for ChallengeIndex()
-class FiatShamirTranscript {
- public:
-  virtual ~FiatShamirTranscript() = default;
-
-  virtual void AbsorbBytes(const Byte *data, std::size_t len) = 0;
-  virtual void AbsorbBytes(const Bytes &data) = 0;
-  virtual void AbsorbFieldElement(const FieldElement &x) = 0;
-
-  virtual FieldElement ChallengeFieldElement(const std::string &label) = 0;
-  virtual long ChallengeIndex(const std::string &label, long upper_bound) = 0;
-};
 
 // Merkle roots for π_0..π_d (roots_by_level[i] commits to π_i).
 struct IOPPMerkleCommitments {

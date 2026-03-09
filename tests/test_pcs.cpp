@@ -12,9 +12,9 @@
 #include <string>
 #include <vector>
 
-#include "BaseFold/BaseFoldPCS.hpp"
-#include "BaseFold/Multilinear.hpp"
-#include "BaseFold/ProofSize.hpp"
+#include "PCS/BaseFold/BaseFoldPCS.hpp"
+#include "PCS/Common/Multilinear.hpp"
+#include "PCS/BaseFold/ProofSize.hpp"
 #include "tests/test_common.hpp"
 
 using NTL::conv;

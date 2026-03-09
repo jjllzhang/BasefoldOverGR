@@ -3,7 +3,7 @@
 
 #include <cstdint>
 
-#include "BaseFold/BaseFoldPCS.hpp"
+#include "PCS/BaseFold/BaseFoldPCS.hpp"
 
 namespace basefold {
 

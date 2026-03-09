@@ -16,11 +16,11 @@
 #include <string>
 #include <vector>
 
-#include "BaseFold/BaseFoldPCS.hpp"
-#include "BaseFold/Hash.hpp"
-#include "BaseFold/Multilinear.hpp"
-#include "BaseFold/ProofSize.hpp"
-#include "BaseFold/Profile.hpp"
+#include "PCS/BaseFold/BaseFoldPCS.hpp"
+#include "PCS/Common/Hash.hpp"
+#include "PCS/Common/Multilinear.hpp"
+#include "PCS/BaseFold/ProofSize.hpp"
+#include "PCS/Common/Profile.hpp"
 #include "GaloisRing/PrimitiveElement.hpp"
 
 using NTL::conv;

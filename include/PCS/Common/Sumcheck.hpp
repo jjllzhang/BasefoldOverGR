@@ -1,15 +1,11 @@
 #ifndef BASEFOLD_SUMCHECK_HPP_
 #define BASEFOLD_SUMCHECK_HPP_
 
-#include <NTL/ZZ_pE.h>
-#include <NTL/vec_ZZ_pE.h>
-
 #include <vector>
 
-namespace basefold {
+#include "PCS/Common/Merkle.hpp"
 
-using FieldElement = NTL::ZZ_pE;
-using FieldVec = NTL::vec_ZZ_pE;
+namespace basefold {
 
 // A degree-2 univariate polynomial a0 + a1*X + a2*X^2.
 struct QuadraticPoly {

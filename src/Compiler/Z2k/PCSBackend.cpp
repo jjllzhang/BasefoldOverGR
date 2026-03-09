@@ -1,4 +1,4 @@
-#include "BaseFold/Z2kPCSBackend.hpp"
+#include "Compiler/Z2k/PCSBackend.hpp"
 
 #include <NTL/ZZ.h>
 #include <NTL/ZZ_p.h>
@@ -7,8 +7,8 @@
 #include <memory>
 #include <string>
 
-#include "BaseFold/ProofSerialize.hpp"
-#include "BaseFold/ProofSize.hpp"
+#include "PCS/BaseFold/ProofSerialize.hpp"
+#include "PCS/BaseFold/ProofSize.hpp"
 
 using NTL::LogicError;
 using NTL::ZZ;

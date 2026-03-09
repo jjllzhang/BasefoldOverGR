@@ -1,15 +1,11 @@
 #ifndef BASEFOLD_MULTILINEAR_HPP_
 #define BASEFOLD_MULTILINEAR_HPP_
 
-#include <NTL/ZZ_pE.h>
-#include <NTL/vec_ZZ_pE.h>
-
 #include <vector>
 
-namespace basefold {
+#include "PCS/Common/Merkle.hpp"
 
-using FieldElement = NTL::ZZ_pE;
-using FieldVec = NTL::vec_ZZ_pE;
+namespace basefold {
 
 // Evaluates a multilinear polynomial given by its monomial-basis coefficient
 // vector `coeffs` of length 2^d at the point `point` ∈ R^d.
@@ -31,4 +27,3 @@ FieldElement EqPolynomial(const std::vector<FieldElement> &z,
 }  // namespace basefold
 
 #endif  // BASEFOLD_MULTILINEAR_HPP_
-

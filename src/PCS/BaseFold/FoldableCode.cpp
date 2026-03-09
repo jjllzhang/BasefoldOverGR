@@ -1,5 +1,5 @@
-#include "BaseFold/FoldableCode.hpp"
-#include "BaseFold/Profile.hpp"
+#include "PCS/BaseFold/FoldableCode.hpp"
+#include "PCS/Common/Profile.hpp"
 
 #include <NTL/ZZ_p.h>
 #include <NTL/mat_ZZ_pE.h>

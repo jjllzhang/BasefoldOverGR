@@ -1,4 +1,4 @@
-#include "BaseFold/Hash.hpp"
+#include "PCS/Common/Hash.hpp"
 
 #include <NTL/ZZ.h>
 

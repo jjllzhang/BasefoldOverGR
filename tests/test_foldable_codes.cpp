@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "BaseFold/FoldableCode.hpp"
+#include "PCS/BaseFold/FoldableCode.hpp"
 #include "tests/test_common.hpp"
 
 using NTL::conv;

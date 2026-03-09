@@ -15,8 +15,8 @@
 #include <string>
 #include <vector>
 
-#include "BaseFold/BaseFoldPCS.hpp"
-#include "BaseFold/Hash.hpp"
+#include "PCS/BaseFold/BaseFoldPCS.hpp"
+#include "PCS/Common/Hash.hpp"
 #include "GaloisRing/PrimitiveElement.hpp"
 
 using NTL::conv;

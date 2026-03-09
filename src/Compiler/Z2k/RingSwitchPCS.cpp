@@ -1,4 +1,4 @@
-#include "BaseFold/Z2kRingSwitchPCS.hpp"
+#include "Compiler/Z2k/RingSwitchPCS.hpp"
 
 #include <NTL/ZZ.h>
 #include <NTL/ZZ_p.h>
@@ -11,9 +11,9 @@
 #include <limits>
 #include <string>
 
-#include "BaseFold/Hash.hpp"
-#include "BaseFold/Multilinear.hpp"
-#include "BaseFold/Profile.hpp"
+#include "PCS/Common/Hash.hpp"
+#include "PCS/Common/Multilinear.hpp"
+#include "PCS/Common/Profile.hpp"
 
 using NTL::LogicError;
 using NTL::ZZ;

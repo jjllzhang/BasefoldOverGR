@@ -8,7 +8,7 @@
 
 #include <vector>
 
-#include "BaseFold/Z2kPCSBackend.hpp"
+#include "Compiler/Z2k/PCSBackend.hpp"
 
 namespace basefold {
 

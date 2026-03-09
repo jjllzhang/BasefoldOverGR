@@ -1,6 +1,6 @@
-#include "BaseFold/ProofSize.hpp"
+#include "PCS/BaseFold/ProofSize.hpp"
 
-#include "BaseFold/ProofSerialize.hpp"
+#include "PCS/BaseFold/ProofSerialize.hpp"
 
 namespace basefold {
 

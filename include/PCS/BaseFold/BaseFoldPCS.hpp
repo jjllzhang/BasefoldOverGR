@@ -7,9 +7,9 @@
 
 #include <vector>
 
-#include "BaseFold/FoldableCode.hpp"
-#include "BaseFold/IOPP.hpp"
-#include "BaseFold/Sumcheck.hpp"
+#include "PCS/BaseFold/FoldableCode.hpp"
+#include "PCS/BaseFold/IOPP.hpp"
+#include "PCS/Common/Sumcheck.hpp"
 
 namespace basefold {
 

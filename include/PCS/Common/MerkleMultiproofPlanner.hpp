@@ -7,9 +7,7 @@
 #include <string>
 #include <vector>
 
-#include <NTL/ZZ_pE.h>
-
-#include "BaseFold/IOPP.hpp"
+#include "PCS/Common/Merkle.hpp"
 
 namespace basefold {
 namespace multiproof_planner {

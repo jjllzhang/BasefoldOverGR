@@ -10,7 +10,7 @@
 #include <limits>
 #include <vector>
 
-#include "BaseFold/BaseFoldPCS.hpp"
+#include "PCS/BaseFold/BaseFoldPCS.hpp"
 
 namespace basefold {
 

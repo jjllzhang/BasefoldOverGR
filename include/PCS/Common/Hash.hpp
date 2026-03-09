@@ -1,12 +1,17 @@
 #ifndef BASEFOLD_HASH_HPP_
 #define BASEFOLD_HASH_HPP_
 
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <string>
-
-#include "BaseFold/IOPP.hpp"
+#include <vector>
 
 namespace basefold {
+
+using Byte = std::uint8_t;
+using Bytes = std::vector<Byte>;
+using Digest = std::array<Byte, 32>;
 
 std::string SelectedHashBackendName();
 

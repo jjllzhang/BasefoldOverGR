@@ -5,7 +5,7 @@
 #include <utility>
 #include <vector>
 
-#include "BaseFold/MerkleMultiproofPlanner.hpp"
+#include "PCS/Common/MerkleMultiproofPlanner.hpp"
 
 namespace basefold {
 namespace multiproof_replay {

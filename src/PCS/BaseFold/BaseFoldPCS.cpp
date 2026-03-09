@@ -1,6 +1,6 @@
-#include "BaseFold/BaseFoldPCS.hpp"
-#include "BaseFold/Hash.hpp"
-#include "BaseFold/MerkleMultiproofReplay.hpp"
+#include "PCS/BaseFold/BaseFoldPCS.hpp"
+#include "PCS/Common/Hash.hpp"
+#include "PCS/Common/MerkleMultiproofReplay.hpp"
 
 #include <NTL/ZZ.h>
 #include <NTL/ZZ_p.h>
@@ -20,9 +20,9 @@
 #include <utility>
 #include <vector>
 
-#include "BaseFold/MerkleMultiproofPlanner.hpp"
-#include "BaseFold/Multilinear.hpp"
-#include "BaseFold/Profile.hpp"
+#include "PCS/Common/MerkleMultiproofPlanner.hpp"
+#include "PCS/Common/Multilinear.hpp"
+#include "PCS/Common/Profile.hpp"
 #include "GaloisRing/Inverse.hpp"
 
 #if defined(BASEFOLD_USE_OPENMP)

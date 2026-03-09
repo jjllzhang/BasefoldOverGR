@@ -1,12 +1,12 @@
-#include "BaseFold/Sumcheck.hpp"
-#include "BaseFold/Profile.hpp"
+#include "PCS/Common/Sumcheck.hpp"
+#include "PCS/Common/Profile.hpp"
 
 #include <NTL/ZZ.h>
 
 #include <cstddef>
 #include <vector>
 
-#include "BaseFold/Multilinear.hpp"
+#include "PCS/Common/Multilinear.hpp"
 
 using NTL::LogicError;
 using NTL::vec_ZZ_pE;

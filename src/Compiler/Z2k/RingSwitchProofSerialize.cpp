@@ -1,11 +1,11 @@
-#include "BaseFold/Z2kRingSwitchProofSerialize.hpp"
+#include "Compiler/Z2k/RingSwitchProofSerialize.hpp"
 
 #include <NTL/ZZ_pE.h>
 
 #include <limits>
 #include <string>
 
-#include "BaseFold/ProofSerialize.hpp"
+#include "PCS/BaseFold/ProofSerialize.hpp"
 
 using NTL::LogicError;
 

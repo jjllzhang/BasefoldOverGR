@@ -14,12 +14,12 @@
 #include <string>
 #include <vector>
 
-#include "BaseFold/Hash.hpp"
-#include "BaseFold/Multilinear.hpp"
-#include "BaseFold/Profile.hpp"
-#include "BaseFold/Z2kPCSBackend.hpp"
-#include "BaseFold/Z2kRingSwitchPCS.hpp"
-#include "BaseFold/Z2kRingSwitchProofSerialize.hpp"
+#include "PCS/Common/Hash.hpp"
+#include "PCS/Common/Multilinear.hpp"
+#include "PCS/Common/Profile.hpp"
+#include "Compiler/Z2k/PCSBackend.hpp"
+#include "Compiler/Z2k/RingSwitchPCS.hpp"
+#include "Compiler/Z2k/RingSwitchProofSerialize.hpp"
 #include "GaloisRing/PrimitiveElement.hpp"
 
 using NTL::conv;

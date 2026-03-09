@@ -14,9 +14,9 @@
 #include <string>
 #include <vector>
 
-#include "BaseFold/Hash.hpp"
-#include "BaseFold/Z2kPCSBackend.hpp"
-#include "BaseFold/Z2kRingSwitchPCS.hpp"
+#include "PCS/Common/Hash.hpp"
+#include "Compiler/Z2k/PCSBackend.hpp"
+#include "Compiler/Z2k/RingSwitchPCS.hpp"
 #include "GaloisRing/PrimitiveElement.hpp"
 
 using NTL::conv;

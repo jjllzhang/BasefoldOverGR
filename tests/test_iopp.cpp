@@ -11,8 +11,8 @@
 #include <sstream>
 #include <string>
 
-#include "BaseFold/FoldableCode.hpp"
-#include "BaseFold/IOPP.hpp"
+#include "PCS/BaseFold/FoldableCode.hpp"
+#include "PCS/BaseFold/IOPP.hpp"
 #include "tests/test_common.hpp"
 
 using NTL::conv;

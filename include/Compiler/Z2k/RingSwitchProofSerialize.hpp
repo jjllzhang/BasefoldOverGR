@@ -3,7 +3,7 @@
 
 #include <cstdint>
 
-#include "BaseFold/Z2kRingSwitchPCS.hpp"
+#include "Compiler/Z2k/RingSwitchPCS.hpp"
 
 namespace basefold {
 

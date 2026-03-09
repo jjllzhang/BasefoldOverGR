@@ -9,7 +9,7 @@
 #include <memory>
 #include <vector>
 
-#include "BaseFold/BaseFoldPCS.hpp"
+#include "PCS/BaseFold/BaseFoldPCS.hpp"
 
 namespace basefold {
 

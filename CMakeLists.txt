@@ -17,14 +17,14 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|X86_64|amd64|AMD64)$" AND UNIX AND
        third_party/blake3/blake3_sse41_x86-64_unix.S)
 endif()
 
-add_library(basefold_blake3 STATIC ${BASEFOLD_BLAKE3_SOURCES})
-target_include_directories(basefold_blake3 PUBLIC
+add_library(pcs_hash_blake3 STATIC ${BASEFOLD_BLAKE3_SOURCES})
+target_include_directories(pcs_hash_blake3 PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/third_party/blake3
 )
-target_compile_features(basefold_blake3 PUBLIC c_std_99)
+target_compile_features(pcs_hash_blake3 PUBLIC c_std_99)
 if(NOT (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|X86_64|amd64|AMD64)$" AND UNIX AND
         (CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID MATCHES "Clang")))
-  target_compile_definitions(basefold_blake3 PRIVATE
+  target_compile_definitions(pcs_hash_blake3 PRIVATE
     BLAKE3_USE_NEON=0
     BLAKE3_NO_SSE2
     BLAKE3_NO_SSE41
@@ -38,17 +38,20 @@ add_library(galoisring
   src/GaloisRing/Inverse.cpp
   src/GaloisRing/HenselLift.cpp
   src/GaloisRing/PrimitiveElement.cpp
-  src/BaseFold/Hash.cpp
-  src/BaseFold/FoldableCode.cpp
-  src/BaseFold/IOPP.cpp
-  src/BaseFold/Multilinear.cpp
-  src/BaseFold/Sumcheck.cpp
-  src/BaseFold/BaseFoldPCS.cpp
-  src/BaseFold/Z2kPCSBackend.cpp
-  src/BaseFold/Z2kRingSwitchPCS.cpp
-  src/BaseFold/Z2kRingSwitchProofSerialize.cpp
-  src/BaseFold/ProofSerialize.cpp
-  src/BaseFold/ProofSize.cpp
+  src/PCS/Common/Hash.cpp
+  src/PCS/Common/Merkle.cpp
+  src/PCS/Common/Transcript.cpp
+  src/PCS/Common/Multilinear.cpp
+  src/PCS/Common/Sumcheck.cpp
+  src/PCS/Common/Profile.cpp
+  src/PCS/BaseFold/FoldableCode.cpp
+  src/PCS/BaseFold/IOPP.cpp
+  src/PCS/BaseFold/BaseFoldPCS.cpp
+  src/PCS/BaseFold/ProofSerialize.cpp
+  src/PCS/BaseFold/ProofSize.cpp
+  src/Compiler/Z2k/PCSBackend.cpp
+  src/Compiler/Z2k/RingSwitchPCS.cpp
+  src/Compiler/Z2k/RingSwitchProofSerialize.cpp
 )
 
 target_include_directories(galoisring PUBLIC
@@ -72,7 +75,7 @@ target_link_libraries(galoisring PUBLIC
   ${NTL_LIBRARY}
   ${GMP_LIBRARY}
 )
-target_link_libraries(galoisring PUBLIC basefold_blake3)
+target_link_libraries(galoisring PUBLIC pcs_hash_blake3)
 if(OpenMP_CXX_FOUND)
   target_link_libraries(galoisring PUBLIC OpenMP::OpenMP_CXX)
   target_compile_definitions(galoisring PUBLIC BASEFOLD_USE_OPENMP=1)

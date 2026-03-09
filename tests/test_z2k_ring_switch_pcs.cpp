@@ -20,12 +20,12 @@
 #include <unistd.h>
 #endif
 
-#include "BaseFold/Hash.hpp"
-#include "BaseFold/Multilinear.hpp"
-#include "BaseFold/Sumcheck.hpp"
-#include "BaseFold/Z2kPCSBackend.hpp"
-#include "BaseFold/Z2kRingSwitchPCS.hpp"
-#include "BaseFold/Z2kRingSwitchProofSerialize.hpp"
+#include "PCS/Common/Hash.hpp"
+#include "PCS/Common/Multilinear.hpp"
+#include "PCS/Common/Sumcheck.hpp"
+#include "Compiler/Z2k/PCSBackend.hpp"
+#include "Compiler/Z2k/RingSwitchPCS.hpp"
+#include "Compiler/Z2k/RingSwitchProofSerialize.hpp"
 #include "GaloisRing/utils.hpp"
 #include "tests/test_common.hpp"
 
