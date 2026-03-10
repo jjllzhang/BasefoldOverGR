@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "Compiler/Z2k/PCSBackend.hpp"
+#include "PCS/Common/Sumcheck.hpp"
 
 namespace basefold {
 

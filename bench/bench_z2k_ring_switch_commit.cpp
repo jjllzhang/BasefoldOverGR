@@ -15,7 +15,7 @@
 #include <vector>
 
 #include "PCS/Common/Hash.hpp"
-#include "Compiler/Z2k/PCSBackend.hpp"
+#include "Compiler/Z2k/BaseFoldBackendAdapter.hpp"
 #include "Compiler/Z2k/RingSwitchPCS.hpp"
 #include "GaloisRing/PrimitiveElement.hpp"
 

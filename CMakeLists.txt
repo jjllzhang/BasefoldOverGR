@@ -72,6 +72,7 @@ add_library(basefold_core
 
 add_library(z2k_compiler_core
   src/Compiler/Z2k/PCSBackend.cpp
+  src/Compiler/Z2k/BaseFoldBackendAdapter.cpp
   src/Compiler/Z2k/RingSwitchPCS.cpp
   src/Compiler/Z2k/RingSwitchProofSerialize.cpp
 )

@@ -486,9 +486,15 @@ Phase 2 完成说明：
 
 ## Phase 3: compiler 层抽象清理
 
-- [ ] 拆分 `Z2kPCSBackend` 为 generic backend 和 BaseFold adapter
-- [ ] 更新 ring-switch include 路径和实现依赖
-- [ ] 保持 `RingSwitchPCSEvalProof` 和 serializer 语义不变
+- [x] 拆分 `Z2kPCSBackend` 为 generic backend 和 BaseFold adapter
+- [x] 更新 ring-switch include 路径和实现依赖
+- [x] 保持 `RingSwitchPCSEvalProof` 和 serializer 语义不变
+
+Phase 3 完成说明：
+
+- `Compiler/Z2k/PCSBackend.hpp|cpp` 现在只承载 generic backend handle / vtable / 校验与调度逻辑，不再直接依赖 `PCS/BaseFold/BaseFoldPCS.hpp`。
+- `Compiler/Z2k/BaseFoldBackendAdapter.hpp|cpp` 承载 `MakeBaseFoldZ2kPCSBackend(...)`、BaseFold 特定类型转换和 `kBaseFoldBackendVTable` 注册。
+- `test_z2k_ring_switch_pcs` 与 `bench_z2k_ring_switch_{commit,eval}` 已改为显式通过 adapter 入口接入 BaseFold backend；`RingSwitchPCSEvalProof` 结构与 serializer 字节语义保持不变。
 
 验收条件：
 

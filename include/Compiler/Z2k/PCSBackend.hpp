@@ -9,7 +9,8 @@
 #include <memory>
 #include <vector>
 
-#include "PCS/BaseFold/BaseFoldPCS.hpp"
+#include "PCS/Common/Hash.hpp"
+#include "PCS/Common/Merkle.hpp"
 
 namespace basefold {
 
@@ -76,9 +77,6 @@ struct Z2kPCSBackendEvalProof {
   Z2kPCSBackendOpaquePtr payload;
   Z2kPCSBackendOpaquePtr params_owner;
 };
-
-Z2kPCSBackendHandle MakeBaseFoldZ2kPCSBackend(
-    const FoldableCodeParams &params);
 
 const char *Z2kPCSBackendName(const Z2kPCSBackendHandle &backend);
 

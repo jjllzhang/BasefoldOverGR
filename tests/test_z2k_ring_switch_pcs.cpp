@@ -23,7 +23,7 @@
 #include "PCS/Common/Hash.hpp"
 #include "PCS/Common/Multilinear.hpp"
 #include "PCS/Common/Sumcheck.hpp"
-#include "Compiler/Z2k/PCSBackend.hpp"
+#include "Compiler/Z2k/BaseFoldBackendAdapter.hpp"
 #include "Compiler/Z2k/RingSwitchPCS.hpp"
 #include "Compiler/Z2k/RingSwitchProofSerialize.hpp"
 #include "GaloisRing/utils.hpp"
