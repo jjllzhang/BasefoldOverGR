@@ -13,6 +13,10 @@ struct RingSwitchProofEncodingOptions {
 };
 
 Bytes SerializeRingSwitchPCSOuterProofFixedBytes(
+    const RingSwitchPCSParams &params, const RingSwitchPCSOuterEvalProof &proof,
+    const RingSwitchProofEncodingOptions &options = {});
+
+Bytes SerializeRingSwitchPCSOuterProofFixedBytes(
     const RingSwitchPCSParams &params, const RingSwitchPCSEvalProof &proof,
     const RingSwitchProofEncodingOptions &options = {});
 
@@ -21,7 +25,15 @@ Bytes SerializeRingSwitchPCSEvalProofFixedBytes(
     const RingSwitchProofEncodingOptions &options = {});
 
 std::uint64_t RingSwitchPCSOuterProofSizeBytes(
+    const RingSwitchPCSParams &params, const RingSwitchPCSOuterEvalProof &proof,
+    const RingSwitchProofEncodingOptions &options = {});
+
+std::uint64_t RingSwitchPCSOuterProofSizeBytes(
     const RingSwitchPCSParams &params, const RingSwitchPCSEvalProof &proof,
+    const RingSwitchProofEncodingOptions &options = {});
+
+double RingSwitchPCSOuterProofSizeKB(
+    const RingSwitchPCSParams &params, const RingSwitchPCSOuterEvalProof &proof,
     const RingSwitchProofEncodingOptions &options = {});
 
 double RingSwitchPCSOuterProofSizeKB(

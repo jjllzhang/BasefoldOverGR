@@ -150,11 +150,26 @@ target_link_libraries(bench_pcs_commit PRIVATE basefold_core)
 add_executable(bench_pcs_eval bench/bench_pcs_eval.cpp)
 target_link_libraries(bench_pcs_eval PRIVATE basefold_core)
 
+add_executable(bench_pcs_prove bench/bench_pcs_prove.cpp)
+target_link_libraries(bench_pcs_prove PRIVATE basefold_core)
+
+add_executable(bench_pcs_verify bench/bench_pcs_verify.cpp)
+target_link_libraries(bench_pcs_verify PRIVATE basefold_core)
+
 add_executable(bench_z2k_ring_switch_commit bench/bench_z2k_ring_switch_commit.cpp)
 target_link_libraries(bench_z2k_ring_switch_commit PRIVATE z2k_compiler_core)
 
 add_executable(bench_z2k_ring_switch_eval bench/bench_z2k_ring_switch_eval.cpp)
 target_link_libraries(bench_z2k_ring_switch_eval PRIVATE z2k_compiler_core)
+
+add_executable(bench_z2k_ring_switch_outer_commit bench/bench_z2k_ring_switch_outer_commit.cpp)
+target_link_libraries(bench_z2k_ring_switch_outer_commit PRIVATE z2k_compiler_core)
+
+add_executable(bench_z2k_ring_switch_outer_prove bench/bench_z2k_ring_switch_outer_prove.cpp)
+target_link_libraries(bench_z2k_ring_switch_outer_prove PRIVATE z2k_compiler_core)
+
+add_executable(bench_z2k_ring_switch_outer_verify bench/bench_z2k_ring_switch_outer_verify.cpp)
+target_link_libraries(bench_z2k_ring_switch_outer_verify PRIVATE z2k_compiler_core)
 
 add_executable(calc_iopp_params bench/calc_iopp_params.cpp)
 target_compile_features(calc_iopp_params PRIVATE cxx_std_17)

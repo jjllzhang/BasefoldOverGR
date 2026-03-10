@@ -33,8 +33,9 @@ FixedProofEncodingContext BuildRingSwitchOuterEncodingContext(
   return ctx;
 }
 
+template <typename OuterProofLike>
 void ValidateOuterProofShapeOrThrow(const RingSwitchPCSParams &params,
-                                    const RingSwitchPCSEvalProof &proof,
+                                    const OuterProofLike &proof,
                                     const char *func_name) {
   ValidateRingSwitchPCSParamsOrThrow(params);
   const long expected_s_count = params.beta_basis.dimension;
@@ -50,9 +51,9 @@ void ValidateOuterProofShapeOrThrow(const RingSwitchPCSParams &params,
   }
 }
 
-template <typename Sink>
+template <typename Sink, typename OuterProofLike>
 void SerializeOuterProofToSink(Sink &sink, const RingSwitchPCSParams &params,
-                               const RingSwitchPCSEvalProof &proof,
+                               const OuterProofLike &proof,
                                const FixedProofEncodingContext &ctx) {
   (void)params;
   fixed_proof_serialize_detail::SerializeVersion(sink, ctx);
@@ -88,6 +89,18 @@ std::uint64_t AddU64OrThrow(std::uint64_t lhs, std::uint64_t rhs,
 }  // namespace
 
 Bytes SerializeRingSwitchPCSOuterProofFixedBytes(
+    const RingSwitchPCSParams &params, const RingSwitchPCSOuterEvalProof &proof,
+    const RingSwitchProofEncodingOptions &options) {
+  ValidateOuterProofShapeOrThrow(params, proof,
+                                 "SerializeRingSwitchPCSOuterProofFixedBytes");
+  const FixedProofEncodingContext ctx =
+      BuildRingSwitchOuterEncodingContext(options);
+  ByteBufferSink sink;
+  SerializeOuterProofToSink(sink, params, proof, ctx);
+  return sink.bytes();
+}
+
+Bytes SerializeRingSwitchPCSOuterProofFixedBytes(
     const RingSwitchPCSParams &params, const RingSwitchPCSEvalProof &proof,
     const RingSwitchProofEncodingOptions &options) {
   ValidateOuterProofShapeOrThrow(params, proof,
@@ -120,6 +133,18 @@ Bytes SerializeRingSwitchPCSEvalProofFixedBytes(
 }
 
 std::uint64_t RingSwitchPCSOuterProofSizeBytes(
+    const RingSwitchPCSParams &params, const RingSwitchPCSOuterEvalProof &proof,
+    const RingSwitchProofEncodingOptions &options) {
+  ValidateOuterProofShapeOrThrow(params, proof,
+                                 "RingSwitchPCSOuterProofSizeBytes");
+  const FixedProofEncodingContext ctx =
+      BuildRingSwitchOuterEncodingContext(options);
+  CountingSink sink;
+  SerializeOuterProofToSink(sink, params, proof, ctx);
+  return sink.bytes_written();
+}
+
+std::uint64_t RingSwitchPCSOuterProofSizeBytes(
     const RingSwitchPCSParams &params, const RingSwitchPCSEvalProof &proof,
     const RingSwitchProofEncodingOptions &options) {
   ValidateOuterProofShapeOrThrow(params, proof,
@@ -129,6 +154,14 @@ std::uint64_t RingSwitchPCSOuterProofSizeBytes(
   CountingSink sink;
   SerializeOuterProofToSink(sink, params, proof, ctx);
   return sink.bytes_written();
+}
+
+double RingSwitchPCSOuterProofSizeKB(
+    const RingSwitchPCSParams &params, const RingSwitchPCSOuterEvalProof &proof,
+    const RingSwitchProofEncodingOptions &options) {
+  return static_cast<double>(
+             RingSwitchPCSOuterProofSizeBytes(params, proof, options)) /
+         1024.0;
 }
 
 double RingSwitchPCSOuterProofSizeKB(

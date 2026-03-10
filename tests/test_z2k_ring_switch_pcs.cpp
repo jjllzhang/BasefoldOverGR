@@ -1683,6 +1683,65 @@ void TestRingSwitchVerifyEval_DimensionZeroUsesNoSumcheckRounds() {
                                           claimed_s, /*num_queries=*/2, proof));
 }
 
+void TestRingSwitchOuterProveVerify_AcceptsHonestProof() {
+  testutil::PrintInfo("Ring-switch outer: prover/verifier accepts an honest outer-only proof");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::RingSwitchPCSParams params =
+      BuildRingSwitchParamsGR42(/*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
+  const vec_ZZ_pE t_table =
+      BuildBaseRingCoeffVector({3, 1, 0, 2, 1, 2, 3, 0});
+  const std::vector<ZZ_pE> z = {alpha + testutil::ConstZZpE(1), alpha,
+                                testutil::ConstZZpE(3)};
+  const ZZ_pE claimed_s = basefold::EvalMultilinearMonomialCoeffs(
+      basefold::BooleanHypercubeTableToMonomialCoeffs(t_table), z);
+
+  const basefold::RingSwitchPCSCommitArtifacts composed_artifacts =
+      basefold::RingSwitchPCSBuildCommitArtifacts(params, t_table);
+  const basefold::RingSwitchPCSOuterCommitArtifacts outer_artifacts =
+      basefold::RingSwitchPCSBuildOuterCommitArtifacts(params, t_table);
+  CHECK_EQ(outer_artifacts.t_packed_table, composed_artifacts.t_packed_table);
+  CHECK_EQ(outer_artifacts.t_packed_monomial_coeffs,
+           composed_artifacts.t_packed_monomial_coeffs);
+
+  const basefold::RingSwitchPCSOuterEvalProof outer_proof =
+      basefold::RingSwitchPCSProveOuterEvalFromCommitArtifacts(
+          params, t_table, composed_artifacts.commitment, z, claimed_s,
+          /*num_queries=*/2, outer_artifacts);
+  CHECK(basefold::RingSwitchPCSVerifyOuterEval(
+      params, composed_artifacts.commitment, z, claimed_s, /*num_queries=*/2,
+      outer_proof));
+
+  const basefold::RingSwitchPCSEvalProof composed_proof =
+      basefold::RingSwitchPCSProveEvalFromCommitArtifacts(
+          params, t_table, z, claimed_s, /*num_queries=*/2, composed_artifacts);
+  CHECK_EQ(outer_proof.s_by_u, composed_proof.s_by_u);
+  CHECK_EQ(outer_proof.h_by_level.size(), composed_proof.h_by_level.size());
+  for (long i = 0; i < static_cast<long>(outer_proof.h_by_level.size()); ++i) {
+    CHECK_EQ(outer_proof.h_by_level[static_cast<std::size_t>(i)].a0,
+             composed_proof.h_by_level[static_cast<std::size_t>(i)].a0);
+    CHECK_EQ(outer_proof.h_by_level[static_cast<std::size_t>(i)].a1,
+             composed_proof.h_by_level[static_cast<std::size_t>(i)].a1);
+    CHECK_EQ(outer_proof.h_by_level[static_cast<std::size_t>(i)].a2,
+             composed_proof.h_by_level[static_cast<std::size_t>(i)].a2);
+  }
+  CHECK_EQ(outer_proof.t_star, composed_proof.t_star);
+}
+
 void TestRingSwitchProofSerialize_ComposedSizeMatchesBytes() {
   testutil::PrintInfo("Ring-switch WP7: serializer bytes match outer and composed proof-size accounting");
 
@@ -1715,19 +1774,24 @@ void TestRingSwitchProofSerialize_ComposedSizeMatchesBytes() {
   const basefold::RingSwitchPCSEvalProof proof =
       basefold::RingSwitchPCSProveEvalFromCommitArtifacts(
           params, t_table, z, claimed_s, /*num_queries=*/2, artifacts);
+  const basefold::RingSwitchPCSOuterEvalProof outer_proof =
+      basefold::RingSwitchPCSProveOuterEvalFromCommitArtifacts(
+          params, t_table, artifacts.commitment, z, claimed_s,
+          /*num_queries=*/2,
+          basefold::RingSwitchPCSBuildOuterCommitArtifacts(params, t_table));
 
   const std::uint64_t field_elem_bytes = FixedFieldElementBytesForCurrentContext();
   const std::uint64_t expected_outer_bytes =
       1U + 8U +
-      static_cast<std::uint64_t>(proof.s_by_u.size()) * field_elem_bytes + 8U +
-      static_cast<std::uint64_t>(proof.h_by_level.size()) * 3U *
+      static_cast<std::uint64_t>(outer_proof.s_by_u.size()) * field_elem_bytes + 8U +
+      static_cast<std::uint64_t>(outer_proof.h_by_level.size()) * 3U *
           field_elem_bytes +
       field_elem_bytes;
 
   const basefold::Bytes outer_bytes =
-      basefold::SerializeRingSwitchPCSOuterProofFixedBytes(params, proof);
+      basefold::SerializeRingSwitchPCSOuterProofFixedBytes(params, outer_proof);
   const std::uint64_t outer_size =
-      basefold::RingSwitchPCSOuterProofSizeBytes(params, proof);
+      basefold::RingSwitchPCSOuterProofSizeBytes(params, outer_proof);
   CHECK_EQ(outer_bytes.size(), static_cast<std::size_t>(outer_size));
   CHECK_EQ(outer_size, expected_outer_bytes);
 
@@ -1985,6 +2049,7 @@ int main() {
     RUN_TEST(TestRingSwitchPaperAPI_AcceptsHonestProof);
     RUN_TEST(TestRingSwitchVerifyEval_RejectsTampering);
     RUN_TEST(TestRingSwitchVerifyEval_DimensionZeroUsesNoSumcheckRounds);
+    RUN_TEST(TestRingSwitchOuterProveVerify_AcceptsHonestProof);
     RUN_TEST(TestRingSwitchProofSerialize_ComposedSizeMatchesBytes);
     RUN_TEST(TestProductSumcheckProver_BooleanTablesPasses);
     RUN_TEST(TestProductSumcheckChain_RejectsTamperedPolynomial);

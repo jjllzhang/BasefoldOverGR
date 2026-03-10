@@ -63,6 +63,17 @@ struct RingSwitchPCSCommitArtifacts {
   MerkleRoot commitment;
 };
 
+struct RingSwitchPCSOuterCommitArtifacts {
+  NTL::vec_ZZ_pE t_packed_table;
+  NTL::vec_ZZ_pE t_packed_monomial_coeffs;
+};
+
+struct RingSwitchPCSOuterEvalProof {
+  std::vector<NTL::ZZ_pE> s_by_u;
+  std::vector<QuadraticPoly> h_by_level;
+  NTL::ZZ_pE t_star;
+};
+
 struct RingSwitchPCSEvalProof {
   std::vector<NTL::ZZ_pE> s_by_u;
   std::vector<QuadraticPoly> h_by_level;
@@ -94,8 +105,22 @@ NTL::vec_ZZ_pE PackZ2kCoeffsToGREvals(const RingSwitchPCSParams &params,
 MerkleRoot RingSwitchPCSCommit(const RingSwitchPCSParams &params,
                                const NTL::vec_ZZ_pE &t_table);
 
+RingSwitchPCSOuterCommitArtifacts RingSwitchPCSBuildOuterCommitArtifacts(
+    const RingSwitchPCSParams &params, const NTL::vec_ZZ_pE &t_table);
+
 RingSwitchPCSCommitArtifacts RingSwitchPCSBuildCommitArtifacts(
     const RingSwitchPCSParams &params, const NTL::vec_ZZ_pE &t_table);
+
+RingSwitchPCSOuterEvalProof RingSwitchPCSProveOuterEval(
+    const RingSwitchPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const MerkleRoot &commitment, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_s, long num_queries);
+
+RingSwitchPCSOuterEvalProof RingSwitchPCSProveOuterEvalFromCommitArtifacts(
+    const RingSwitchPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const MerkleRoot &commitment, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_s, long num_queries,
+    const RingSwitchPCSOuterCommitArtifacts &commit_artifacts);
 
 RingSwitchPCSEvalProof RingSwitchPCSProveEval(
     const RingSwitchPCSParams &params, const NTL::vec_ZZ_pE &t_table,
@@ -113,11 +138,24 @@ bool RingSwitchPCSVerifyEval(const RingSwitchPCSParams &params,
                              const FieldElement &claimed_s, long num_queries,
                              const RingSwitchPCSEvalProof &proof);
 
+bool RingSwitchPCSVerifyOuterEval(const RingSwitchPCSParams &params,
+                                  const MerkleRoot &commitment,
+                                  const std::vector<FieldElement> &z,
+                                  const FieldElement &claimed_s,
+                                  long num_queries,
+                                  const RingSwitchPCSOuterEvalProof &proof);
+
 // Prover-local state produced by Commit and consumed by Prove.
 struct RingSwitchPCSCommittedWitness {
   MerkleRoot commitment;
   NTL::vec_ZZ_pE t_table;
   RingSwitchPCSCommitArtifacts commit_artifacts;
+};
+
+struct RingSwitchPCSOuterCommittedWitness {
+  MerkleRoot commitment;
+  NTL::vec_ZZ_pE t_table;
+  RingSwitchPCSOuterCommitArtifacts commit_artifacts;
 };
 
 class RingSwitchPCSProver {
@@ -157,6 +195,41 @@ class RingSwitchPCSProver {
   RingSwitchPCSParams params_;
 };
 
+class RingSwitchPCSOuterProver {
+ public:
+  explicit RingSwitchPCSOuterProver(const RingSwitchPCSParams &params)
+      : params_(params) {
+    ValidateRingSwitchPCSParamsOrThrow(params_);
+  }
+
+  explicit RingSwitchPCSOuterProver(const RingSwitchPCSSetupInput &input)
+      : params_(RingSwitchPCSSetup(input)) {}
+
+  RingSwitchPCSOuterCommittedWitness Commit(
+      const NTL::vec_ZZ_pE &t_table, const MerkleRoot &commitment) const {
+    RingSwitchPCSOuterCommittedWitness committed;
+    committed.commitment = commitment;
+    committed.t_table = t_table;
+    committed.commit_artifacts =
+        RingSwitchPCSBuildOuterCommitArtifacts(params_, t_table);
+    return committed;
+  }
+
+  RingSwitchPCSOuterEvalProof Prove(
+      const RingSwitchPCSOuterCommittedWitness &committed,
+      const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+      long num_queries) const {
+    return RingSwitchPCSProveOuterEvalFromCommitArtifacts(
+        params_, committed.t_table, committed.commitment, z, claimed_s,
+        num_queries, committed.commit_artifacts);
+  }
+
+  const RingSwitchPCSParams &params() const { return params_; }
+
+ private:
+  RingSwitchPCSParams params_;
+};
+
 class RingSwitchPCSVerifier {
  public:
   explicit RingSwitchPCSVerifier(const RingSwitchPCSParams &params)
@@ -181,6 +254,30 @@ class RingSwitchPCSVerifier {
   RingSwitchPCSParams params_;
 };
 
+class RingSwitchPCSOuterVerifier {
+ public:
+  explicit RingSwitchPCSOuterVerifier(const RingSwitchPCSParams &params)
+      : params_(params) {
+    ValidateRingSwitchPCSParamsOrThrow(params_);
+  }
+
+  explicit RingSwitchPCSOuterVerifier(const RingSwitchPCSSetupInput &input)
+      : params_(RingSwitchPCSSetup(input)) {}
+
+  bool Verify(const MerkleRoot &commitment,
+              const std::vector<FieldElement> &z,
+              const FieldElement &claimed_s, long num_queries,
+              const RingSwitchPCSOuterEvalProof &proof) const {
+    return RingSwitchPCSVerifyOuterEval(params_, commitment, z, claimed_s,
+                                        num_queries, proof);
+  }
+
+  const RingSwitchPCSParams &params() const { return params_; }
+
+ private:
+  RingSwitchPCSParams params_;
+};
+
 struct RingSwitchPCSSetupOutput {
   RingSwitchPCSParams params;
   RingSwitchPCSProver prover;
@@ -191,6 +288,19 @@ inline RingSwitchPCSSetupOutput RingSwitchPCSSetupProtocol(
     const RingSwitchPCSSetupInput &input) {
   const RingSwitchPCSParams params = RingSwitchPCSSetup(input);
   return {params, RingSwitchPCSProver(params), RingSwitchPCSVerifier(params)};
+}
+
+struct RingSwitchPCSOuterSetupOutput {
+  RingSwitchPCSParams params;
+  RingSwitchPCSOuterProver prover;
+  RingSwitchPCSOuterVerifier verifier;
+};
+
+inline RingSwitchPCSOuterSetupOutput RingSwitchPCSSetupOuterProtocol(
+    const RingSwitchPCSSetupInput &input) {
+  const RingSwitchPCSParams params = RingSwitchPCSSetup(input);
+  return {params, RingSwitchPCSOuterProver(params),
+          RingSwitchPCSOuterVerifier(params)};
 }
 
 NTL::vec_ZZ_pE DecomposeGRElementToBaseCoeffsPolynomialBasis(

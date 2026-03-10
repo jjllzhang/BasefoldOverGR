@@ -280,8 +280,35 @@ void ValidateCommitArtifactsOrThrow(const RingSwitchPCSParams &params,
   }
 }
 
+void ValidateOuterCommitArtifactsOrThrow(
+    const RingSwitchPCSParams &params,
+    const RingSwitchPCSOuterCommitArtifacts &artifacts,
+    const char *func_name) {
+  ValidateRingSwitchPCSParamsOrThrow(params);
+  const long expected_packed_length = Pow2LongOrThrow(
+      params.ell_prime,
+      (std::string(func_name) + ": ell_prime is too large for long").c_str());
+  if (artifacts.t_packed_table.length() != expected_packed_length) {
+    LogicError((std::string(func_name) +
+                ": t_packed_table length must equal 2^(ell-kappa)")
+                   .c_str());
+  }
+  if (artifacts.t_packed_monomial_coeffs.length() != expected_packed_length) {
+    LogicError((std::string(func_name) +
+                ": t_packed_monomial_coeffs length must equal 2^(ell-kappa)")
+                   .c_str());
+  }
+}
+
 bool HasExpectedEvalProofShape(const RingSwitchPCSParams &params,
                                const RingSwitchPCSEvalProof &proof) {
+  return static_cast<long>(proof.s_by_u.size()) ==
+             params.beta_basis.dimension &&
+         static_cast<long>(proof.h_by_level.size()) == params.ell_prime;
+}
+
+bool HasExpectedOuterEvalProofShape(const RingSwitchPCSParams &params,
+                                    const RingSwitchPCSOuterEvalProof &proof) {
   return static_cast<long>(proof.s_by_u.size()) ==
              params.beta_basis.dimension &&
          static_cast<long>(proof.h_by_level.size()) == params.ell_prime;
@@ -443,6 +470,204 @@ FieldElement ComputeOriginalEvaluation(const vec_ZZ_pE &t_table,
                                        const std::vector<FieldElement> &z) {
   const vec_ZZ_pE t_monomial = BooleanHypercubeTableToMonomialCoeffs(t_table);
   return EvalMultilinearMonomialCoeffs(t_monomial, z);
+}
+
+struct OuterProveEvalResult {
+  RingSwitchPCSOuterEvalProof proof;
+  std::vector<FieldElement> rprime_suffix;
+};
+
+OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
+    const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table,
+    const MerkleRoot &commitment, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_s, long num_queries,
+    const RingSwitchPCSOuterCommitArtifacts &commit_artifacts,
+    const char *func_name) {
+  ValidateEvalInputsOrThrow(params, t_table, z, num_queries, func_name);
+  ValidateOuterCommitArtifactsOrThrow(params, commit_artifacts, func_name);
+
+  const FieldElement direct_eval = ComputeOriginalEvaluation(t_table, z);
+  if (direct_eval != claimed_s) {
+    LogicError((std::string(func_name) + ": claimed_s must equal t(z)").c_str());
+  }
+
+  const std::vector<FieldElement> z_prefix = SlicePoint(z, 0, params.kappa);
+  const std::vector<FieldElement> z_suffix =
+      SlicePoint(z, params.kappa, params.ell_prime);
+  const RingSwitchComponentTensor tensor =
+      BuildRingSwitchComponentTensor(params, z_suffix);
+
+  OuterProveEvalResult out;
+  out.proof.s_by_u = ComputeSByU(tensor, commit_artifacts.t_packed_table);
+  out.proof.h_by_level.resize(static_cast<std::size_t>(params.ell_prime));
+
+  const std::vector<FieldElement> recovered_partials =
+      RecoverPartialEvaluationsFromSByU(params, out.proof.s_by_u);
+  const std::vector<FieldElement> direct_partials =
+      ComputeDirectPartialEvaluations(params, t_table, z_suffix);
+  if (recovered_partials != direct_partials) {
+    LogicError((std::string(func_name) +
+                ": recovered partial evaluations do not match Appendix C.1 reconstruction")
+                   .c_str());
+  }
+  if (RecombineClaimFromPartials(recovered_partials, z_prefix) != claimed_s) {
+    LogicError((std::string(func_name) +
+                ": Equality Check 1 failed on honest witness")
+                   .c_str());
+  }
+
+  HashTranscript transcript = MakeRingSwitchTranscript();
+  AbsorbPublicInput(transcript, commitment, z, claimed_s);
+  for (const FieldElement &s_u : out.proof.s_by_u) {
+    transcript.AbsorbFieldElement(s_u);
+  }
+
+  std::vector<FieldElement> rprime_prefix(
+      static_cast<std::size_t>(params.kappa));
+  for (long i = 0; i < params.kappa; ++i) {
+    rprime_prefix[static_cast<std::size_t>(i)] =
+        transcript.ChallengeFieldElement("rprime/prefix/" + std::to_string(i));
+  }
+
+  const FieldElement initial_claim =
+      ComputeInitialBatchedClaim(out.proof.s_by_u, rprime_prefix);
+  const vec_ZZ_pE g_table = BuildBatchedGTable(tensor, rprime_prefix);
+
+  out.rprime_suffix.resize(static_cast<std::size_t>(params.ell_prime));
+  if (params.ell_prime > 0) {
+    ProductSumcheckProver sumcheck(commit_artifacts.t_packed_table, g_table);
+    out.proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)] =
+        sumcheck.CurrentPolynomial();
+    AbsorbQuadraticPoly(
+        transcript,
+        out.proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)]);
+
+    for (long i = params.ell_prime; i-- > 0;) {
+      const FieldElement r_i = transcript.ChallengeFieldElement(
+          "rprime/suffix/" + std::to_string(i));
+      out.rprime_suffix[static_cast<std::size_t>(i)] = r_i;
+      sumcheck.ReceiveChallenge(r_i);
+      if (i > 0) {
+        out.proof.h_by_level[static_cast<std::size_t>(i - 1)] =
+            sumcheck.CurrentPolynomial();
+        AbsorbQuadraticPoly(
+            transcript,
+            out.proof.h_by_level[static_cast<std::size_t>(i - 1)]);
+      }
+    }
+
+    if (!CheckProductSumcheckChain(initial_claim, out.proof.h_by_level,
+                                   out.rprime_suffix)) {
+      LogicError((std::string(func_name) +
+                  ": honest product sumcheck chain is inconsistent")
+                     .c_str());
+    }
+  }
+
+  out.proof.t_star = EvalMultilinearMonomialCoeffs(
+      commit_artifacts.t_packed_monomial_coeffs, out.rprime_suffix);
+
+  std::vector<FieldElement> rprime_full = rprime_prefix;
+  rprime_full.insert(rprime_full.end(), out.rprime_suffix.begin(),
+                     out.rprime_suffix.end());
+  const FieldElement g_star =
+      EvalMultilinearMonomialCoeffs(tensor.r_monomial_coeffs, rprime_full);
+  const FieldElement final_sumcheck_claim =
+      (params.ell_prime == 0)
+          ? initial_claim
+          : out.proof.h_by_level[0].Eval(out.rprime_suffix[0]);
+  if (final_sumcheck_claim != out.proof.t_star * g_star) {
+    LogicError((std::string(func_name) +
+                ": honest Equality Check 3 failed")
+                   .c_str());
+  }
+
+  return out;
+}
+
+bool VerifyOuterEvalAndMaybeRecoverSuffix(
+    const RingSwitchPCSParams &params, const MerkleRoot &commitment,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const RingSwitchPCSOuterEvalProof &proof,
+    std::vector<FieldElement> *rprime_suffix_out) {
+  ValidateRingSwitchPCSParamsOrThrow(params);
+  if (static_cast<long>(z.size()) != params.ell) {
+    return false;
+  }
+  if (num_queries < 0) {
+    return false;
+  }
+  if (!HasExpectedOuterEvalProofShape(params, proof)) {
+    return false;
+  }
+
+  const std::vector<FieldElement> z_prefix = SlicePoint(z, 0, params.kappa);
+  const std::vector<FieldElement> z_suffix =
+      SlicePoint(z, params.kappa, params.ell_prime);
+  const RingSwitchComponentTensor tensor =
+      BuildRingSwitchComponentTensor(params, z_suffix);
+
+  const std::vector<FieldElement> recovered_partials =
+      RecoverPartialEvaluationsFromSByU(params, proof.s_by_u);
+  if (RecombineClaimFromPartials(recovered_partials, z_prefix) != claimed_s) {
+    return false;
+  }
+
+  HashTranscript transcript = MakeRingSwitchTranscript();
+  AbsorbPublicInput(transcript, commitment, z, claimed_s);
+  for (const FieldElement &s_u : proof.s_by_u) {
+    transcript.AbsorbFieldElement(s_u);
+  }
+
+  std::vector<FieldElement> rprime_prefix(
+      static_cast<std::size_t>(params.kappa));
+  for (long i = 0; i < params.kappa; ++i) {
+    rprime_prefix[static_cast<std::size_t>(i)] =
+        transcript.ChallengeFieldElement("rprime/prefix/" + std::to_string(i));
+  }
+
+  const FieldElement initial_claim =
+      ComputeInitialBatchedClaim(proof.s_by_u, rprime_prefix);
+
+  std::vector<FieldElement> rprime_suffix(
+      static_cast<std::size_t>(params.ell_prime));
+  if (params.ell_prime > 0) {
+    AbsorbQuadraticPoly(
+        transcript,
+        proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)]);
+    for (long i = params.ell_prime; i-- > 0;) {
+      rprime_suffix[static_cast<std::size_t>(i)] = transcript.ChallengeFieldElement(
+          "rprime/suffix/" + std::to_string(i));
+      if (i > 0) {
+        AbsorbQuadraticPoly(
+            transcript,
+            proof.h_by_level[static_cast<std::size_t>(i - 1)]);
+      }
+    }
+  }
+
+  if (!CheckProductSumcheckChain(initial_claim, proof.h_by_level,
+                                 rprime_suffix)) {
+    return false;
+  }
+
+  std::vector<FieldElement> rprime_full = rprime_prefix;
+  rprime_full.insert(rprime_full.end(), rprime_suffix.begin(),
+                     rprime_suffix.end());
+  const FieldElement g_star =
+      EvalMultilinearMonomialCoeffs(tensor.r_monomial_coeffs, rprime_full);
+  const FieldElement final_sumcheck_claim =
+      (params.ell_prime == 0)
+          ? initial_claim
+          : proof.h_by_level[0].Eval(rprime_suffix[0]);
+  if (final_sumcheck_claim != proof.t_star * g_star) {
+    return false;
+  }
+
+  if (rprime_suffix_out != nullptr) {
+    *rprime_suffix_out = std::move(rprime_suffix);
+  }
+  return true;
 }
 
 }  // namespace
@@ -621,14 +846,24 @@ MerkleRoot RingSwitchPCSCommit(const RingSwitchPCSParams &params,
   return RingSwitchPCSBuildCommitArtifacts(params, t_table).commitment;
 }
 
-RingSwitchPCSCommitArtifacts RingSwitchPCSBuildCommitArtifacts(
+RingSwitchPCSOuterCommitArtifacts RingSwitchPCSBuildOuterCommitArtifacts(
     const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table) {
   ValidateRingSwitchPCSParamsOrThrow(params);
   const PackedCommitInputs packed = BuildPackedCommitInputs(params, t_table);
 
-  RingSwitchPCSCommitArtifacts out;
+  RingSwitchPCSOuterCommitArtifacts out;
   out.t_packed_table = packed.t_packed_table;
   out.t_packed_monomial_coeffs = packed.t_packed_monomial_coeffs;
+  return out;
+}
+
+RingSwitchPCSCommitArtifacts RingSwitchPCSBuildCommitArtifacts(
+    const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table) {
+  const RingSwitchPCSOuterCommitArtifacts outer =
+      RingSwitchPCSBuildOuterCommitArtifacts(params, t_table);
+  RingSwitchPCSCommitArtifacts out;
+  out.t_packed_table = outer.t_packed_table;
+  out.t_packed_monomial_coeffs = outer.t_packed_monomial_coeffs;
   out.backend_commit_artifacts =
       Z2kPCSBackendBuildCommitArtifacts(params.backend,
                                         out.t_packed_monomial_coeffs);
@@ -646,104 +881,46 @@ RingSwitchPCSEvalProof RingSwitchPCSProveEval(
       params, t_table, z, claimed_s, num_queries, commit_artifacts);
 }
 
+RingSwitchPCSOuterEvalProof RingSwitchPCSProveOuterEval(
+    const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table,
+    const MerkleRoot &commitment, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_s, long num_queries) {
+  const RingSwitchPCSOuterCommitArtifacts commit_artifacts =
+      RingSwitchPCSBuildOuterCommitArtifacts(params, t_table);
+  return RingSwitchPCSProveOuterEvalFromCommitArtifacts(
+      params, t_table, commitment, z, claimed_s, num_queries, commit_artifacts);
+}
+
+RingSwitchPCSOuterEvalProof RingSwitchPCSProveOuterEvalFromCommitArtifacts(
+    const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table,
+    const MerkleRoot &commitment, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_s, long num_queries,
+    const RingSwitchPCSOuterCommitArtifacts &commit_artifacts) {
+  return ProveOuterEvalFromCommitArtifactsInternal(
+             params, t_table, commitment, z, claimed_s, num_queries,
+             commit_artifacts,
+             "RingSwitchPCSProveOuterEvalFromCommitArtifacts")
+      .proof;
+}
+
 RingSwitchPCSEvalProof RingSwitchPCSProveEvalFromCommitArtifacts(
     const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table,
     const std::vector<FieldElement> &z, const FieldElement &claimed_s,
     long num_queries, const RingSwitchPCSCommitArtifacts &commit_artifacts) {
-  ValidateEvalInputsOrThrow(params, t_table, z, num_queries,
-                            "RingSwitchPCSProveEvalFromCommitArtifacts");
   ValidateCommitArtifactsOrThrow(params, commit_artifacts,
                                  "RingSwitchPCSProveEvalFromCommitArtifacts");
-
-  const FieldElement direct_eval = ComputeOriginalEvaluation(t_table, z);
-  if (direct_eval != claimed_s) {
-    LogicError(
-        "RingSwitchPCSProveEvalFromCommitArtifacts: claimed_s must equal t(z)");
-  }
-
-  const std::vector<FieldElement> z_prefix = SlicePoint(z, 0, params.kappa);
-  const std::vector<FieldElement> z_suffix =
-      SlicePoint(z, params.kappa, params.ell_prime);
-  const RingSwitchComponentTensor tensor =
-      BuildRingSwitchComponentTensor(params, z_suffix);
+  RingSwitchPCSOuterCommitArtifacts outer_commit_artifacts;
+  outer_commit_artifacts.t_packed_table = commit_artifacts.t_packed_table;
+  outer_commit_artifacts.t_packed_monomial_coeffs =
+      commit_artifacts.t_packed_monomial_coeffs;
+  OuterProveEvalResult outer = ProveOuterEvalFromCommitArtifactsInternal(
+      params, t_table, commit_artifacts.commitment, z, claimed_s, num_queries,
+      outer_commit_artifacts, "RingSwitchPCSProveEvalFromCommitArtifacts");
 
   RingSwitchPCSEvalProof proof;
-  proof.s_by_u = ComputeSByU(tensor, commit_artifacts.t_packed_table);
-  proof.h_by_level.resize(static_cast<std::size_t>(params.ell_prime));
-
-  const std::vector<FieldElement> recovered_partials =
-      RecoverPartialEvaluationsFromSByU(params, proof.s_by_u);
-  const std::vector<FieldElement> direct_partials =
-      ComputeDirectPartialEvaluations(params, t_table, z_suffix);
-  if (recovered_partials != direct_partials) {
-    LogicError(
-        "RingSwitchPCSProveEvalFromCommitArtifacts: recovered partial evaluations do not match Appendix C.1 reconstruction");
-  }
-  if (RecombineClaimFromPartials(recovered_partials, z_prefix) != claimed_s) {
-    LogicError(
-        "RingSwitchPCSProveEvalFromCommitArtifacts: Equality Check 1 failed on honest witness");
-  }
-
-  HashTranscript transcript = MakeRingSwitchTranscript();
-  AbsorbPublicInput(transcript, commit_artifacts.commitment, z, claimed_s);
-  for (const FieldElement &s_u : proof.s_by_u) {
-    transcript.AbsorbFieldElement(s_u);
-  }
-
-  std::vector<FieldElement> rprime_prefix(static_cast<std::size_t>(params.kappa));
-  for (long i = 0; i < params.kappa; ++i) {
-    rprime_prefix[static_cast<std::size_t>(i)] =
-        transcript.ChallengeFieldElement("rprime/prefix/" + std::to_string(i));
-  }
-
-  const FieldElement initial_claim =
-      ComputeInitialBatchedClaim(proof.s_by_u, rprime_prefix);
-  const vec_ZZ_pE g_table = BuildBatchedGTable(tensor, rprime_prefix);
-
-  std::vector<FieldElement> rprime_suffix(static_cast<std::size_t>(params.ell_prime));
-  if (params.ell_prime > 0) {
-    ProductSumcheckProver sumcheck(commit_artifacts.t_packed_table, g_table);
-    proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)] =
-        sumcheck.CurrentPolynomial();
-    AbsorbQuadraticPoly(
-        transcript, proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)]);
-
-    for (long i = params.ell_prime; i-- > 0;) {
-      const FieldElement r_i = transcript.ChallengeFieldElement(
-          "rprime/suffix/" + std::to_string(i));
-      rprime_suffix[static_cast<std::size_t>(i)] = r_i;
-      sumcheck.ReceiveChallenge(r_i);
-      if (i > 0) {
-        proof.h_by_level[static_cast<std::size_t>(i - 1)] =
-            sumcheck.CurrentPolynomial();
-        AbsorbQuadraticPoly(
-            transcript, proof.h_by_level[static_cast<std::size_t>(i - 1)]);
-      }
-    }
-
-    if (!CheckProductSumcheckChain(initial_claim, proof.h_by_level,
-                                   rprime_suffix)) {
-      LogicError(
-          "RingSwitchPCSProveEvalFromCommitArtifacts: honest product sumcheck chain is inconsistent");
-    }
-  }
-
-  proof.t_star = EvalMultilinearMonomialCoeffs(
-      commit_artifacts.t_packed_monomial_coeffs, rprime_suffix);
-
-  std::vector<FieldElement> rprime_full = rprime_prefix;
-  rprime_full.insert(rprime_full.end(), rprime_suffix.begin(),
-                     rprime_suffix.end());
-  const FieldElement g_star =
-      EvalMultilinearMonomialCoeffs(tensor.r_monomial_coeffs, rprime_full);
-  const FieldElement final_sumcheck_claim =
-      (params.ell_prime == 0)
-          ? initial_claim
-          : proof.h_by_level[0].Eval(rprime_suffix[0]);
-  if (final_sumcheck_claim != proof.t_star * g_star) {
-    LogicError(
-        "RingSwitchPCSProveEvalFromCommitArtifacts: honest Equality Check 3 failed");
-  }
+  proof.s_by_u = outer.proof.s_by_u;
+  proof.h_by_level = outer.proof.h_by_level;
+  proof.t_star = outer.proof.t_star;
 
   {
     Profile *prof = ActiveProfile();
@@ -751,7 +928,7 @@ RingSwitchPCSEvalProof RingSwitchPCSProveEvalFromCommitArtifacts(
                       prof ? &prof->z2k_backend_prove_calls : nullptr);
     proof.backend_proof = Z2kPCSBackendProveEval(
         params.backend, commit_artifacts.t_packed_monomial_coeffs,
-        rprime_suffix, proof.t_star, num_queries,
+        outer.rprime_suffix, proof.t_star, num_queries,
         &commit_artifacts.backend_commit_artifacts);
   }
   return proof;
@@ -762,78 +939,20 @@ bool RingSwitchPCSVerifyEval(const RingSwitchPCSParams &params,
                              const std::vector<FieldElement> &z,
                              const FieldElement &claimed_s, long num_queries,
                              const RingSwitchPCSEvalProof &proof) {
-  ValidateRingSwitchPCSParamsOrThrow(params);
-  if (static_cast<long>(z.size()) != params.ell) {
-    return false;
-  }
-  if (num_queries < 0) {
-    return false;
-  }
-  if (!HasExpectedEvalProofShape(params, proof)) {
-    return false;
-  }
-  if (!HasCompatibleBackendEvalSubproof(params, proof.backend_proof)) {
+  if (!HasExpectedEvalProofShape(params, proof) ||
+      !HasCompatibleBackendEvalSubproof(params, proof.backend_proof)) {
     return false;
   }
 
-  const std::vector<FieldElement> z_prefix = SlicePoint(z, 0, params.kappa);
-  const std::vector<FieldElement> z_suffix =
-      SlicePoint(z, params.kappa, params.ell_prime);
-  const RingSwitchComponentTensor tensor =
-      BuildRingSwitchComponentTensor(params, z_suffix);
+  RingSwitchPCSOuterEvalProof outer_proof;
+  outer_proof.s_by_u = proof.s_by_u;
+  outer_proof.h_by_level = proof.h_by_level;
+  outer_proof.t_star = proof.t_star;
 
-  const std::vector<FieldElement> recovered_partials =
-      RecoverPartialEvaluationsFromSByU(params, proof.s_by_u);
-  if (RecombineClaimFromPartials(recovered_partials, z_prefix) != claimed_s) {
-    return false;
-  }
-
-  HashTranscript transcript = MakeRingSwitchTranscript();
-  AbsorbPublicInput(transcript, commitment, z, claimed_s);
-  for (const FieldElement &s_u : proof.s_by_u) {
-    transcript.AbsorbFieldElement(s_u);
-  }
-
-  std::vector<FieldElement> rprime_prefix(
-      static_cast<std::size_t>(params.kappa));
-  for (long i = 0; i < params.kappa; ++i) {
-    rprime_prefix[static_cast<std::size_t>(i)] =
-        transcript.ChallengeFieldElement("rprime/prefix/" + std::to_string(i));
-  }
-
-  const FieldElement initial_claim =
-      ComputeInitialBatchedClaim(proof.s_by_u, rprime_prefix);
-
-  std::vector<FieldElement> rprime_suffix(
-      static_cast<std::size_t>(params.ell_prime));
-  if (params.ell_prime > 0) {
-    AbsorbQuadraticPoly(
-        transcript, proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)]);
-    for (long i = params.ell_prime; i-- > 0;) {
-      rprime_suffix[static_cast<std::size_t>(i)] = transcript.ChallengeFieldElement(
-          "rprime/suffix/" + std::to_string(i));
-      if (i > 0) {
-        AbsorbQuadraticPoly(
-            transcript, proof.h_by_level[static_cast<std::size_t>(i - 1)]);
-      }
-    }
-  }
-
-  if (!CheckProductSumcheckChain(initial_claim, proof.h_by_level,
-                                 rprime_suffix)) {
-    return false;
-  }
-
-  std::vector<FieldElement> rprime_full = rprime_prefix;
-  rprime_full.insert(rprime_full.end(), rprime_suffix.begin(),
-                     rprime_suffix.end());
-  const FieldElement g_star =
-      EvalMultilinearMonomialCoeffs(tensor.r_monomial_coeffs, rprime_full);
-  const FieldElement final_sumcheck_claim =
-      (params.ell_prime == 0)
-          ? initial_claim
-          : proof.h_by_level[0].Eval(rprime_suffix[0]);
-  if (final_sumcheck_claim != proof.t_star * g_star) {
+  std::vector<FieldElement> rprime_suffix;
+  if (!VerifyOuterEvalAndMaybeRecoverSuffix(params, commitment, z, claimed_s,
+                                            num_queries, outer_proof,
+                                            &rprime_suffix)) {
     return false;
   }
 
@@ -845,6 +964,16 @@ bool RingSwitchPCSVerifyEval(const RingSwitchPCSParams &params,
                                    proof.t_star, num_queries,
                                    proof.backend_proof);
   }
+}
+
+bool RingSwitchPCSVerifyOuterEval(const RingSwitchPCSParams &params,
+                                  const MerkleRoot &commitment,
+                                  const std::vector<FieldElement> &z,
+                                  const FieldElement &claimed_s,
+                                  long num_queries,
+                                  const RingSwitchPCSOuterEvalProof &proof) {
+  return VerifyOuterEvalAndMaybeRecoverSuffix(params, commitment, z, claimed_s,
+                                              num_queries, proof, nullptr);
 }
 
 vec_ZZ_pE DecomposeGRElementToBaseCoeffsPolynomialBasis(
