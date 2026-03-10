@@ -70,6 +70,7 @@ add_library(basefold_core
   src/PCS/BaseFold/BaseFoldPCSProve.cpp
   src/PCS/BaseFold/BaseFoldPCSVerify.cpp
   src/PCS/BaseFold/BaseFoldPCSExtension.cpp
+  src/PCS/BaseFold/ProofDeserialize.cpp
   src/PCS/BaseFold/ProofSerialize.cpp
   src/PCS/BaseFold/ProofSize.cpp
 )

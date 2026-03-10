@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "PCS/BaseFold/BaseFoldPCS.hpp"
+#include "PCS/BaseFold/ProofDeserialize.hpp"
 #include "PCS/Common/Multilinear.hpp"
 #include "PCS/BaseFold/ProofSize.hpp"
 #include "tests/test_common.hpp"
@@ -714,6 +715,122 @@ void TestPCS_ProofSizeFixedWidth_ExtensionWidthDerivation() {
            static_cast<std::uint64_t>(95));
 }
 
+void TestPCS_ProofFixedWidthRoundTrip_GF4() {
+  testutil::PrintInfo(
+      "PCS: fixed-width proof deserialize round-trip verifies over GF(2^2)");
+
+  const ZZ p = to_ZZ(2);
+  ZZ_pPush p_push(p);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush e_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::FoldableCodeParams params = BuildParamsGF4_k0_1(p, alpha);
+
+  vec_ZZ_pE f_coeffs;
+  f_coeffs.SetLength(basefold::MessageLength(params));
+  f_coeffs[0] = testutil::ConstZZpE(0);
+  f_coeffs[1] = testutil::ConstZZpE(1);
+  f_coeffs[2] = alpha;
+  f_coeffs[3] = alpha + testutil::ConstZZpE(1);
+
+  const std::vector<ZZ_pE> z = {alpha, alpha + testutil::ConstZZpE(1)};
+  const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
+  const basefold::MerkleRoot commitment_root =
+      basefold::BaseFoldPCSCommit(f_coeffs, params);
+  const long num_queries = 3;
+
+  const basefold::BaseFoldPCSEvalProof proof =
+      basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries, params);
+
+  basefold::FixedProofEncodingOptions options;
+  const basefold::Bytes proof_bytes =
+      basefold::SerializeBaseFoldPCSEvalProofFixedBytes(proof, options);
+  const basefold::BaseFoldPCSEvalProof decoded =
+      basefold::DeserializeBaseFoldPCSEvalProofFixedBytes(proof_bytes, options);
+
+  CHECK(decoded.query_multiproofs.size() == proof.query_multiproofs.size());
+  for (const basefold::MerkleMultiproof &multiproof : decoded.query_multiproofs) {
+    CHECK(multiproof.queried_indices.empty());
+  }
+  CHECK(!decoded.extension.has_extension_payload);
+  CHECK(basefold::BaseFoldPCSVerifyEval(commitment_root, z, y, num_queries,
+                                        decoded, params));
+}
+
+void TestPCS_ProofFixedWidthRoundTrip_ExtChallenge_GF4() {
+  testutil::PrintInfo(
+      "PCS: fixed-width proof deserialize round-trip verifies over GF(2^2) with extension challenges");
+
+  const ZZ p = to_ZZ(2);
+  ZZ_pPush p_push(p);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush e_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::FoldableCodeParams params = BuildParamsGF4_k0_1(p, alpha);
+
+  vec_ZZ_pE f_coeffs;
+  f_coeffs.SetLength(basefold::MessageLength(params));
+  f_coeffs[0] = testutil::ConstZZpE(0);
+  f_coeffs[1] = testutil::ConstZZpE(1);
+  f_coeffs[2] = alpha;
+  f_coeffs[3] = alpha + testutil::ConstZZpE(1);
+
+  const std::vector<ZZ_pE> z = {alpha, alpha + testutil::ConstZZpE(1)};
+  const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
+  const basefold::MerkleRoot commitment_root =
+      basefold::BaseFoldPCSCommit(f_coeffs, params);
+
+  basefold::BaseFoldPCSChallengeConfig cfg;
+  cfg.use_extension_challenges = true;
+  ZZ_pEX E;
+  SetCoeff(E, 0, alpha);
+  SetCoeff(E, 1, testutil::ConstZZpE(1));
+  SetCoeff(E, 2, testutil::ConstZZpE(1));
+  cfg.challenge_extension_modulus = E;
+
+  const long num_queries = 3;
+  const basefold::BaseFoldPCSEvalProof proof =
+      basefold::BaseFoldPCSProveEvalWithChallengeConfig(f_coeffs, z, y,
+                                                        num_queries, params, cfg);
+
+  basefold::FixedProofEncodingOptions options;
+  options.challenge_ext_degree = NTL::deg(cfg.challenge_extension_modulus);
+  const basefold::Bytes proof_bytes =
+      basefold::SerializeBaseFoldPCSEvalProofFixedBytes(proof, options);
+  const basefold::BaseFoldPCSEvalProof decoded =
+      basefold::DeserializeBaseFoldPCSEvalProofFixedBytes(proof_bytes, options);
+
+  CHECK(decoded.extension.has_extension_payload);
+  CHECK(decoded.extension.r_by_level.empty());
+  CHECK(decoded.extension.query_multiproofs.size() ==
+        proof.extension.query_multiproofs.size());
+  CHECK(decoded.extension.base_top_query_multiproof.queried_indices.empty());
+  for (const basefold::ExtensionMerkleMultiproof &multiproof :
+       decoded.extension.query_multiproofs) {
+    CHECK(multiproof.queried_indices.empty());
+  }
+  CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      commitment_root, z, y, num_queries, decoded, params, cfg));
+}
+
 }  // namespace
 
 int main() {
@@ -727,6 +844,8 @@ int main() {
     RUN_TEST(TestPCS_EvalProof_ExtChallengeConfig_GR42);
     RUN_TEST(TestPCS_ProofSizeFixedWidth_GF4_HandCheck);
     RUN_TEST(TestPCS_ProofSizeFixedWidth_ExtensionWidthDerivation);
+    RUN_TEST(TestPCS_ProofFixedWidthRoundTrip_GF4);
+    RUN_TEST(TestPCS_ProofFixedWidthRoundTrip_ExtChallenge_GF4);
   } catch (const exception &e) {
     cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;
