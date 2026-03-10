@@ -242,6 +242,111 @@ bool BaseFoldPCSVerifyEvalWithChallengeConfig(
     const BaseFoldPCSEvalProof &proof, const FoldableCodeParams &params,
     const BaseFoldPCSChallengeConfig &challenge_cfg);
 
+// STIR-style protocol facade that separates setup/commit/prove/verify without
+// changing the underlying proof system implementation.
+struct BaseFoldPCSSetupInput {
+  FoldableCodeParams params;
+  BaseFoldPCSChallengeConfig challenge_config;
+};
+
+// Prover-local state produced by Commit and consumed by Prove.
+struct BaseFoldPCSCommittedWitness {
+  MerkleRoot commitment;
+  NTL::vec_ZZ_pE f_coeffs;
+  BaseFoldPCSCommitArtifacts commit_artifacts;
+};
+
+class BaseFoldPCSProver {
+ public:
+  explicit BaseFoldPCSProver(const FoldableCodeParams &params)
+      : params_(params) {
+    (void)MessageLength(params_);
+  }
+
+  explicit BaseFoldPCSProver(const BaseFoldPCSSetupInput &input)
+      : params_(input.params), challenge_config_(input.challenge_config) {
+    (void)MessageLength(params_);
+  }
+
+  BaseFoldPCSCommittedWitness Commit(const NTL::vec_ZZ_pE &f_coeffs) const {
+    BaseFoldPCSCommittedWitness committed;
+    committed.f_coeffs = f_coeffs;
+    committed.commit_artifacts = BaseFoldPCSBuildCommitArtifacts(f_coeffs, params_);
+    committed.commitment = committed.commit_artifacts.root_d;
+    return committed;
+  }
+
+  BaseFoldPCSEvalProof Prove(const BaseFoldPCSCommittedWitness &committed,
+                             const std::vector<FieldElement> &z,
+                             const FieldElement &claimed_y,
+                             long num_queries) const {
+    if (committed.commitment != committed.commit_artifacts.root_d) {
+      NTL::LogicError(
+          "BaseFoldPCSProver::Prove: committed witness has inconsistent commitment");
+    }
+    return BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle(
+        committed.f_coeffs, z, claimed_y, num_queries, params_,
+        committed.commit_artifacts, challenge_config_);
+  }
+
+  const FoldableCodeParams &params() const { return params_; }
+
+  const BaseFoldPCSChallengeConfig &challenge_config() const {
+    return challenge_config_;
+  }
+
+ private:
+  FoldableCodeParams params_;
+  BaseFoldPCSChallengeConfig challenge_config_;
+};
+
+class BaseFoldPCSVerifier {
+ public:
+  explicit BaseFoldPCSVerifier(const FoldableCodeParams &params)
+      : params_(params) {
+    (void)MessageLength(params_);
+  }
+
+  explicit BaseFoldPCSVerifier(const BaseFoldPCSSetupInput &input)
+      : params_(input.params), challenge_config_(input.challenge_config) {
+    (void)MessageLength(params_);
+  }
+
+  bool Verify(const MerkleRoot &commitment,
+              const std::vector<FieldElement> &z,
+              const FieldElement &claimed_y, long num_queries,
+              const BaseFoldPCSEvalProof &proof) const {
+    return BaseFoldPCSVerifyEvalWithChallengeConfig(
+        commitment, z, claimed_y, num_queries, proof, params_,
+        challenge_config_);
+  }
+
+  const FoldableCodeParams &params() const { return params_; }
+
+  const BaseFoldPCSChallengeConfig &challenge_config() const {
+    return challenge_config_;
+  }
+
+ private:
+  FoldableCodeParams params_;
+  BaseFoldPCSChallengeConfig challenge_config_;
+};
+
+struct BaseFoldPCSSetupOutput {
+  BaseFoldPCSProver prover;
+  BaseFoldPCSVerifier verifier;
+};
+
+inline BaseFoldPCSSetupOutput BaseFoldPCSSetup(
+    const FoldableCodeParams &params) {
+  return {BaseFoldPCSProver(params), BaseFoldPCSVerifier(params)};
+}
+
+inline BaseFoldPCSSetupOutput BaseFoldPCSSetup(
+    const BaseFoldPCSSetupInput &input) {
+  return {BaseFoldPCSProver(input), BaseFoldPCSVerifier(input)};
+}
+
 }  // namespace basefold
 
 #endif  // BASEFOLD_BASEFOLDPCS_HPP_

@@ -113,6 +113,86 @@ bool RingSwitchPCSVerifyEval(const RingSwitchPCSParams &params,
                              const FieldElement &claimed_s, long num_queries,
                              const RingSwitchPCSEvalProof &proof);
 
+// Prover-local state produced by Commit and consumed by Prove.
+struct RingSwitchPCSCommittedWitness {
+  MerkleRoot commitment;
+  NTL::vec_ZZ_pE t_table;
+  RingSwitchPCSCommitArtifacts commit_artifacts;
+};
+
+class RingSwitchPCSProver {
+ public:
+  explicit RingSwitchPCSProver(const RingSwitchPCSParams &params)
+      : params_(params) {
+    ValidateRingSwitchPCSParamsOrThrow(params_);
+  }
+
+  explicit RingSwitchPCSProver(const RingSwitchPCSSetupInput &input)
+      : params_(RingSwitchPCSSetup(input)) {}
+
+  RingSwitchPCSCommittedWitness Commit(const NTL::vec_ZZ_pE &t_table) const {
+    RingSwitchPCSCommittedWitness committed;
+    committed.t_table = t_table;
+    committed.commit_artifacts = RingSwitchPCSBuildCommitArtifacts(params_, t_table);
+    committed.commitment = committed.commit_artifacts.commitment;
+    return committed;
+  }
+
+  RingSwitchPCSEvalProof Prove(const RingSwitchPCSCommittedWitness &committed,
+                               const std::vector<FieldElement> &z,
+                               const FieldElement &claimed_s,
+                               long num_queries) const {
+    if (committed.commitment != committed.commit_artifacts.commitment) {
+      NTL::LogicError(
+          "RingSwitchPCSProver::Prove: committed witness has inconsistent commitment");
+    }
+    return RingSwitchPCSProveEvalFromCommitArtifacts(
+        params_, committed.t_table, z, claimed_s, num_queries,
+        committed.commit_artifacts);
+  }
+
+  const RingSwitchPCSParams &params() const { return params_; }
+
+ private:
+  RingSwitchPCSParams params_;
+};
+
+class RingSwitchPCSVerifier {
+ public:
+  explicit RingSwitchPCSVerifier(const RingSwitchPCSParams &params)
+      : params_(params) {
+    ValidateRingSwitchPCSParamsOrThrow(params_);
+  }
+
+  explicit RingSwitchPCSVerifier(const RingSwitchPCSSetupInput &input)
+      : params_(RingSwitchPCSSetup(input)) {}
+
+  bool Verify(const MerkleRoot &commitment,
+              const std::vector<FieldElement> &z,
+              const FieldElement &claimed_s, long num_queries,
+              const RingSwitchPCSEvalProof &proof) const {
+    return RingSwitchPCSVerifyEval(params_, commitment, z, claimed_s,
+                                   num_queries, proof);
+  }
+
+  const RingSwitchPCSParams &params() const { return params_; }
+
+ private:
+  RingSwitchPCSParams params_;
+};
+
+struct RingSwitchPCSSetupOutput {
+  RingSwitchPCSParams params;
+  RingSwitchPCSProver prover;
+  RingSwitchPCSVerifier verifier;
+};
+
+inline RingSwitchPCSSetupOutput RingSwitchPCSSetupProtocol(
+    const RingSwitchPCSSetupInput &input) {
+  const RingSwitchPCSParams params = RingSwitchPCSSetup(input);
+  return {params, RingSwitchPCSProver(params), RingSwitchPCSVerifier(params)};
+}
+
 NTL::vec_ZZ_pE DecomposeGRElementToBaseCoeffsPolynomialBasis(
     const RingSwitchPCSParams &params, const NTL::ZZ_pE &element);
 

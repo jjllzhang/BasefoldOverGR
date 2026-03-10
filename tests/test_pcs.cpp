@@ -254,6 +254,47 @@ void TestPCS_EvalProof_GF4() {
                                          proof_tampered, params));
 }
 
+void TestPCS_PaperAPI_GF4() {
+  testutil::PrintInfo("PCS: staged setup/commit/prove/verify API matches the legacy flow");
+
+  const ZZ p = to_ZZ(2);
+  ZZ_pPush p_push(p);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush e_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::FoldableCodeParams params = BuildParamsGF4_k0_1(p, alpha);
+  const basefold::BaseFoldPCSSetupOutput api = basefold::BaseFoldPCSSetup(params);
+
+  vec_ZZ_pE f_coeffs;
+  f_coeffs.SetLength(basefold::MessageLength(params));
+  f_coeffs[0] = testutil::ConstZZpE(0);
+  f_coeffs[1] = testutil::ConstZZpE(1);
+  f_coeffs[2] = alpha;
+  f_coeffs[3] = alpha + testutil::ConstZZpE(1);
+
+  const std::vector<ZZ_pE> z = {alpha, alpha + testutil::ConstZZpE(1)};
+  const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
+  const long num_queries = 3;
+
+  const basefold::BaseFoldPCSCommittedWitness committed =
+      api.prover.Commit(f_coeffs);
+  CHECK_EQ(committed.commitment, basefold::BaseFoldPCSCommit(f_coeffs, params));
+  CHECK_EQ(committed.commitment, committed.commit_artifacts.root_d);
+
+  const basefold::BaseFoldPCSEvalProof proof =
+      api.prover.Prove(committed, z, y, num_queries);
+  CHECK(api.verifier.Verify(committed.commitment, z, y, num_queries, proof));
+}
+
 void TestPCS_EvalProof_GF4_k0_2() {
   testutil::PrintInfo("PCS: eval proof verifies over GF(2^2) (k0=2)");
 
@@ -678,6 +719,7 @@ void TestPCS_ProofSizeFixedWidth_ExtensionWidthDerivation() {
 int main() {
   try {
     RUN_TEST(TestPCS_EvalProof_GF4);
+    RUN_TEST(TestPCS_PaperAPI_GF4);
     RUN_TEST(TestPCS_EvalProof_GF4_k0_2);
     RUN_TEST(TestPCS_EvalProof_GR42);
     RUN_TEST(TestPCS_EvalProof_GR42_k0_2);
