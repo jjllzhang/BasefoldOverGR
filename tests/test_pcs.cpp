@@ -8,10 +8,12 @@
 #include <exception>
 #include <functional>
 #include <iostream>
+#include <filesystem>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include "bench/bench_pcs_artifact_common.hpp"
 #include "PCS/BaseFold/BaseFoldPCS.hpp"
 #include "PCS/BaseFold/ProofDeserialize.hpp"
 #include "PCS/Common/Multilinear.hpp"
@@ -34,6 +36,7 @@ using std::cout;
 using std::exception;
 using std::ostringstream;
 using std::string;
+namespace fs = std::filesystem;
 
 int g_test_failure_count = 0;
 
@@ -831,6 +834,151 @@ void TestPCS_ProofFixedWidthRoundTrip_ExtChallenge_GF4() {
       commitment_root, z, y, num_queries, decoded, params, cfg));
 }
 
+basefold_bench_pcs_artifact::ArtifactMetadata MakeSampleArtifactMetadata() {
+  basefold_bench_pcs_artifact::ArtifactMetadata meta;
+  meta.context_id = "field-default";
+  meta.context_label = "Field";
+  meta.mode = "field";
+  meta.c = 2;
+  meta.k0 = 1;
+  meta.d = 2;
+  meta.poly_dim = basefold_bench_pcs_artifact::ComputePolyDimOrThrow(meta.k0, meta.d);
+  meta.lambda = "128";
+  meta.gamma = "auto";
+  meta.queries = 3;
+  meta.seed = 7;
+  meta.use_checked_prover_path = false;
+  meta.use_extension_challenges = true;
+  meta.scalar_modulus = to_ZZ(2);
+  meta.base_prime = ZZ(0);
+  meta.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};
+  meta.zeta_coeffs = {to_ZZ(0), to_ZZ(1)};
+  meta.zeta_source = "explicit";
+  meta.challenge_extension_coeffs = {
+      {to_ZZ(0), to_ZZ(1)}, {to_ZZ(1)}, {to_ZZ(1)}};
+  meta.hash_backend = basefold::SelectedHashBackendName();
+  meta.proof_encoding = "basefold_fixed_v1";
+  meta.proof_size_bytes = 1234;
+  meta.artifact_id = basefold_bench_pcs_artifact::ComputeCanonicalArtifactId(meta);
+  meta.display_key = basefold_bench_pcs_artifact::BuildArtifactDisplayKey(meta);
+  return meta;
+}
+
+void TestPCS_ArtifactMetadataJsonRoundTrip() {
+  testutil::PrintInfo("PCS artifact: metadata JSON round-trip preserves Phase 2 schema");
+
+  const auto meta = MakeSampleArtifactMetadata();
+  const std::string json =
+      basefold_bench_pcs_artifact::SerializeMetadataJson(meta);
+  const auto decoded = basefold_bench_pcs_artifact::ParseMetadataJson(json);
+
+  CHECK_EQ(decoded.artifact_id, meta.artifact_id);
+  CHECK_EQ(decoded.display_key, meta.display_key);
+  CHECK_EQ(decoded.context_id, meta.context_id);
+  CHECK_EQ(decoded.mode, meta.mode);
+  CHECK_EQ(decoded.poly_dim, meta.poly_dim);
+  CHECK_EQ(decoded.lambda, meta.lambda);
+  CHECK_EQ(decoded.gamma, meta.gamma);
+  CHECK_EQ(decoded.queries, meta.queries);
+  CHECK_EQ(decoded.seed, meta.seed);
+  CHECK(decoded.use_extension_challenges);
+  CHECK_EQ(decoded.scalar_modulus, meta.scalar_modulus);
+  CHECK_EQ(decoded.base_prime, meta.base_prime);
+  CHECK_EQ(decoded.F_coeffs, meta.F_coeffs);
+  CHECK_EQ(decoded.zeta_coeffs, meta.zeta_coeffs);
+  CHECK_EQ(decoded.challenge_extension_coeffs, meta.challenge_extension_coeffs);
+  CHECK_EQ(decoded.hash_backend, meta.hash_backend);
+  CHECK_EQ(decoded.proof_encoding, meta.proof_encoding);
+  CHECK_EQ(decoded.proof_size_bytes, meta.proof_size_bytes);
+}
+
+void TestPCS_ArtifactManifestJsonlRoundTrip() {
+  testutil::PrintInfo("PCS artifact: manifest JSONL round-trip preserves deterministic ids and paths");
+
+  const auto meta = MakeSampleArtifactMetadata();
+  const auto entry = basefold_bench_pcs_artifact::ManifestEntryFromMetadata(meta);
+  const fs::path root = fs::temp_directory_path() / "basefold_phase2_manifest_test";
+  fs::remove_all(root);
+  fs::create_directories(root);
+  const fs::path manifest_path =
+      basefold_bench_pcs_artifact::ArtifactManifestPath(root);
+
+  basefold_bench_pcs_artifact::AppendManifestEntry(manifest_path, entry);
+  const auto entries = basefold_bench_pcs_artifact::LoadManifestEntries(manifest_path);
+
+  CHECK_EQ(entries.size(), static_cast<std::size_t>(1));
+  CHECK_EQ(entries[0].artifact_id, meta.artifact_id);
+  CHECK_EQ(entries[0].display_key, meta.display_key);
+  CHECK_EQ(entries[0].object_relpath,
+           basefold_bench_pcs_artifact::ManifestObjectRelPath(meta.artifact_id));
+
+  fs::remove_all(root);
+}
+
+void TestPCS_ArtifactPublicInputsRoundTrip_GF4() {
+  testutil::PrintInfo("PCS artifact: public_inputs binary round-trip preserves commitment, z, and y");
+
+  const ZZ p = to_ZZ(2);
+  ZZ_pPush p_push(p);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush e_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::FoldableCodeParams params = BuildParamsGF4_k0_1(p, alpha);
+  vec_ZZ_pE f_coeffs;
+  f_coeffs.SetLength(basefold::MessageLength(params));
+  f_coeffs[0] = testutil::ConstZZpE(0);
+  f_coeffs[1] = testutil::ConstZZpE(1);
+  f_coeffs[2] = alpha;
+  f_coeffs[3] = alpha + testutil::ConstZZpE(1);
+
+  basefold_bench_pcs_artifact::ArtifactPublicInputs inputs;
+  inputs.commitment_root = basefold::BaseFoldPCSCommit(f_coeffs, params);
+  inputs.z = {alpha, alpha + testutil::ConstZZpE(1)};
+  inputs.claimed_y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, inputs.z);
+
+  const basefold::Bytes bytes =
+      basefold_bench_pcs_artifact::SerializePublicInputs(inputs);
+  const auto decoded =
+      basefold_bench_pcs_artifact::DeserializePublicInputs(bytes);
+
+  CHECK_EQ(decoded.commitment_root, inputs.commitment_root);
+  CHECK_EQ(decoded.z.size(), inputs.z.size());
+  for (std::size_t i = 0; i < decoded.z.size(); ++i) {
+    CHECK_EQ(decoded.z[i], inputs.z[i]);
+  }
+  CHECK_EQ(decoded.claimed_y, inputs.claimed_y);
+}
+
+void TestPCS_ArtifactRestoreVerificationContext_GF4() {
+  testutil::PrintInfo("PCS artifact: metadata restores verifier context and challenge config");
+
+  const auto meta = MakeSampleArtifactMetadata();
+  const auto restored =
+      basefold_bench_pcs_artifact::RestoreVerificationContext(meta);
+
+  CHECK_EQ(restored.params.c, meta.c);
+  CHECK_EQ(restored.params.k0, meta.k0);
+  CHECK_EQ(restored.params.d, meta.d);
+  CHECK(restored.challenge_cfg.use_extension_challenges);
+  CHECK_EQ(deg(restored.challenge_cfg.challenge_extension_modulus), 2);
+
+  const ZZ p = to_ZZ(2);
+  ZZ_pPush p_push(p);
+  const ZZ_pX F = basefold_bench_pcs_common::BuildZZpX(meta.F_coeffs);
+  ZZ_pEPush e_push(F);
+  const ZZ_pE expected_zeta = basefold_bench_pcs_common::BuildZZpE(meta.zeta_coeffs);
+  CHECK_EQ(restored.params.zeta, expected_zeta);
+}
+
 }  // namespace
 
 int main() {
@@ -846,6 +994,10 @@ int main() {
     RUN_TEST(TestPCS_ProofSizeFixedWidth_ExtensionWidthDerivation);
     RUN_TEST(TestPCS_ProofFixedWidthRoundTrip_GF4);
     RUN_TEST(TestPCS_ProofFixedWidthRoundTrip_ExtChallenge_GF4);
+    RUN_TEST(TestPCS_ArtifactMetadataJsonRoundTrip);
+    RUN_TEST(TestPCS_ArtifactManifestJsonlRoundTrip);
+    RUN_TEST(TestPCS_ArtifactPublicInputsRoundTrip_GF4);
+    RUN_TEST(TestPCS_ArtifactRestoreVerificationContext_GF4);
   } catch (const exception &e) {
     cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;

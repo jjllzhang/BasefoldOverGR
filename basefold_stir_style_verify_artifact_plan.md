@@ -3,8 +3,22 @@
 ## Status
 
 - Owner: TBD
-- Status: Planned
+- Status: Phase 2 in progress
 - Last updated: 2026-03-11
+
+## Current Progress
+
+- [x] Phase 1: fixed-width `BaseFoldPCSEvalProof` deserializer and round-trip tests
+- [x] Phase 2 helper layer: `bench/bench_pcs_artifact_common.hpp`
+  - deterministic short hash `artifact_id`
+  - human-readable `display_key`
+  - `manifest.jsonl` append/load helpers
+  - `meta.json` read/write helpers
+  - combined `public_inputs.bin` binary round-trip helpers
+  - metadata-driven verification-context restore helper
+- [ ] Phase 3: `dump_pcs_eval_artifact`
+- [ ] Phase 4: `bench_pcs_verify_artifact`
+- [ ] README artifact-flow documentation
 
 ## Goal
 
@@ -65,39 +79,27 @@ Add a benchmark artifact container that stores:
 
 ## Artifact Layout
 
-Artifact root contains multiple case directories.
+Artifact root contains a manifest plus an object store.
 
 Example:
 
 ```text
 <artifact-root>/
-  ctx_field_default__label_Field__mode_field__d_16__poly_dim_16__c_2__k0_1__lambda_128__gamma_auto__queries_4__seed_0/
-    meta.json
-    public_inputs.bin
-    proof.bin
-  ctx_ring_default__label_Ring__mode_ring__d_16__poly_dim_16__c_2__k0_1__lambda_128__gamma_auto__queries_4__seed_0/
-    meta.json
-    public_inputs.bin
-    proof.bin
+  manifest.jsonl
+  objects/
+    bfv_a13c9e7f82d1f4a0/
+      meta.json
+      public_inputs.bin
+      proof.bin
+    bfv_83d6e1c1a4b2f915/
+      meta.json
+      public_inputs.bin
+      proof.bin
 ```
 
-Each case directory is self-contained and independently loadable.
-Case directory names should encode the full case identity rather than a short
-nickname. At minimum the canonical auto-generated artifact id should include:
-
-- `context_id`
-- `context_label`
-- `mode`
-- `d`
-- `poly_dim`
-- `c`
-- `k0`
-- `lambda`
-- `gamma`
-- `queries`
-
-It may additionally include fields such as `seed`, extension-challenge mode,
-or checked/unchecked prover path when they distinguish cases.
+The manifest is the primary index. Object paths use a short hash-based
+`artifact_id`; the full human-readable context lives in `manifest.jsonl` and the
+per-object `meta.json` rather than in directory names.
 
 ## Artifact Case Contents
 
@@ -106,10 +108,16 @@ or checked/unchecked prover path when they distinguish cases.
 Required fields:
 
 - `artifact_id`
+- `display_key`
+- `context_id`
+- `context_label`
 - `mode`
 - `c`
 - `k0`
 - `d`
+- `poly_dim`
+- `lambda`
+- `gamma`
 - `queries`
 - `seed`
 - `use_checked_prover_path`
@@ -261,14 +269,20 @@ Add benchmark-only artifact helpers in `bench/bench_pcs_artifact_common.hpp`.
 Required tasks:
 
 - define metadata struct
+- define manifest-entry struct
 - define public-inputs struct
 - define canonical artifact-id generator
+- define human-readable display-key generator
+- add manifest append/load helpers for `manifest.jsonl`
 - add JSON read/write helpers for metadata
 - add binary read/write helpers for public inputs
 - add helper to reconstruct verification context from metadata
 - add helper to compute and print artifact summary
 
-Canonical artifact id should include at least:
+Canonical artifact id should be a stable hash over case-defining metadata rather
+than a long path-encoded parameter string.
+
+The hashed input should include at least:
 
 - `context_id`
 - `context_label`
@@ -283,9 +297,14 @@ Canonical artifact id should include at least:
 - `seed`
 - extension-challenge marker
 
+The human-readable `display_key` should carry the same core context in a compact
+printable form for logs, manifest inspection, and CLI selection output.
+
 Acceptance criteria:
 
 - generated artifact ids are deterministic
+- generated display keys are deterministic and human-readable
+- `manifest.jsonl` is sufficient as the primary discovery/index surface
 - metadata is sufficient to reconstruct verifier context without extra CLI protocol parameters
 
 ### Phase 3: artifact dump tool
