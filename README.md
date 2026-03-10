@@ -4,12 +4,12 @@ A set of C++ implementations built on [NTL (Number Theory Library)](https://libn
 
 > Note: NTL types such as `ZZ_p` / `ZZ_pX` / `ZZ_pE` depend on global modulus contexts (for example `ZZ_p::init(mod)` and `ZZ_pE::init(F)`). Make sure required contexts are initialized before calling functions in this repo.
 
-This repository also includes an implementation of `(c, k0, d)`-foldable linear code encoding over finite fields `F_{p^s}` and Galois rings `GR(p^k,s)` (see `include/BaseFold/FoldableCode.hpp`). The encoding is used by BaseFold IOPP and PCS constructions.
+This repository also includes an implementation of `(c, k0, d)`-foldable linear code encoding over finite fields `F_{p^s}` and Galois rings `GR(p^k,s)` (see `include/PCS/BaseFold/FoldableCode.hpp`). The encoding is used by BaseFold IOPP and PCS constructions.
 
 It also implements the following from the BaseFold paper:
 
-- BaseFold IOPP (folding + query, for both finite fields and Galois rings; see `include/BaseFold/IOPP.hpp`).
-- A minimal non-interactive BaseFold PCS single-point evaluation proof based on **Merkle + Fiat-Shamir** (supports `k0=2^kappa`; see `include/BaseFold/BaseFoldPCS.hpp`; polynomial point dimension is `d+kappa`).
+- BaseFold IOPP (folding + query, for both finite fields and Galois rings; see `include/PCS/BaseFold/IOPP.hpp`).
+- A minimal non-interactive BaseFold PCS single-point evaluation proof based on **Merkle + Fiat-Shamir** (supports `k0=2^kappa`; see `include/PCS/BaseFold/BaseFoldPCS.hpp`; polynomial point dimension is `d+kappa`).
 
 Language versions:
 
@@ -36,15 +36,26 @@ Language versions:
 |   |   |-- Inverse.hpp
 |   |   |-- HenselLift.hpp
 |   |   `-- PrimitiveElement.hpp
-|   `-- BaseFold
-|       |-- FoldableCode.hpp
-|       |-- IOPP.hpp
-|       |-- Multilinear.hpp
-|       |-- Sumcheck.hpp
-|       |-- Profile.hpp
-|       |-- ProofSerialize.hpp
-|       |-- ProofSize.hpp
-|       `-- BaseFoldPCS.hpp
+|   |-- PCS
+|   |   |-- Common
+|   |   |   |-- Hash.hpp
+|   |   |   |-- Merkle.hpp
+|   |   |   |-- Multilinear.hpp
+|   |   |   |-- Profile.hpp
+|   |   |   |-- Sumcheck.hpp
+|   |   |   `-- Transcript.hpp
+|   |   `-- BaseFold
+|   |       |-- FoldableCode.hpp
+|   |       |-- IOPP.hpp
+|   |       |-- ProofSerialize.hpp
+|   |       |-- ProofSize.hpp
+|   |       `-- BaseFoldPCS.hpp
+|   `-- Compiler
+|       `-- Z2k
+|           |-- BaseFoldBackendAdapter.hpp
+|           |-- PCSBackend.hpp
+|           |-- RingSwitchPCS.hpp
+|           `-- RingSwitchProofSerialize.hpp
 |-- scripts
 |   |-- run_release_c4_lambda128.sh
 |   `-- plot_benchmark_results.py
@@ -54,14 +65,30 @@ Language versions:
 |   |   |-- Inverse.cpp
 |   |   |-- HenselLift.cpp
 |   |   `-- PrimitiveElement.cpp
-|   `-- BaseFold
-|       |-- FoldableCode.cpp
-|       |-- IOPP.cpp
-|       |-- Multilinear.cpp
-|       |-- ProofSerialize.cpp
-|       |-- Sumcheck.cpp
-|       |-- ProofSize.cpp
-|       `-- BaseFoldPCS.cpp
+|   |-- PCS
+|   |   |-- Common
+|   |   |   |-- Hash.cpp
+|   |   |   |-- Merkle.cpp
+|   |   |   |-- Multilinear.cpp
+|   |   |   |-- Profile.cpp
+|   |   |   |-- Sumcheck.cpp
+|   |   |   `-- Transcript.cpp
+|   |   `-- BaseFold
+|   |       |-- FoldableCode.cpp
+|   |       |-- IOPP.cpp
+|   |       |-- ProofSerialize.cpp
+|   |       |-- ProofSize.cpp
+|   |       |-- BaseFoldPCSCommon.cpp
+|   |       |-- BaseFoldPCSCommit.cpp
+|   |       |-- BaseFoldPCSProve.cpp
+|   |       |-- BaseFoldPCSVerify.cpp
+|   |       `-- BaseFoldPCSExtension.cpp
+|   `-- Compiler
+|       `-- Z2k
+|           |-- BaseFoldBackendAdapter.cpp
+|           |-- PCSBackend.cpp
+|           |-- RingSwitchPCS.cpp
+|           `-- RingSwitchProofSerialize.cpp
 |-- tests
 |   |-- test_common.hpp
 |   |-- test_galois_ring_basic.cpp
@@ -132,7 +159,7 @@ Language versions:
   - Tries deterministic candidate `x^(p^{k-1})` first; returns if its order is already `p^s-1`.
   - Otherwise samples random units `u`, projects `u^(p^{k-1})` into Teichmuller subgroup, and checks order until success or `max_trials`.
 
-### `include/BaseFold/FoldableCode.hpp` / `src/BaseFold/FoldableCode.cpp`
+### `include/PCS/BaseFold/FoldableCode.hpp` / `src/PCS/BaseFold/FoldableCode.cpp`
 
 - Foldable code encoding:
   - Parameter struct `basefold::FoldableCodeParams`: `c, k0, d, p, zeta, G0, diag_T`.
@@ -146,14 +173,14 @@ Language versions:
     - Field `F_{p^r}`: initialize `ZZ_p::init(p)`, then `ZZ_pE::init(F)` with irreducible degree-`r` polynomial.
     - Galois ring `GR(p^s,r)`: initialize `ZZ_p::init(p^s)`, then `ZZ_pE::init(F)` with degree-`r` polynomial whose mod-`p` reduction is irreducible.
 
-### `include/BaseFold/IOPP.hpp` / `src/BaseFold/IOPP.cpp`
+### `include/PCS/BaseFold/IOPP.hpp` / `src/PCS/BaseFold/IOPP.cpp`
 
 - BaseFold IOPP (Protocol 2/3):
   - Folding prover: `ProverCommitAll/ProverCommitRound`
   - Query verifier: `VerifyQueryFromOracles`
   - Merkle commitment/multiproof: `MerkleCommitOracle/MerkleOpenOracleMany/MerkleVerifyMultiproof`
 
-### `include/BaseFold/Profile.hpp`
+### `include/PCS/Common/Profile.hpp`
 
 - Lightweight optional profiler (bench-oriented) to break verifier time into Merkle, fold-consistency (`EvalLineAt`), ring arithmetic (for example inversion), etc.
 - Core API:
@@ -162,7 +189,7 @@ Language versions:
   - `basefold::ScopedTimer`: RAII timer (almost zero overhead when profiling is disabled).
   - `basefold::PrintProfile`: formatted profile output.
 
-### `include/BaseFold/BaseFoldPCS.hpp` / `src/BaseFold/BaseFoldPCS.cpp`
+### `include/PCS/BaseFold/BaseFoldPCS.hpp` / `src/PCS/BaseFold/BaseFoldPCS*.cpp`
 
 - Minimal non-interactive BaseFold PCS single-point evaluation proof (Protocol 4 + Merkle + Fiat-Shamir):
   - `BaseFoldPCSCommit/ProveEval/VerifyEval`
@@ -182,8 +209,14 @@ Language versions:
     - Extension-challenge proof payload is multiproof-only and compacted: no duplicated base-side `h_i / pi0_codeword`; base and extension query payloads use shared Merkle multiproofs; `extension.r_by_level` can be omitted and recovered by transcript re-sampling.
     - `challenge_extension_modulus` now validates algebraic conditions: irreducible in field mode; basic irreducible after mod-`p` reduction in ring mode.
   - Supports `k0=2^kappa` (BaseFold paper, Remark 3): IOPP depth is `d`, polynomial point dimension is `d+kappa`; `kappa=0` degenerates to Protocol 4 in the BaseFold paper (`k0==1`).
+  - Implementation is now split by responsibility:
+    - `BaseFoldPCSCommit.cpp`: top commit artifacts and `BaseFoldPCSCommit`
+    - `BaseFoldPCSProve.cpp`: base-challenge prove path
+    - `BaseFoldPCSVerify.cpp`: base-challenge verify path and query-parallel config
+    - `BaseFoldPCSExtension.cpp`: extension-challenge prove/verify path
+    - `BaseFoldPCSCommon.cpp`: BaseFold-internal shared helpers
 
-### `include/BaseFold/ProofSerialize.hpp` / `src/BaseFold/ProofSerialize.cpp`
+### `include/PCS/BaseFold/ProofSerialize.hpp` / `src/PCS/BaseFold/ProofSerialize.cpp`
 
 - Fixed-width proof serializer contract for exact proof-size counting:
   - `basefold::FixedProofEncodingOptions`
@@ -193,7 +226,7 @@ Language versions:
   - Omits transcript-recoverable query indices / explicit extension challenges
     such as `extension.r_by_level` from the counted payload.
 
-### `include/BaseFold/ProofSize.hpp` / `src/BaseFold/ProofSize.cpp`
+### `include/PCS/BaseFold/ProofSize.hpp` / `src/PCS/BaseFold/ProofSize.cpp`
 
 - Exact BaseFold PCS proof-size counting through the fixed-width proof serializer:
   - `basefold::BaseFoldPCSEvalProofSizeBytes(proof)`

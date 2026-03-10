@@ -14,6 +14,7 @@
 #include "PCS/Common/Hash.hpp"
 #include "PCS/Common/Multilinear.hpp"
 #include "PCS/Common/Profile.hpp"
+#include "PCS/Common/Transcript.hpp"
 
 using NTL::LogicError;
 using NTL::ZZ;
@@ -215,194 +216,15 @@ PackedCommitInputs BuildPackedCommitInputs(const RingSwitchPCSParams &params,
   return out;
 }
 
-void AppendU64(Bytes &out, std::uint64_t v) {
-  for (int i = 0; i < 8; ++i) {
-    out.push_back(static_cast<Byte>((v >> (8 * i)) & 0xff));
-  }
+HashTranscript MakeRingSwitchTranscript() {
+  HashTranscriptConfig config;
+  config.domain_separator = "RingSwitchPCS/v1";
+  config.byte_order = TranscriptByteOrder::kLittleEndian;
+  config.error_prefix = "RingSwitchHashTranscript";
+  return HashTranscript(config);
 }
 
-void AppendSerializedFieldElement(Bytes &out, const FieldElement &x,
-                                  const char *func_name) {
-  const long r = ZZ_pE::degree();
-  if (r <= 0) {
-    const std::string msg =
-        std::string(func_name) + ": invalid extension degree";
-    LogicError(msg.c_str());
-  }
-
-  const ZZ_pX &poly = NTL::rep(x);
-  AppendU64(out, static_cast<std::uint64_t>(r));
-  for (long i = 0; i < r; ++i) {
-    const ZZ c = NTL::rep(NTL::coeff(poly, i));
-    const long n = NTL::NumBytes(c);
-    AppendU64(out, static_cast<std::uint64_t>(n));
-    if (n > 0) {
-      const std::size_t old_size = out.size();
-      out.resize(old_size + static_cast<std::size_t>(n));
-      NTL::BytesFromZZ(
-          reinterpret_cast<unsigned char *>(out.data() + old_size), c, n);
-    }
-  }
-}
-
-Bytes SerializeFieldElement(const FieldElement &x) {
-  Bytes out;
-  AppendSerializedFieldElement(out, x, "SerializeFieldElement");
-  return out;
-}
-
-Bytes TaggedHash(Byte tag, const Bytes &state, const Bytes &payload) {
-  Bytes in;
-  in.push_back(tag);
-  in.insert(in.end(), state.begin(), state.end());
-  AppendU64(in, static_cast<std::uint64_t>(payload.size()));
-  in.insert(in.end(), payload.begin(), payload.end());
-  return HashBytes(in);
-}
-
-Bytes TaggedHash(Byte tag, const Bytes &state, const std::string &payload) {
-  Bytes p;
-  p.insert(p.end(), payload.begin(), payload.end());
-  return TaggedHash(tag, state, p);
-}
-
-class RingSwitchHashTranscript {
- public:
-  RingSwitchHashTranscript() {
-    Profile *prof = ActiveProfile();
-    ScopedTimer timer(prof ? &prof->transcript_absorb_ns : nullptr,
-                      prof ? &prof->transcript_absorb_calls : nullptr);
-
-    const std::string domain = "RingSwitchPCS/v1";
-    state_ = TaggedHash(static_cast<Byte>(0x42), Bytes{}, domain);
-  }
-
-  void AbsorbDigest(const Digest &digest) {
-    const Bytes tmp(digest.begin(), digest.end());
-    AbsorbBytes(tmp);
-  }
-
-  void AbsorbFieldElement(const FieldElement &x) {
-    Profile *prof = ActiveProfile();
-    ScopedTimer timer(prof ? &prof->transcript_absorb_ns : nullptr,
-                      prof ? &prof->transcript_absorb_calls : nullptr);
-    state_ =
-        TaggedHash(static_cast<Byte>(0x02), state_, SerializeFieldElement(x));
-  }
-
-  void AbsorbQuadraticPoly(const QuadraticPoly &poly) {
-    AbsorbFieldElement(poly.a0);
-    AbsorbFieldElement(poly.a1);
-    AbsorbFieldElement(poly.a2);
-  }
-
-  FieldElement ChallengeFieldElement(const std::string &label) const {
-    Profile *prof = ActiveProfile();
-    ScopedTimer timer(prof ? &prof->transcript_challenge_ns : nullptr,
-                      prof ? &prof->transcript_challenge_calls : nullptr);
-
-    const long r = ZZ_pE::degree();
-    if (r <= 0) {
-      LogicError(
-          "RingSwitchHashTranscript::ChallengeFieldElement: invalid extension degree");
-    }
-
-    const ZZ modulus = ZZ_p::modulus();
-    if (modulus <= 1) {
-      LogicError(
-          "RingSwitchHashTranscript::ChallengeFieldElement: invalid base modulus");
-    }
-
-    ChallengeStream stream(state_, "fe/" + label);
-    ZZ_pX poly;
-    NTL::clear(poly);
-    for (long i = 0; i < r; ++i) {
-      const ZZ c = stream.SampleZZLessThan(modulus);
-      ZZ_p c_base;
-      NTL::conv(c_base, c);
-      NTL::SetCoeff(poly, i, c_base);
-    }
-    FieldElement out;
-    NTL::conv(out, poly);
-    return out;
-  }
-
- private:
-  void AbsorbBytes(const Bytes &data) {
-    Profile *prof = ActiveProfile();
-    ScopedTimer timer(prof ? &prof->transcript_absorb_ns : nullptr,
-                      prof ? &prof->transcript_absorb_calls : nullptr);
-    state_ = TaggedHash(static_cast<Byte>(0x01), state_, data);
-  }
-
-  class ChallengeStream {
-   public:
-    ChallengeStream(const Bytes &state, const std::string &label)
-        : state_(state), label_(label) {}
-
-    void ReadBytes(std::uint8_t *out, std::size_t len) {
-      std::size_t written = 0;
-      while (written < len) {
-        if (offset_ == buf_.size()) {
-          buf_ = Digest(counter_++);
-          offset_ = 0;
-        }
-        const std::size_t take = std::min(len - written, buf_.size() - offset_);
-        std::memcpy(out + written, buf_.data() + offset_, take);
-        offset_ += take;
-        written += take;
-      }
-    }
-
-    ZZ SampleZZLessThan(const ZZ &upper_bound) {
-      if (upper_bound <= 0) {
-        LogicError("RingSwitchHashTranscript::SampleZZLessThan: upper_bound must be positive");
-      }
-      if (upper_bound == 1) {
-        return ZZ(0);
-      }
-
-      const ZZ ub_minus_1 = upper_bound - 1;
-      const long bits = NTL::NumBits(ub_minus_1);
-      if (bits <= 0) {
-        return ZZ(0);
-      }
-      const long byte_len = (bits + 7) / 8;
-      const ZZ two_to_bits = ZZ(1) << bits;
-
-      Bytes tmp(static_cast<std::size_t>(byte_len));
-      while (true) {
-        ReadBytes(reinterpret_cast<std::uint8_t *>(tmp.data()),
-                  static_cast<std::size_t>(byte_len));
-        ZZ x = NTL::ZZFromBytes(
-            reinterpret_cast<const unsigned char *>(tmp.data()), byte_len);
-        x %= two_to_bits;
-        if (x < upper_bound) {
-          return x;
-        }
-      }
-    }
-
-   private:
-    Bytes Digest(std::uint64_t ctr) const {
-      Bytes payload;
-      payload.reserve(8);
-      AppendU64(payload, ctr);
-      const Bytes st = TaggedHash(static_cast<Byte>(0x20), state_, label_);
-      return TaggedHash(static_cast<Byte>(0x21), st, payload);
-    }
-
-    Bytes state_;
-    std::string label_;
-    mutable std::uint64_t counter_ = 0;
-    mutable Bytes buf_;
-    mutable std::size_t offset_ = 0;
-  };
-
-  Bytes state_;
-};
-
-void AbsorbPublicInput(RingSwitchHashTranscript &transcript,
+void AbsorbPublicInput(HashTranscript &transcript,
                        const MerkleRoot &commitment,
                        const std::vector<FieldElement> &z,
                        const FieldElement &claimed_s) {
@@ -862,7 +684,7 @@ RingSwitchPCSEvalProof RingSwitchPCSProveEvalFromCommitArtifacts(
         "RingSwitchPCSProveEvalFromCommitArtifacts: Equality Check 1 failed on honest witness");
   }
 
-  RingSwitchHashTranscript transcript;
+  HashTranscript transcript = MakeRingSwitchTranscript();
   AbsorbPublicInput(transcript, commit_artifacts.commitment, z, claimed_s);
   for (const FieldElement &s_u : proof.s_by_u) {
     transcript.AbsorbFieldElement(s_u);
@@ -883,8 +705,8 @@ RingSwitchPCSEvalProof RingSwitchPCSProveEvalFromCommitArtifacts(
     ProductSumcheckProver sumcheck(commit_artifacts.t_packed_table, g_table);
     proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)] =
         sumcheck.CurrentPolynomial();
-    transcript.AbsorbQuadraticPoly(
-        proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)]);
+    AbsorbQuadraticPoly(
+        transcript, proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)]);
 
     for (long i = params.ell_prime; i-- > 0;) {
       const FieldElement r_i = transcript.ChallengeFieldElement(
@@ -894,8 +716,8 @@ RingSwitchPCSEvalProof RingSwitchPCSProveEvalFromCommitArtifacts(
       if (i > 0) {
         proof.h_by_level[static_cast<std::size_t>(i - 1)] =
             sumcheck.CurrentPolynomial();
-        transcript.AbsorbQuadraticPoly(
-            proof.h_by_level[static_cast<std::size_t>(i - 1)]);
+        AbsorbQuadraticPoly(
+            transcript, proof.h_by_level[static_cast<std::size_t>(i - 1)]);
       }
     }
 
@@ -966,7 +788,7 @@ bool RingSwitchPCSVerifyEval(const RingSwitchPCSParams &params,
     return false;
   }
 
-  RingSwitchHashTranscript transcript;
+  HashTranscript transcript = MakeRingSwitchTranscript();
   AbsorbPublicInput(transcript, commitment, z, claimed_s);
   for (const FieldElement &s_u : proof.s_by_u) {
     transcript.AbsorbFieldElement(s_u);
@@ -985,14 +807,14 @@ bool RingSwitchPCSVerifyEval(const RingSwitchPCSParams &params,
   std::vector<FieldElement> rprime_suffix(
       static_cast<std::size_t>(params.ell_prime));
   if (params.ell_prime > 0) {
-    transcript.AbsorbQuadraticPoly(
-        proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)]);
+    AbsorbQuadraticPoly(
+        transcript, proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)]);
     for (long i = params.ell_prime; i-- > 0;) {
       rprime_suffix[static_cast<std::size_t>(i)] = transcript.ChallengeFieldElement(
           "rprime/suffix/" + std::to_string(i));
       if (i > 0) {
-        transcript.AbsorbQuadraticPoly(
-            proof.h_by_level[static_cast<std::size_t>(i - 1)]);
+        AbsorbQuadraticPoly(
+            transcript, proof.h_by_level[static_cast<std::size_t>(i - 1)]);
       }
     }
   }

@@ -454,7 +454,7 @@ Phase 1 完成说明：
 
 - 目录迁移采用“真实搬迁”而不是兼容层过渡：头文件与 `.cpp` 已直接落到 `include/PCS/*`、`include/Compiler/Z2k/*`、`src/PCS/*`、`src/Compiler/Z2k/*`。
 - `Merkle` 通用类型与实现已从 `IOPP.hpp|cpp` 拆出到 `PCS/Common/Merkle.hpp|cpp`。
-- `FiatShamirTranscript` 抽象接口已迁到 `PCS/Common/Transcript.hpp`，但 `HashTranscript` / `RingSwitchHashTranscript` 的具体实现仍保留在各自协议实现文件中，留待 Phase 4 统一抽取。
+- `FiatShamirTranscript` 抽象接口已迁到 `PCS/Common/Transcript.hpp`；其上层的具体 hash transcript 实现将在 Phase 4 统一抽取到公共层。
 - `Profile` 继续位于公共层，`g_active_profile` 已移到 `src/PCS/Common/Profile.cpp`。
 
 验收条件：
@@ -504,9 +504,15 @@ Phase 3 完成说明：
 
 ## Phase 4: `BaseFoldPCS.cpp` 职责拆分
 
-- [ ] 提取 transcript 基础设施
-- [ ] 拆分 commit / prove / verify / extension
-- [ ] 保持 public API 不变
+- [x] 提取 transcript 基础设施
+- [x] 拆分 commit / prove / verify / extension
+- [x] 保持 public API 不变
+
+Phase 4 完成说明：
+
+- `HashTranscript`、challenge stream、按协议可配置的 domain separator / byte-order 已集中到 `PCS/Common/Transcript.hpp|cpp`；BaseFold 与 ring-switch 现在复用同一套 transcript 基础设施，只各自保留 domain 配置与 public-input absorb helper。
+- 原先单文件 `src/PCS/BaseFold/BaseFoldPCS.cpp` 已拆为 `BaseFoldPCSCommon.cpp`、`BaseFoldPCSCommit.cpp`、`BaseFoldPCSProve.cpp`、`BaseFoldPCSVerify.cpp`、`BaseFoldPCSExtension.cpp`，并通过内部头 `BaseFoldPCSInternal.hpp` 共享仅限 BaseFold 内部使用的 helper。
+- `include/PCS/BaseFold/BaseFoldPCS.hpp` 的 public API 保持不变；现有 `test_pcs`、`bench_pcs_commit`、`bench_pcs_eval` 调用面无需改动。
 
 验收条件：
 
@@ -516,11 +522,16 @@ Phase 3 完成说明：
 
 ## Phase 5: 仓库内 include 迁移与清理
 
-- [ ] 清理迁移过程残留的旧路径和临时桥接代码
-- [ ] README 更新为新目录树
-- [ ] 新代码禁止继续引入旧路径命名习惯
-- [ ] 确认仓库中不存在 `include/BaseFold/`
-- [ ] 确认仓库中不存在兼容头或兼容聚合 target
+- [x] 清理迁移过程残留的旧路径和临时桥接代码
+- [x] README 更新为新目录树
+- [x] 新代码禁止继续引入旧路径命名习惯
+- [x] 确认仓库中不存在 `include/BaseFold/`
+- [x] 确认仓库中不存在兼容头或兼容聚合 target
+
+Phase 5 当前进展补充：
+
+- 仓库新增 `test_path_hygiene`（纳入 `ctest`），对 `include/`、`src/`、`tests/`、`bench/`、`scripts/`、`README.md`、`README_zh.md`、`CMakeLists.txt` 执行文本扫描，显式拒绝 `#include "BaseFold/..."`
+  / `#include <BaseFold/...>`、`include/BaseFold/`、`src/BaseFold/` 等旧路径命名习惯。
 
 验收条件：
 

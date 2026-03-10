@@ -65,7 +65,11 @@ add_library(pcs_common
 add_library(basefold_core
   src/PCS/BaseFold/FoldableCode.cpp
   src/PCS/BaseFold/IOPP.cpp
-  src/PCS/BaseFold/BaseFoldPCS.cpp
+  src/PCS/BaseFold/BaseFoldPCSCommon.cpp
+  src/PCS/BaseFold/BaseFoldPCSCommit.cpp
+  src/PCS/BaseFold/BaseFoldPCSProve.cpp
+  src/PCS/BaseFold/BaseFoldPCSVerify.cpp
+  src/PCS/BaseFold/BaseFoldPCSExtension.cpp
   src/PCS/BaseFold/ProofSerialize.cpp
   src/PCS/BaseFold/ProofSize.cpp
 )
@@ -136,6 +140,10 @@ add_executable(test_z2k_ring_switch_pcs tests/test_z2k_ring_switch_pcs.cpp)
 target_link_libraries(test_z2k_ring_switch_pcs PRIVATE z2k_compiler_core)
 target_include_directories(test_z2k_ring_switch_pcs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+add_executable(test_path_hygiene tests/test_path_hygiene.cpp)
+configure_repo_cxx_target(test_path_hygiene)
+target_include_directories(test_path_hygiene PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_executable(bench_pcs_commit bench/bench_pcs_commit.cpp)
 target_link_libraries(bench_pcs_commit PRIVATE basefold_core)
 
@@ -157,3 +165,4 @@ add_test(NAME test_foldable_codes COMMAND $<TARGET_FILE:test_foldable_codes>)
 add_test(NAME test_iopp COMMAND $<TARGET_FILE:test_iopp>)
 add_test(NAME test_pcs COMMAND $<TARGET_FILE:test_pcs>)
 add_test(NAME test_z2k_ring_switch_pcs COMMAND $<TARGET_FILE:test_z2k_ring_switch_pcs>)
+add_test(NAME test_path_hygiene COMMAND $<TARGET_FILE:test_path_hygiene>)

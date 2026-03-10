@@ -9,12 +9,12 @@
 
 > 说明：NTL 的 `ZZ_p`/`ZZ_pX`/`ZZ_pE` 等类型依赖全局模数上下文（例如 `ZZ_p::init(mod)`、`ZZ_pE::init(F)`）。调用本项目函数前请确保相关上下文已正确初始化。
 
-此外，本仓库还包含一份 `(c, k0, d)`-foldable linear code 的编码过程实现，支持在有限域 `F_{p^s}` 与 Galois ring `GR(p^k,s)` 上运行（见 `include/BaseFold/FoldableCode.hpp`）。该编码实现可用于 BaseFold 论文中的 IOPP 与 PCS 构造。
+此外，本仓库还包含一份 `(c, k0, d)`-foldable linear code 的编码过程实现，支持在有限域 `F_{p^s}` 与 Galois ring `GR(p^k,s)` 上运行（见 `include/PCS/BaseFold/FoldableCode.hpp`）。该编码实现可用于 BaseFold 论文中的 IOPP 与 PCS 构造。
 
 同时，仓库中也实现了 BaseFold 论文里的：
 
-- BaseFold IOPP（folding + query，一并支持有限域与 Galois ring，见 `include/BaseFold/IOPP.hpp`）。
-- 一个最小化的、基于 **Merkle + Fiat–Shamir** 的非交互 BaseFold PCS 单点求值证明（支持 `k0=2^κ`，见 `include/BaseFold/BaseFoldPCS.hpp`；多项式点维度为 `d+κ`）。
+- BaseFold IOPP（folding + query，一并支持有限域与 Galois ring，见 `include/PCS/BaseFold/IOPP.hpp`）。
+- 一个最小化的、基于 **Merkle + Fiat–Shamir** 的非交互 BaseFold PCS 单点求值证明（支持 `k0=2^κ`，见 `include/PCS/BaseFold/BaseFoldPCS.hpp`；多项式点维度为 `d+κ`）。
 
 ## 目录结构
 
@@ -36,15 +36,26 @@
 │   │   ├── Inverse.hpp
 │   │   ├── HenselLift.hpp
 │   │   └── PrimitiveElement.hpp
-│   └── BaseFold
-│       ├── FoldableCode.hpp
-│       ├── IOPP.hpp
-│       ├── Multilinear.hpp
-│       ├── Sumcheck.hpp
-│       ├── Profile.hpp
-│       ├── ProofSerialize.hpp
-│       ├── ProofSize.hpp
-│       └── BaseFoldPCS.hpp
+│   ├── PCS
+│   │   ├── Common
+│   │   │   ├── Hash.hpp
+│   │   │   ├── Merkle.hpp
+│   │   │   ├── Multilinear.hpp
+│   │   │   ├── Profile.hpp
+│   │   │   ├── Sumcheck.hpp
+│   │   │   └── Transcript.hpp
+│   │   └── BaseFold
+│   │       ├── FoldableCode.hpp
+│   │       ├── IOPP.hpp
+│   │       ├── ProofSerialize.hpp
+│   │       ├── ProofSize.hpp
+│   │       └── BaseFoldPCS.hpp
+│   └── Compiler
+│       └── Z2k
+│           ├── BaseFoldBackendAdapter.hpp
+│           ├── PCSBackend.hpp
+│           ├── RingSwitchPCS.hpp
+│           └── RingSwitchProofSerialize.hpp
 ├── scripts
 │   ├── run_release_c4_lambda128.sh
 │   └── plot_benchmark_results.py
@@ -54,14 +65,30 @@
 │   │   ├── Inverse.cpp
 │   │   ├── HenselLift.cpp
 │   │   └── PrimitiveElement.cpp
-│   └── BaseFold
-│       ├── FoldableCode.cpp
-│       ├── IOPP.cpp
-│       ├── Multilinear.cpp
-│       ├── ProofSerialize.cpp
-│       ├── Sumcheck.cpp
-│       ├── ProofSize.cpp
-│       └── BaseFoldPCS.cpp
+│   ├── PCS
+│   │   ├── Common
+│   │   │   ├── Hash.cpp
+│   │   │   ├── Merkle.cpp
+│   │   │   ├── Multilinear.cpp
+│   │   │   ├── Profile.cpp
+│   │   │   ├── Sumcheck.cpp
+│   │   │   └── Transcript.cpp
+│   │   └── BaseFold
+│   │       ├── FoldableCode.cpp
+│   │       ├── IOPP.cpp
+│   │       ├── ProofSerialize.cpp
+│   │       ├── ProofSize.cpp
+│   │       ├── BaseFoldPCSCommon.cpp
+│   │       ├── BaseFoldPCSCommit.cpp
+│   │       ├── BaseFoldPCSProve.cpp
+│   │       ├── BaseFoldPCSVerify.cpp
+│   │       └── BaseFoldPCSExtension.cpp
+│   └── Compiler
+│       └── Z2k
+│           ├── BaseFoldBackendAdapter.cpp
+│           ├── PCSBackend.cpp
+│           ├── RingSwitchPCS.cpp
+│           └── RingSwitchProofSerialize.cpp
 ├── tests
 │   ├── test_common.hpp
 │   ├── test_galois_ring_basic.cpp
@@ -132,7 +159,7 @@
   - 先尝试确定性候选 `x^(p^{k-1})`，若阶已是 `p^s-1` 则直接返回。
   - 若不满足，则随机采样单位元 `u`，投影 `u^(p^{k-1})` 到 Teichmüller 子群后做阶检验，直到找到生成元或达到 `max_trials`。
 
-### `include/BaseFold/FoldableCode.hpp` / `src/BaseFold/FoldableCode.cpp`
+### `include/PCS/BaseFold/FoldableCode.hpp` / `src/PCS/BaseFold/FoldableCode.cpp`
 
 - Foldable code 的编码实现：
   - 参数结构 `basefold::FoldableCodeParams`：`c, k0, d, p, zeta, G0, diag_T`。
@@ -146,14 +173,14 @@
     - 域 `F_{p^r}`：先 `ZZ_p::init(p)`，再用次数为 `r` 的不可约多项式初始化 `ZZ_pE::init(F)`；
     - Galois ring `GR(p^s,r)`：先 `ZZ_p::init(p^s)`，再用“模 p 约化后不可约”的次数为 `r` 多项式初始化 `ZZ_pE::init(F)`。
 
-### `include/BaseFold/IOPP.hpp` / `src/BaseFold/IOPP.cpp`
+### `include/PCS/BaseFold/IOPP.hpp` / `src/PCS/BaseFold/IOPP.cpp`
 
 - BaseFold IOPP（Protocol 2/3）实现：
   - folding prover：`ProverCommitAll/ProverCommitRound`
   - query verifier：`VerifyQueryFromOracles`
   - Merkle 承诺与 multiproof：`MerkleCommitOracle/MerkleOpenOracleMany/MerkleVerifyMultiproof`
 
-### `include/BaseFold/Profile.hpp`
+### `include/PCS/Common/Profile.hpp`
 
 - 轻量、可选的 profiler（bench-oriented）：用于把 verifier 的时间拆分到 Merkle、折叠一致性（`EvalLineAt`）与环算术（如求逆）等模块。
 - 核心接口：
@@ -162,7 +189,7 @@
   - `basefold::ScopedTimer`：RAII 计时器（仅在启用 profiling 时计时，默认开销极低）。
   - `basefold::PrintProfile`：格式化输出 profile 结果。
 
-### `include/BaseFold/BaseFoldPCS.hpp` / `src/BaseFold/BaseFoldPCS.cpp`
+### `include/PCS/BaseFold/BaseFoldPCS.hpp` / `src/PCS/BaseFold/BaseFoldPCS*.cpp`
 
 - 一个最小化的非交互 BaseFold PCS 单点求值证明（Protocol 4 + Merkle + Fiat–Shamir）：
   - `BaseFoldPCSCommit/ProveEval/VerifyEval`
@@ -172,8 +199,14 @@
     - 扩环 challenge 路径的 proof payload 已收敛为 multiproof-only 且做了去冗余压缩：不再重复携带 base 侧 `h_i / pi0_codeword`，base 与 extension query payload 都使用共享的 Merkle multiproof；`extension.r_by_level` 允许省略（由 transcript 重采样恢复）。
     - `challenge_extension_modulus` 现在会校验代数条件：在域模式要求不可约；在环模式要求模 `p` 约化后不可约（basic irreducible）。
   - 支持 `k0=2^κ` 的情况（BaseFold 论文 Remark 3）：IOPP depth 为 `d`，多项式点维度为 `d+κ`；`κ=0` 时退化为 BaseFold 论文中的 Protocol 4（`k0==1`）。
+  - 实现现已按职责拆分：
+    - `BaseFoldPCSCommit.cpp`：顶层 commit artifacts 与 `BaseFoldPCSCommit`
+    - `BaseFoldPCSProve.cpp`：base-challenge prove 路径
+    - `BaseFoldPCSVerify.cpp`：base-challenge verify 路径与 verifier query 并行配置
+    - `BaseFoldPCSExtension.cpp`：extension-challenge prove / verify 路径
+    - `BaseFoldPCSCommon.cpp`：仅供 BaseFold 内部复用的 shared helper
 
-### `include/BaseFold/ProofSerialize.hpp` / `src/BaseFold/ProofSerialize.cpp`
+### `include/PCS/BaseFold/ProofSerialize.hpp` / `src/PCS/BaseFold/ProofSerialize.cpp`
 
 - fixed-width proof serializer 的公共契约：
   - `basefold::FixedProofEncodingOptions`
@@ -181,7 +214,7 @@
   - `basefold::CountingSink`
   - `basefold::CountSerializedBaseFoldPCSEvalProofFixedBytes(...)`
 
-### `include/BaseFold/ProofSize.hpp` / `src/BaseFold/ProofSize.cpp`
+### `include/PCS/BaseFold/ProofSize.hpp` / `src/PCS/BaseFold/ProofSize.cpp`
 
 - 通过 fixed-width proof serializer 做 BaseFold PCS proof size 的精确计数：
   - `basefold::BaseFoldPCSEvalProofSizeBytes(proof)`
