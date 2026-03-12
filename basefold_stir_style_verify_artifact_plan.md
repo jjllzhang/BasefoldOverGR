@@ -3,7 +3,7 @@
 ## Status
 
 - Owner: TBD
-- Status: Phase 3 complete
+- Status: Phase 4 complete
 - Last updated: 2026-03-12
 
 ## Current Progress
@@ -17,7 +17,7 @@
   - combined `public_inputs.bin` binary round-trip helpers
   - metadata-driven verification-context restore helper
 - [x] Phase 3: `dump_pcs_eval_artifact`
-- [ ] Phase 4: `bench_pcs_verify_artifact`
+- [x] Phase 4: `bench_pcs_verify_artifact`
 - [ ] README artifact-flow documentation
 
 ## Goal
@@ -354,6 +354,13 @@ Acceptance criteria:
 - measured verifier timing excludes file IO and deserialization
 - verifier succeeds on dumped artifacts
 - output clearly distinguishes measured verifier time from non-measured load time
+
+Update 2026-03-12:
+
+- `bench_pcs_verify_artifact` is now implemented in `bench/bench_pcs_verify_artifact.cpp`.
+- The tool loads one case by `artifact-id`, restores the verification context from metadata, deserializes `public_inputs.bin` and `proof.bin` outside the timed region, and times only repeated verify calls.
+- Output now includes `artifact load wall time` and `artifact deserialize wall time` as explicitly excluded diagnostics, plus headline `verifier mean` and `input proof size`.
+- `--merkle-*` flags are intentionally unsupported here because artifact verify does not build Merkle trees inside the measured path; only `--verifier-query-*` affects the timed verifier loop.
 
 ## Testing Plan
 

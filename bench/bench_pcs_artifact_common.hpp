@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "PCS/BaseFold/BaseFoldPCS.hpp"
+#include "PCS/BaseFold/ProofDeserialize.hpp"
 #include "PCS/BaseFold/ProofSerialize.hpp"
 #include "PCS/Common/Hash.hpp"
 #include "PCS/Common/Merkle.hpp"
@@ -95,6 +96,9 @@ struct RestoredVerificationContext {
   basefold::FoldableCodeParams params;
   basefold::BaseFoldPCSChallengeConfig challenge_cfg;
 };
+
+inline RestoredVerificationContext RestoreVerificationContext(
+    const ArtifactMetadata &meta);
 
 inline std::string NormalizeModeLabel(const std::string &mode) {
   if (mode == "field" || mode == "ring") {
@@ -1065,6 +1069,26 @@ struct DumpArtifactResult {
   fs::path proof_path;
 };
 
+struct LoadedArtifactCase {
+  ArtifactManifestEntry manifest_entry;
+  ArtifactMetadata metadata;
+  RestoredVerificationContext restored;
+  ArtifactPublicInputs public_inputs;
+  basefold::BaseFoldPCSEvalProof proof;
+  long challenge_ext_degree = 0;
+  double load_wall_ms = 0.0;
+  double deserialize_wall_ms = 0.0;
+};
+
+struct ArtifactVerifyBenchResult {
+  basefold_bench_pcs_common::Stats verifier;
+  std::uint64_t anti_opt_checksum = 0;
+  std::uint64_t proof_size_bytes = 0;
+  double proof_size_kb = 0.0;
+  basefold::Profile verifier_profile;
+  bool has_profile = false;
+};
+
 inline DumpArtifactResult DumpEvalArtifact(
     const basefold_bench_pcs_common::ContextSpec &spec,
     const DumpArtifactRequest &request) {
@@ -1261,6 +1285,178 @@ inline DumpArtifactResult DumpEvalArtifact(
   result.public_inputs_path = public_inputs_path;
   result.proof_path = proof_path;
   return result;
+}
+
+inline ArtifactManifestEntry FindManifestEntryOrThrow(
+    const std::vector<ArtifactManifestEntry> &entries,
+    const std::string &artifact_id) {
+  const ArtifactManifestEntry *match = nullptr;
+  for (const ArtifactManifestEntry &entry : entries) {
+    if (entry.artifact_id != artifact_id) {
+      continue;
+    }
+    if (match != nullptr) {
+      throw std::runtime_error(
+          "FindManifestEntryOrThrow: duplicate artifact_id in manifest");
+    }
+    match = &entry;
+  }
+  if (match == nullptr) {
+    throw std::runtime_error(
+        "FindManifestEntryOrThrow: artifact_id not found in manifest");
+  }
+  return *match;
+}
+
+inline void ValidateManifestEntryMatchesMetadata(
+    const ArtifactManifestEntry &entry, const ArtifactMetadata &meta) {
+  if (entry.artifact_id != meta.artifact_id ||
+      entry.display_key != meta.display_key || entry.context_id != meta.context_id ||
+      entry.context_label != meta.context_label || entry.mode != meta.mode ||
+      entry.c != meta.c || entry.k0 != meta.k0 || entry.d != meta.d ||
+      entry.poly_dim != meta.poly_dim || entry.lambda != meta.lambda ||
+      entry.gamma != meta.gamma || entry.queries != meta.queries ||
+      entry.seed != meta.seed ||
+      entry.use_extension_challenges != meta.use_extension_challenges) {
+    throw std::runtime_error(
+        "ValidateManifestEntryMatchesMetadata: manifest/meta mismatch");
+  }
+  if (entry.object_relpath != ManifestObjectRelPath(meta.artifact_id)) {
+    throw std::runtime_error(
+        "ValidateManifestEntryMatchesMetadata: unexpected object_relpath");
+  }
+}
+
+inline bool VerifyLoadedArtifactCase(const LoadedArtifactCase &artifact) {
+  return artifact.metadata.use_extension_challenges
+             ? basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+                   artifact.public_inputs.commitment_root, artifact.public_inputs.z,
+                   artifact.public_inputs.claimed_y, artifact.metadata.queries,
+                   artifact.proof, artifact.restored.params,
+                   artifact.restored.challenge_cfg)
+             : basefold::BaseFoldPCSVerifyEval(
+                   artifact.public_inputs.commitment_root, artifact.public_inputs.z,
+                   artifact.public_inputs.claimed_y, artifact.metadata.queries,
+                   artifact.proof, artifact.restored.params);
+}
+
+inline LoadedArtifactCase LoadArtifactCaseForVerify(const fs::path &artifact_root,
+                                                    const std::string &artifact_id) {
+  using namespace basefold_bench_pcs_common;
+
+  ValidateArtifactIdOrThrow(artifact_id);
+  if (artifact_root.empty()) {
+    throw std::runtime_error(
+        "LoadArtifactCaseForVerify: artifact_root is required");
+  }
+
+  const auto load_t0 = std::chrono::steady_clock::now();
+  const std::vector<ArtifactManifestEntry> entries =
+      LoadManifestEntries(ArtifactManifestPath(artifact_root));
+  const ArtifactManifestEntry entry = FindManifestEntryOrThrow(entries, artifact_id);
+  const fs::path object_dir = ArtifactObjectDir(artifact_root, artifact_id);
+  const std::string metadata_json = ReadFileToString(object_dir / "meta.json");
+  const basefold::Bytes public_inputs_bytes =
+      ReadBytesFromFile(object_dir / "public_inputs.bin");
+  const basefold::Bytes proof_bytes = ReadBytesFromFile(object_dir / "proof.bin");
+  const auto load_t1 = std::chrono::steady_clock::now();
+
+  const auto deserialize_t0 = std::chrono::steady_clock::now();
+  LoadedArtifactCase out;
+  out.manifest_entry = entry;
+  out.metadata = ParseMetadataJson(metadata_json);
+  if (out.metadata.artifact_id != artifact_id) {
+    throw std::runtime_error(
+        "LoadArtifactCaseForVerify: meta.json artifact_id mismatch");
+  }
+  ValidateManifestEntryMatchesMetadata(out.manifest_entry, out.metadata);
+  if (out.metadata.hash_backend != basefold::SelectedHashBackendName()) {
+    throw std::runtime_error(
+        "LoadArtifactCaseForVerify: artifact hash_backend does not match current build");
+  }
+  if (out.metadata.proof_encoding != "basefold_fixed_v1") {
+    throw std::runtime_error(
+        "LoadArtifactCaseForVerify: unsupported proof_encoding");
+  }
+  out.restored = RestoreVerificationContext(out.metadata);
+  out.public_inputs = DeserializePublicInputs(public_inputs_bytes);
+  basefold::FixedProofEncodingOptions options;
+  options.include_version_byte = true;
+  if (out.metadata.use_extension_challenges) {
+    out.challenge_ext_degree =
+        NTL::deg(out.restored.challenge_cfg.challenge_extension_modulus);
+    options.challenge_ext_degree = out.challenge_ext_degree;
+  }
+  out.proof =
+      basefold::DeserializeBaseFoldPCSEvalProofFixedBytes(proof_bytes, options);
+  if (proof_bytes.size() != out.metadata.proof_size_bytes) {
+    throw std::runtime_error(
+        "LoadArtifactCaseForVerify: proof.bin length does not match meta.json");
+  }
+  const auto deserialize_t1 = std::chrono::steady_clock::now();
+
+  out.load_wall_ms = MsSince(load_t0, load_t1);
+  out.deserialize_wall_ms = MsSince(deserialize_t0, deserialize_t1);
+  return out;
+}
+
+inline ArtifactVerifyBenchResult RunArtifactVerifyBenchmark(
+    const LoadedArtifactCase &artifact, bool enable_profile, int warmup,
+    int reps) {
+  using namespace basefold_bench_pcs_common;
+
+  if (warmup < 0) {
+    throw std::runtime_error(
+        "RunArtifactVerifyBenchmark: warmup must be >= 0");
+  }
+  if (reps <= 0) {
+    throw std::runtime_error("RunArtifactVerifyBenchmark: reps must be > 0");
+  }
+
+  std::vector<double> verifier_ms;
+  verifier_ms.reserve(static_cast<std::size_t>(reps));
+
+  basefold::Profile verifier_prof;
+  basefold::ResetProfile(verifier_prof);
+
+  std::uint64_t anti_opt_checksum = 0;
+  for (int iter = -warmup; iter < reps; ++iter) {
+    const auto t0 = std::chrono::steady_clock::now();
+    const bool ok = [&] {
+      if (enable_profile && iter >= 0) {
+        basefold::ProfileGuard guard(&verifier_prof);
+        return VerifyLoadedArtifactCase(artifact);
+      }
+      return VerifyLoadedArtifactCase(artifact);
+    }();
+    const auto t1 = std::chrono::steady_clock::now();
+
+    if (!ok) {
+      throw std::runtime_error(
+          "RunArtifactVerifyBenchmark: verification failed");
+    }
+
+    if (!artifact.public_inputs.commitment_root.empty()) {
+      anti_opt_checksum ^=
+          static_cast<std::uint64_t>(artifact.public_inputs.commitment_root[0]);
+    }
+    anti_opt_checksum ^= static_cast<std::uint64_t>(ok);
+    anti_opt_checksum ^= artifact.metadata.proof_size_bytes;
+
+    if (iter >= 0) {
+      verifier_ms.push_back(MsSince(t0, t1));
+    }
+  }
+
+  ArtifactVerifyBenchResult out;
+  out.verifier = ComputeStats(verifier_ms);
+  out.anti_opt_checksum = anti_opt_checksum;
+  out.proof_size_bytes = artifact.metadata.proof_size_bytes;
+  out.proof_size_kb =
+      static_cast<double>(artifact.metadata.proof_size_bytes) / 1024.0;
+  out.verifier_profile = verifier_prof;
+  out.has_profile = enable_profile;
+  return out;
 }
 
 inline RestoredVerificationContext RestoreVerificationContext(

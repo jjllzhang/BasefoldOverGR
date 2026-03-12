@@ -1101,6 +1101,90 @@ void TestPCS_DumpEvalArtifact_RingCompleteCase_ExtensionMode() {
   fs::remove_all(root);
 }
 
+void TestPCS_LoadArtifactCaseForVerify_FieldBenchmark() {
+  testutil::PrintInfo("PCS artifact: verifier benchmark loads one dumped field case and times verify only");
+
+  const fs::path root =
+      fs::temp_directory_path() / "basefold_phase4_verify_field_test";
+  fs::remove_all(root);
+
+  basefold_bench_pcs_common::ContextSpec field;
+  field.label = "Field";
+  field.scalar_modulus = to_ZZ(2);
+  field.base_prime = ZZ(0);
+  field.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};
+  field.zeta_coeffs = {to_ZZ(0), to_ZZ(1)};
+
+  basefold_bench_pcs_artifact::DumpArtifactRequest request;
+  request.artifact_root = root;
+  request.mode = "field";
+  request.artifact_id = "phase4_field_case";
+  request.c = 2;
+  request.k0 = 1;
+  request.d = 3;
+  request.queries = 2;
+  request.seed = 23;
+
+  const auto dumped =
+      basefold_bench_pcs_artifact::DumpEvalArtifact(field, request);
+  const auto loaded = basefold_bench_pcs_artifact::LoadArtifactCaseForVerify(
+      root, dumped.metadata.artifact_id);
+  CHECK_EQ(loaded.metadata.artifact_id, dumped.metadata.artifact_id);
+  CHECK(loaded.load_wall_ms >= 0.0);
+  CHECK(loaded.deserialize_wall_ms >= 0.0);
+  CHECK(basefold_bench_pcs_artifact::VerifyLoadedArtifactCase(loaded));
+
+  const auto bench =
+      basefold_bench_pcs_artifact::RunArtifactVerifyBenchmark(
+          loaded, /*enable_profile=*/false, /*warmup=*/0, /*reps=*/2);
+  CHECK_EQ(bench.proof_size_bytes, dumped.metadata.proof_size_bytes);
+  CHECK(bench.verifier.mean_ms >= 0.0);
+
+  fs::remove_all(root);
+}
+
+void TestPCS_LoadArtifactCaseForVerify_ExtensionMetadataTamperFails() {
+  testutil::PrintInfo("PCS artifact: verifier fails if extension metadata is tampered after load");
+
+  const fs::path root =
+      fs::temp_directory_path() / "basefold_phase4_verify_ring_test";
+  fs::remove_all(root);
+
+  basefold_bench_pcs_common::ContextSpec ring;
+  ring.label = "Ring";
+  ring.scalar_modulus = to_ZZ(4);
+  ring.base_prime = to_ZZ(2);
+  ring.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};
+  ring.zeta_coeffs = {to_ZZ(0), to_ZZ(1)};
+
+  basefold_bench_pcs_artifact::DumpArtifactRequest request;
+  request.artifact_root = root;
+  request.mode = "ring";
+  request.artifact_id = "phase4_ring_ext_case";
+  request.c = 2;
+  request.k0 = 1;
+  request.d = 2;
+  request.queries = 2;
+  request.seed = 29;
+  request.use_extension_challenges = true;
+
+  const auto dumped =
+      basefold_bench_pcs_artifact::DumpEvalArtifact(ring, request);
+  const auto loaded = basefold_bench_pcs_artifact::LoadArtifactCaseForVerify(
+      root, dumped.metadata.artifact_id);
+  CHECK(basefold_bench_pcs_artifact::VerifyLoadedArtifactCase(loaded));
+
+  auto tampered = loaded;
+  CHECK(tampered.restored.challenge_cfg.use_extension_challenges);
+  NTL::SetCoeff(tampered.restored.challenge_cfg.challenge_extension_modulus, 0,
+                NTL::coeff(
+                    tampered.restored.challenge_cfg.challenge_extension_modulus, 0) +
+                    testutil::ConstZZpE(1));
+  CHECK(!basefold_bench_pcs_artifact::VerifyLoadedArtifactCase(tampered));
+
+  fs::remove_all(root);
+}
+
 }  // namespace
 
 int main() {
@@ -1122,6 +1206,8 @@ int main() {
     RUN_TEST(TestPCS_ArtifactRestoreVerificationContext_GF4);
     RUN_TEST(TestPCS_DumpEvalArtifact_FieldCompleteCase);
     RUN_TEST(TestPCS_DumpEvalArtifact_RingCompleteCase_ExtensionMode);
+    RUN_TEST(TestPCS_LoadArtifactCaseForVerify_FieldBenchmark);
+    RUN_TEST(TestPCS_LoadArtifactCaseForVerify_ExtensionMetadataTamperFails);
   } catch (const exception &e) {
     cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;

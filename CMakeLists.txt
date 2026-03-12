@@ -160,6 +160,9 @@ target_link_libraries(bench_pcs_verify PRIVATE basefold_core)
 add_executable(dump_pcs_eval_artifact bench/dump_pcs_eval_artifact.cpp)
 target_link_libraries(dump_pcs_eval_artifact PRIVATE basefold_core)
 
+add_executable(bench_pcs_verify_artifact bench/bench_pcs_verify_artifact.cpp)
+target_link_libraries(bench_pcs_verify_artifact PRIVATE basefold_core)
+
 add_executable(bench_z2k_ring_switch_commit bench/bench_z2k_ring_switch_commit.cpp)
 target_link_libraries(bench_z2k_ring_switch_commit PRIVATE z2k_compiler_core)
 
