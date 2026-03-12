@@ -308,7 +308,89 @@ Then:
 ```bash
 ./build-release/bench_pcs_commit --help
 ./build-release/bench_pcs_eval --help
+./build-release/dump_pcs_eval_artifact --help
+./build-release/bench_pcs_verify_artifact --help
 ./build-release/calc_iopp_params --help
+```
+
+### Verifier-Only Modes
+
+There are now two verifier-only benchmark surfaces:
+
+- `bench_pcs_verify`: self-contained verifier benchmark. It deterministically
+  generates the proof in-process, then measures repeated verify calls on that
+  proof.
+- `bench_pcs_verify_artifact`: artifact-driven verifier benchmark. It loads one
+  pre-dumped proof case from disk, deserializes outside the timed region, then
+  measures repeated verify calls on the loaded proof.
+
+Use `bench_pcs_verify` when you want a single binary that reconstructs the whole
+logical case in one run. Use `bench_pcs_verify_artifact` when you want verifier
+timing to exclude file IO and proof/public-input deserialization.
+
+### Artifact Workflow
+
+Artifact benchmarking is additive; it does not replace the existing
+`bench_pcs_*` binaries.
+
+`dump_pcs_eval_artifact` persists one BaseFold eval-proof case per invocation:
+
+```bash
+./build-release/dump_pcs_eval_artifact \
+  --artifact-root /tmp/basefold-artifacts \
+  --artifact-id field_d10_q2 \
+  --mode field --d 10 --queries 2 --seed 5
+```
+
+The artifact root layout is:
+
+```text
+/tmp/basefold-artifacts/
+  manifest.jsonl
+  objects/
+    <artifact_id>/
+      meta.json
+      public_inputs.bin
+      proof.bin
+```
+
+Important artifact semantics:
+
+- Exactly one case is dumped per invocation. `--mode both` is rejected.
+- Existing artifact ids are not overwritten.
+- `manifest.jsonl` is the primary index; object directories stay short.
+- `meta.json` stores verifier-critical metadata, including the actual
+  `zeta_coeffs` used for the case.
+- `public_inputs.bin` stores only verifier public inputs:
+  `commitment_root`, point `z`, and claimed value `y`.
+- Artifacts intentionally do not store full top-level commit artifacts or
+  `MerkleTree` internals.
+
+Then benchmark pure verify from that artifact:
+
+```bash
+./build-release/bench_pcs_verify_artifact \
+  --artifact-root /tmp/basefold-artifacts \
+  --artifact-id field_d10_q2 \
+  --warmup 0 --reps 3
+```
+
+Artifact-driven verifier timing semantics:
+
+- `artifact load wall time` and `artifact deserialize wall time` are printed as
+  diagnostics and are excluded from headline `verifier mean`.
+- `input proof size` is the exact fixed-width size of the loaded proof, using
+  the same serializer contract as `bench_pcs_eval`.
+- Only `--verifier-query-*` affects the timed verify loop.
+- `--merkle-*` flags are intentionally unsupported here because artifact verify
+  does not build Merkle trees inside the measured path.
+
+To compare against the self-contained verifier benchmark under the same logical
+case:
+
+```bash
+./build-release/bench_pcs_verify \
+  --mode field --d 10 --queries 2 --warmup 0 --reps 3 --seed 5
 ```
 
 ### One-Command Reproduction (`c=4`, `lambda=128`)
@@ -548,6 +630,10 @@ This repo exposes exact proof-size counting through the fixed-width proof serial
 For end users, the intended CLI surface is `bench_pcs_eval`: it generates a real
 proof, then prints the exact fixed-width payload `proof_size_bytes` /
 `proof_size_kb` for that proof in the same run.
+
+For verifier-only benchmarking, `bench_pcs_verify_artifact` reports the same
+exact fixed-width `input proof size` for the proof loaded from disk, while still
+excluding file IO and deserialization from headline verifier timing.
 
 ## License
 

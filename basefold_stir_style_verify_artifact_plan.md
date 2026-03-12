@@ -3,7 +3,7 @@
 ## Status
 
 - Owner: TBD
-- Status: Phase 5 complete
+- Status: Phase 6 complete
 - Last updated: 2026-03-12
 
 ## Current Progress
@@ -19,7 +19,7 @@
 - [x] Phase 3: `dump_pcs_eval_artifact`
 - [x] Phase 4: `bench_pcs_verify_artifact`
 - [x] Phase 5: tests
-- [ ] README artifact-flow documentation
+- [x] README artifact-flow documentation
 
 ## Goal
 
@@ -422,6 +422,18 @@ Document clearly:
 - artifact metadata stores actual `zeta_coeffs`
 - artifacts store only `commitment_root`, not full commit artifacts
 
+Update 2026-03-12:
+
+- `README.md` and `README_zh.md` now document both verifier-only modes:
+  self-contained `bench_pcs_verify` and artifact-driven
+  `bench_pcs_verify_artifact`.
+- The README benchmark section now includes the artifact dump/load workflow,
+  its on-disk layout, exact timing semantics, and the distinction between
+  `input proof size` reporting and headline verifier timing.
+- The docs also make explicit that artifact tools are single-case only,
+  store actual `zeta_coeffs` in metadata, and store only `commitment_root`
+  rather than full top-level commit artifacts.
+
 ## Risks
 
 - deserializer bugs can silently misparse proof layout if field-width assumptions are wrong
@@ -443,7 +455,7 @@ Document clearly:
 - [x] Phase 3: `dump_pcs_eval_artifact`
 - [x] Phase 4: `bench_pcs_verify_artifact`
 - [x] Phase 5: tests
-- [ ] Phase 6: README updates
+- [x] Phase 6: README updates
 
 ## Done Criteria
 

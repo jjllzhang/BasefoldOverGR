@@ -295,7 +295,86 @@ cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 ```bash
 ./build-release/bench_pcs_commit --help
 ./build-release/bench_pcs_eval --help
+./build-release/dump_pcs_eval_artifact --help
+./build-release/bench_pcs_verify_artifact --help
 ./build-release/calc_iopp_params --help
+```
+
+### 两种 verifier-only 模式
+
+现在有两条 verifier-only benchmark 路径：
+
+- `bench_pcs_verify`：自包含 verifier benchmark。命令本身会在进程内按
+  确定性逻辑生成 proof，然后对该 proof 重复做 verify 并计时。
+- `bench_pcs_verify_artifact`：artifact 驱动的 verifier benchmark。命令先从
+  磁盘加载一个已落盘的 proof case，在 timed region 外完成反序列化，再只对
+  已加载的 proof 重复做 verify 并计时。
+
+如果你想一次命令里复现完整 logical case，用 `bench_pcs_verify`；如果你想把
+文件 IO 和 proof/public-input 反序列化排除在 verifier mean 之外，用
+`bench_pcs_verify_artifact`。
+
+### Artifact 工作流
+
+artifact benchmarking 是增量能力，不会替代现有 `bench_pcs_*` 二进制。
+
+`dump_pcs_eval_artifact` 每次调用只落一个 BaseFold eval-proof case：
+
+```bash
+./build-release/dump_pcs_eval_artifact \
+  --artifact-root /tmp/basefold-artifacts \
+  --artifact-id field_d10_q2 \
+  --mode field --d 10 --queries 2 --seed 5
+```
+
+artifact root 的布局为：
+
+```text
+/tmp/basefold-artifacts/
+  manifest.jsonl
+  objects/
+    <artifact_id>/
+      meta.json
+      public_inputs.bin
+      proof.bin
+```
+
+artifact 语义要点：
+
+- 每次调用只处理一个 case，`--mode both` 会被拒绝。
+- 已存在的 `artifact_id` 默认不会被覆盖。
+- `manifest.jsonl` 是主索引面，object 目录名保持简短。
+- `meta.json` 保存 verifier 需要的关键元数据，包括该 case 实际使用的
+  `zeta_coeffs`。
+- `public_inputs.bin` 只保存 verifier public inputs：`commitment_root`、
+  点 `z`、claimed value `y`。
+- artifact 不会保存完整顶层 commit artifacts，也不会保存 `MerkleTree`
+  内部结构。
+
+然后用 artifact 路径只测 pure verify：
+
+```bash
+./build-release/bench_pcs_verify_artifact \
+  --artifact-root /tmp/basefold-artifacts \
+  --artifact-id field_d10_q2 \
+  --warmup 0 --reps 3
+```
+
+artifact-driven verifier timing 的语义是：
+
+- `artifact load wall time` 与 `artifact deserialize wall time` 会作为诊断信息打印，
+  但不计入 headline `verifier mean`。
+- `input proof size` 是从磁盘载入的 proof 的精确 fixed-width 大小，使用和
+  `bench_pcs_eval` 相同的 serializer contract。
+- 只有 `--verifier-query-*` 会影响 timed verify loop。
+- `--merkle-*` 在这里被明确禁止，因为 artifact verify 路径不会在计时段内
+  构建 Merkle tree。
+
+如需和自包含 verifier benchmark 对比同一 logical case，可运行：
+
+```bash
+./build-release/bench_pcs_verify \
+  --mode field --d 10 --queries 2 --warmup 0 --reps 3 --seed 5
 ```
 
 ### 一键复现实验（`c=4`, `lambda=128`）
@@ -528,6 +607,10 @@ cat "$csv"
 
 对终端用户而言，推荐直接看 `bench_pcs_eval`：它在生成真实 proof 后，会在同一次运行里输出
 `proof_size_bytes` / `proof_size_kb`。
+
+如果走 verifier-only artifact benchmark，则 `bench_pcs_verify_artifact`
+会对磁盘中载入的 proof 输出同样精确的 `input proof size`，同时仍把文件 IO 与
+反序列化排除在 headline verifier timing 之外。
 
 ## License
 
