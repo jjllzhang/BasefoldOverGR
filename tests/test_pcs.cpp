@@ -979,6 +979,164 @@ void TestPCS_ArtifactRestoreVerificationContext_GF4() {
   CHECK_EQ(restored.params.zeta, expected_zeta);
 }
 
+basefold_bench_pcs_common::ContextSpec MakeDefaultArtifactFieldContext() {
+  basefold_bench_pcs_common::ContextSpec field;
+  field.label = "Field";
+  field.scalar_modulus = to_ZZ(2);
+  field.base_prime = ZZ(0);
+  field.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};
+  field.zeta_coeffs = {to_ZZ(0), to_ZZ(1)};
+  return field;
+}
+
+basefold_bench_pcs_common::ContextSpec MakeDefaultArtifactRingContext() {
+  basefold_bench_pcs_common::ContextSpec ring;
+  ring.label = "Ring";
+  ring.scalar_modulus = to_ZZ(4);
+  ring.base_prime = to_ZZ(2);
+  ring.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};
+  ring.zeta_coeffs = {to_ZZ(0), to_ZZ(1)};
+  return ring;
+}
+
+basefold_bench_pcs_artifact::DumpArtifactRequest MakeArtifactRequest(
+    const fs::path &root, const string &artifact_id, const string &mode, long d,
+    long queries, std::uint64_t seed) {
+  basefold_bench_pcs_artifact::DumpArtifactRequest request;
+  request.artifact_root = root;
+  request.artifact_id = artifact_id;
+  request.mode = mode;
+  request.c = 2;
+  request.k0 = 1;
+  request.d = d;
+  request.queries = queries;
+  request.seed = seed;
+  return request;
+}
+
+struct DirectArtifactCase {
+  basefold_bench_pcs_artifact::ArtifactPublicInputs public_inputs;
+  basefold::BaseFoldPCSEvalProof proof;
+  basefold::Bytes proof_bytes;
+  std::uint64_t proof_size_bytes = 0;
+  long challenge_ext_degree = 0;
+};
+
+DirectArtifactCase BuildDirectArtifactCase(
+    const basefold_bench_pcs_common::ContextSpec &spec,
+    const basefold_bench_pcs_artifact::DumpArtifactRequest &request) {
+  using namespace basefold_bench_pcs_common;
+
+  ZZ_pPush mod_push(spec.scalar_modulus);
+  const ZZ_pX F = BuildZZpX(spec.F_coeffs);
+  ZZ_pEPush e_push(F);
+
+  ZZ_pE zeta;
+  if (request.auto_zeta_teich) {
+    ZZ p_base;
+    long k_base = 0;
+    DeduceBasePrimeAndExponent(spec, p_base, k_base);
+    zeta = FindTeichmullerGenerator(p_base, k_base, NTL::deg(F), F);
+  } else {
+    zeta = BuildZZpE(spec.zeta_coeffs);
+  }
+
+  const basefold::FoldableCodeParams params =
+      (request.k0 == 1)
+          ? BuildParams_k0_1(
+                request.c, request.d,
+                (spec.base_prime > 1) ? spec.base_prime : spec.scalar_modulus,
+                zeta)
+          : BuildParams_k0_pow2(
+                request.c, request.k0, request.d,
+                (spec.base_prime > 1) ? spec.base_prime : spec.scalar_modulus,
+                zeta);
+
+  const long poly_dim =
+      basefold_bench_pcs_artifact::ComputePolyDimOrThrow(request.k0, request.d);
+  const vec_ZZ_pE f_coeffs = MakeDeterministicCoefficients(poly_dim, request.seed);
+  const long point_dim = request.d + Log2ExactPowerOfTwoLong(request.k0);
+  const std::vector<ZZ_pE> z =
+      MakeDeterministicPoint(point_dim, request.seed ^ 0xdeadbeefULL);
+  const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
+
+  basefold::BaseFoldPCSChallengeConfig challenge_cfg;
+  const basefold::BaseFoldPCSChallengeConfig *challenge_cfg_ptr = nullptr;
+  long challenge_ext_degree = 0;
+  if (request.use_extension_challenges) {
+    ZZ_pEX challenge_modulus;
+    if (spec.challenge_ext_coeffs.empty()) {
+      NTL::clear(challenge_modulus);
+      NTL::SetCoeff(challenge_modulus, 0, zeta);
+      NTL::SetCoeff(challenge_modulus, 1, ZZ_pE(1));
+      NTL::SetCoeff(challenge_modulus, 2, ZZ_pE(1));
+    } else {
+      challenge_modulus = BuildZZpEX(spec.challenge_ext_coeffs);
+    }
+    challenge_cfg.use_extension_challenges = true;
+    challenge_cfg.challenge_extension_modulus = challenge_modulus;
+    challenge_cfg_ptr = &challenge_cfg;
+    challenge_ext_degree = NTL::deg(challenge_modulus);
+  }
+
+  const basefold::BaseFoldPCSCommitArtifacts commit_artifacts =
+      basefold::BaseFoldPCSBuildCommitArtifactsUnchecked(f_coeffs, params);
+  const basefold::BaseFoldPCSEvalProof proof =
+      (challenge_cfg_ptr != nullptr)
+          ? (request.use_checked_prover_path
+                 ? basefold::BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle(
+                       f_coeffs, z, y, request.queries, params,
+                       commit_artifacts, *challenge_cfg_ptr)
+                 : basefold::BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked(
+                       f_coeffs, z, y, request.queries, params,
+                       commit_artifacts, *challenge_cfg_ptr))
+          : (request.use_checked_prover_path
+                 ? basefold::BaseFoldPCSProveEvalFromCommittedTopOracle(
+                       f_coeffs, z, y, request.queries, params, commit_artifacts)
+                 : basefold::BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked(
+                       f_coeffs, z, y, request.queries, params,
+                       commit_artifacts));
+
+  basefold::FixedProofEncodingOptions options;
+  options.include_version_byte = true;
+  if (request.use_extension_challenges || proof.extension.has_extension_payload) {
+    options.challenge_ext_degree = challenge_ext_degree;
+  }
+
+  DirectArtifactCase out;
+  out.public_inputs.commitment_root = commit_artifacts.root_d;
+  out.public_inputs.z = z;
+  out.public_inputs.claimed_y = y;
+  out.proof = proof;
+  out.proof_bytes =
+      basefold::SerializeBaseFoldPCSEvalProofFixedBytes(proof, options);
+  out.proof_size_bytes = basefold_bench_pcs_common::ComputeProofSizeBytes(
+      proof, request.use_extension_challenges, challenge_ext_degree);
+  out.challenge_ext_degree = challenge_ext_degree;
+  CHECK_EQ(out.proof_bytes.size(), out.proof_size_bytes);
+  return out;
+}
+
+basefold::FixedProofEncodingOptions MakeProofEncodingOptions(
+    const basefold_bench_pcs_artifact::LoadedArtifactCase &loaded) {
+  basefold::FixedProofEncodingOptions options;
+  options.include_version_byte = true;
+  if (loaded.metadata.use_extension_challenges) {
+    options.challenge_ext_degree = loaded.challenge_ext_degree;
+  }
+  return options;
+}
+
+void RewriteProofFile(
+    const fs::path &path,
+    const basefold_bench_pcs_artifact::LoadedArtifactCase &loaded,
+    const basefold::BaseFoldPCSEvalProof &proof) {
+  const basefold::Bytes proof_bytes =
+      basefold::SerializeBaseFoldPCSEvalProofFixedBytes(
+          proof, MakeProofEncodingOptions(loaded));
+  basefold_bench_pcs_artifact::WriteBytesToFile(path, proof_bytes);
+}
+
 void CheckDumpedArtifactVerifies(
     const basefold_bench_pcs_artifact::DumpArtifactResult &result) {
   const auto meta =
@@ -1023,21 +1181,8 @@ void TestPCS_DumpEvalArtifact_FieldCompleteCase() {
       fs::temp_directory_path() / "basefold_phase3_dump_field_test";
   fs::remove_all(root);
 
-  basefold_bench_pcs_common::ContextSpec field;
-  field.label = "Field";
-  field.scalar_modulus = to_ZZ(2);
-  field.base_prime = ZZ(0);
-  field.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};
-  field.zeta_coeffs = {to_ZZ(0), to_ZZ(1)};
-
-  basefold_bench_pcs_artifact::DumpArtifactRequest request;
-  request.artifact_root = root;
-  request.mode = "field";
-  request.c = 2;
-  request.k0 = 1;
-  request.d = 3;
-  request.queries = 2;
-  request.seed = 11;
+  const auto field = MakeDefaultArtifactFieldContext();
+  auto request = MakeArtifactRequest(root, "", "field", 3, 2, 11);
   request.lambda = "128";
   request.gamma = "auto";
 
@@ -1067,21 +1212,8 @@ void TestPCS_DumpEvalArtifact_RingCompleteCase_ExtensionMode() {
       fs::temp_directory_path() / "basefold_phase3_dump_ring_test";
   fs::remove_all(root);
 
-  basefold_bench_pcs_common::ContextSpec ring;
-  ring.label = "Ring";
-  ring.scalar_modulus = to_ZZ(4);
-  ring.base_prime = to_ZZ(2);
-  ring.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};
-  ring.zeta_coeffs = {to_ZZ(0), to_ZZ(1)};
-
-  basefold_bench_pcs_artifact::DumpArtifactRequest request;
-  request.artifact_root = root;
-  request.mode = "ring";
-  request.c = 2;
-  request.k0 = 1;
-  request.d = 2;
-  request.queries = 2;
-  request.seed = 19;
+  const auto ring = MakeDefaultArtifactRingContext();
+  auto request = MakeArtifactRequest(root, "", "ring", 2, 2, 19);
   request.use_extension_challenges = true;
   request.use_checked_prover_path = true;
   request.lambda = "128";
@@ -1108,22 +1240,8 @@ void TestPCS_LoadArtifactCaseForVerify_FieldBenchmark() {
       fs::temp_directory_path() / "basefold_phase4_verify_field_test";
   fs::remove_all(root);
 
-  basefold_bench_pcs_common::ContextSpec field;
-  field.label = "Field";
-  field.scalar_modulus = to_ZZ(2);
-  field.base_prime = ZZ(0);
-  field.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};
-  field.zeta_coeffs = {to_ZZ(0), to_ZZ(1)};
-
-  basefold_bench_pcs_artifact::DumpArtifactRequest request;
-  request.artifact_root = root;
-  request.mode = "field";
-  request.artifact_id = "phase4_field_case";
-  request.c = 2;
-  request.k0 = 1;
-  request.d = 3;
-  request.queries = 2;
-  request.seed = 23;
+  const auto field = MakeDefaultArtifactFieldContext();
+  auto request = MakeArtifactRequest(root, "phase4_field_case", "field", 3, 2, 23);
 
   const auto dumped =
       basefold_bench_pcs_artifact::DumpEvalArtifact(field, request);
@@ -1150,22 +1268,9 @@ void TestPCS_LoadArtifactCaseForVerify_ExtensionMetadataTamperFails() {
       fs::temp_directory_path() / "basefold_phase4_verify_ring_test";
   fs::remove_all(root);
 
-  basefold_bench_pcs_common::ContextSpec ring;
-  ring.label = "Ring";
-  ring.scalar_modulus = to_ZZ(4);
-  ring.base_prime = to_ZZ(2);
-  ring.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};
-  ring.zeta_coeffs = {to_ZZ(0), to_ZZ(1)};
-
-  basefold_bench_pcs_artifact::DumpArtifactRequest request;
-  request.artifact_root = root;
-  request.mode = "ring";
-  request.artifact_id = "phase4_ring_ext_case";
-  request.c = 2;
-  request.k0 = 1;
-  request.d = 2;
-  request.queries = 2;
-  request.seed = 29;
+  const auto ring = MakeDefaultArtifactRingContext();
+  auto request =
+      MakeArtifactRequest(root, "phase4_ring_ext_case", "ring", 2, 2, 29);
   request.use_extension_challenges = true;
 
   const auto dumped =
@@ -1181,6 +1286,145 @@ void TestPCS_LoadArtifactCaseForVerify_ExtensionMetadataTamperFails() {
                     tampered.restored.challenge_cfg.challenge_extension_modulus, 0) +
                     testutil::ConstZZpE(1));
   CHECK(!basefold_bench_pcs_artifact::VerifyLoadedArtifactCase(tampered));
+
+  fs::remove_all(root);
+}
+
+void TestPCS_ArtifactCompareDirectAndArtifactProof_Field() {
+  testutil::PrintInfo("PCS artifact: direct verify input matches artifact verify input for the same field case");
+
+  const fs::path root =
+      fs::temp_directory_path() / "basefold_phase5_compare_field_test";
+  fs::remove_all(root);
+
+  const auto field = MakeDefaultArtifactFieldContext();
+  const auto request =
+      MakeArtifactRequest(root, "phase5_compare_field_case", "field", 3, 2, 31);
+
+  const auto dumped =
+      basefold_bench_pcs_artifact::DumpEvalArtifact(field, request);
+  const auto loaded = basefold_bench_pcs_artifact::LoadArtifactCaseForVerify(
+      root, dumped.metadata.artifact_id);
+  const auto direct = BuildDirectArtifactCase(field, request);
+
+  CHECK_EQ(loaded.public_inputs.commitment_root, direct.public_inputs.commitment_root);
+  CHECK_EQ(loaded.public_inputs.z.size(), direct.public_inputs.z.size());
+  for (std::size_t i = 0; i < loaded.public_inputs.z.size(); ++i) {
+    CHECK_EQ(loaded.public_inputs.z[i], direct.public_inputs.z[i]);
+  }
+  CHECK_EQ(loaded.public_inputs.claimed_y, direct.public_inputs.claimed_y);
+  CHECK_EQ(loaded.metadata.proof_size_bytes, direct.proof_size_bytes);
+  CHECK_EQ(basefold_bench_pcs_artifact::ReadBytesFromFile(dumped.proof_path),
+           direct.proof_bytes);
+
+  fs::remove_all(root);
+}
+
+void TestPCS_ArtifactVerifyFailsWhenProofFileTampered() {
+  testutil::PrintInfo("PCS artifact: verifier fails when proof.bin is tampered");
+
+  const fs::path root =
+      fs::temp_directory_path() / "basefold_phase5_tamper_proof_test";
+  fs::remove_all(root);
+
+  const auto field = MakeDefaultArtifactFieldContext();
+  const auto request =
+      MakeArtifactRequest(root, "phase5_tamper_proof_case", "field", 3, 2, 37);
+
+  const auto dumped =
+      basefold_bench_pcs_artifact::DumpEvalArtifact(field, request);
+  const auto loaded = basefold_bench_pcs_artifact::LoadArtifactCaseForVerify(
+      root, dumped.metadata.artifact_id);
+  CHECK(basefold_bench_pcs_artifact::VerifyLoadedArtifactCase(loaded));
+
+  auto proof_tampered = loaded.proof;
+  CHECK(!proof_tampered.query_multiproofs.empty());
+  CHECK(proof_tampered.query_multiproofs[0].values.length() > 0);
+  proof_tampered.query_multiproofs[0].values[0] += testutil::ConstZZpE(1);
+  RewriteProofFile(dumped.proof_path, loaded, proof_tampered);
+
+  const auto reloaded = basefold_bench_pcs_artifact::LoadArtifactCaseForVerify(
+      root, dumped.metadata.artifact_id);
+  CHECK(!basefold_bench_pcs_artifact::VerifyLoadedArtifactCase(reloaded));
+
+  fs::remove_all(root);
+}
+
+void TestPCS_ArtifactVerifyFailsWhenCommitmentRootTampered() {
+  testutil::PrintInfo("PCS artifact: verifier fails when commitment_root in public_inputs.bin is tampered");
+
+  const fs::path root =
+      fs::temp_directory_path() / "basefold_phase5_tamper_root_test";
+  fs::remove_all(root);
+
+  const auto field = MakeDefaultArtifactFieldContext();
+  const auto request =
+      MakeArtifactRequest(root, "phase5_tamper_root_case", "field", 3, 2, 41);
+
+  const auto dumped =
+      basefold_bench_pcs_artifact::DumpEvalArtifact(field, request);
+  auto inputs =
+      basefold_bench_pcs_artifact::ReadPublicInputsBinary(dumped.public_inputs_path);
+  inputs.commitment_root[0] ^= static_cast<basefold::Byte>(0x01);
+  basefold_bench_pcs_artifact::WritePublicInputsBinary(dumped.public_inputs_path,
+                                                       inputs);
+
+  const auto reloaded = basefold_bench_pcs_artifact::LoadArtifactCaseForVerify(
+      root, dumped.metadata.artifact_id);
+  CHECK(!basefold_bench_pcs_artifact::VerifyLoadedArtifactCase(reloaded));
+
+  fs::remove_all(root);
+}
+
+void TestPCS_ArtifactVerifyFailsWhenPointZTampered() {
+  testutil::PrintInfo("PCS artifact: verifier fails when point z in public_inputs.bin is tampered");
+
+  const fs::path root =
+      fs::temp_directory_path() / "basefold_phase5_tamper_z_test";
+  fs::remove_all(root);
+
+  const auto field = MakeDefaultArtifactFieldContext();
+  const auto request =
+      MakeArtifactRequest(root, "phase5_tamper_z_case", "field", 3, 2, 43);
+
+  const auto dumped =
+      basefold_bench_pcs_artifact::DumpEvalArtifact(field, request);
+  auto inputs =
+      basefold_bench_pcs_artifact::ReadPublicInputsBinary(dumped.public_inputs_path);
+  CHECK(!inputs.z.empty());
+  inputs.z[0] += testutil::ConstZZpE(1);
+  basefold_bench_pcs_artifact::WritePublicInputsBinary(dumped.public_inputs_path,
+                                                       inputs);
+
+  const auto reloaded = basefold_bench_pcs_artifact::LoadArtifactCaseForVerify(
+      root, dumped.metadata.artifact_id);
+  CHECK(!basefold_bench_pcs_artifact::VerifyLoadedArtifactCase(reloaded));
+
+  fs::remove_all(root);
+}
+
+void TestPCS_ArtifactVerifyFailsWhenClaimedYTampered() {
+  testutil::PrintInfo("PCS artifact: verifier fails when claimed y in public_inputs.bin is tampered");
+
+  const fs::path root =
+      fs::temp_directory_path() / "basefold_phase5_tamper_y_test";
+  fs::remove_all(root);
+
+  const auto field = MakeDefaultArtifactFieldContext();
+  const auto request =
+      MakeArtifactRequest(root, "phase5_tamper_y_case", "field", 3, 2, 47);
+
+  const auto dumped =
+      basefold_bench_pcs_artifact::DumpEvalArtifact(field, request);
+  auto inputs =
+      basefold_bench_pcs_artifact::ReadPublicInputsBinary(dumped.public_inputs_path);
+  inputs.claimed_y += testutil::ConstZZpE(1);
+  basefold_bench_pcs_artifact::WritePublicInputsBinary(dumped.public_inputs_path,
+                                                       inputs);
+
+  const auto reloaded = basefold_bench_pcs_artifact::LoadArtifactCaseForVerify(
+      root, dumped.metadata.artifact_id);
+  CHECK(!basefold_bench_pcs_artifact::VerifyLoadedArtifactCase(reloaded));
 
   fs::remove_all(root);
 }
@@ -1208,6 +1452,11 @@ int main() {
     RUN_TEST(TestPCS_DumpEvalArtifact_RingCompleteCase_ExtensionMode);
     RUN_TEST(TestPCS_LoadArtifactCaseForVerify_FieldBenchmark);
     RUN_TEST(TestPCS_LoadArtifactCaseForVerify_ExtensionMetadataTamperFails);
+    RUN_TEST(TestPCS_ArtifactCompareDirectAndArtifactProof_Field);
+    RUN_TEST(TestPCS_ArtifactVerifyFailsWhenProofFileTampered);
+    RUN_TEST(TestPCS_ArtifactVerifyFailsWhenCommitmentRootTampered);
+    RUN_TEST(TestPCS_ArtifactVerifyFailsWhenPointZTampered);
+    RUN_TEST(TestPCS_ArtifactVerifyFailsWhenClaimedYTampered);
   } catch (const exception &e) {
     cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;

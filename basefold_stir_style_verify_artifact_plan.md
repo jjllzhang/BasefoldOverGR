@@ -3,7 +3,7 @@
 ## Status
 
 - Owner: TBD
-- Status: Phase 4 complete
+- Status: Phase 5 complete
 - Last updated: 2026-03-12
 
 ## Current Progress
@@ -18,6 +18,7 @@
   - metadata-driven verification-context restore helper
 - [x] Phase 3: `dump_pcs_eval_artifact`
 - [x] Phase 4: `bench_pcs_verify_artifact`
+- [x] Phase 5: tests
 - [ ] README artifact-flow documentation
 
 ## Goal
@@ -385,6 +386,12 @@ Update 2026-03-12:
 - tamper claimed value `y` and verify fails
 - tamper challenge extension modulus metadata and verify fails in extension mode
 
+Update 2026-03-12:
+
+- Phase 5 regression coverage now lives in `tests/test_pcs.cpp`.
+- The direct-vs-artifact comparison test uses one shared logical field case and asserts stable equivalence of verifier inputs and proof bytes, rather than timing closeness.
+- Negative coverage now exercises on-disk tampering of `proof.bin`, `commitment_root`, point `z`, and claimed `y`, plus extension-metadata tampering after load.
+
 ## Benchmark Validation
 
 Run at least:
@@ -431,11 +438,11 @@ Document clearly:
 
 ## Implementation Order
 
-- [ ] Phase 1: BaseFold proof deserialization
-- [ ] Phase 2: artifact schema and shared helpers
-- [ ] Phase 3: `dump_pcs_eval_artifact`
-- [ ] Phase 4: `bench_pcs_verify_artifact`
-- [ ] Phase 5: tests
+- [x] Phase 1: BaseFold proof deserialization
+- [x] Phase 2: artifact schema and shared helpers
+- [x] Phase 3: `dump_pcs_eval_artifact`
+- [x] Phase 4: `bench_pcs_verify_artifact`
+- [x] Phase 5: tests
 - [ ] Phase 6: README updates
 
 ## Done Criteria
