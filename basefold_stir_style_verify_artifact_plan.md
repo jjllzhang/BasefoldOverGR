@@ -3,8 +3,8 @@
 ## Status
 
 - Owner: TBD
-- Status: Phase 2 in progress
-- Last updated: 2026-03-11
+- Status: Phase 3 complete
+- Last updated: 2026-03-12
 
 ## Current Progress
 
@@ -16,7 +16,7 @@
   - `meta.json` read/write helpers
   - combined `public_inputs.bin` binary round-trip helpers
   - metadata-driven verification-context restore helper
-- [ ] Phase 3: `dump_pcs_eval_artifact`
+- [x] Phase 3: `dump_pcs_eval_artifact`
 - [ ] Phase 4: `bench_pcs_verify_artifact`
 - [ ] README artifact-flow documentation
 
@@ -326,6 +326,13 @@ Acceptance criteria:
 - dumping one field case produces a complete case directory
 - dumping one ring case produces a complete case directory
 - `proof_size_bytes` in `meta.json` matches serializer output
+
+Update 2026-03-12:
+
+- `dump_pcs_eval_artifact` is now implemented in `bench/dump_pcs_eval_artifact.cpp`.
+- The tool remains single-case only and rejects `--mode both`.
+- Phase 3 currently rejects overwriting existing `artifact_id` directories; no `--overwrite` flag has been added.
+- Targeted integration coverage now dumps one field case and one ring+extension case, then reloads `meta.json`, `public_inputs.bin`, and `proof.bin` to verify the stored proof.
 
 ### Phase 4: artifact-based verifier benchmark
 

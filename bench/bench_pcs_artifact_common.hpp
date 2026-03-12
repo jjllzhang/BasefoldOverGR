@@ -24,7 +24,7 @@
 #include "PCS/BaseFold/ProofSerialize.hpp"
 #include "PCS/Common/Hash.hpp"
 #include "PCS/Common/Merkle.hpp"
-#include "bench/bench_pcs_common.hpp"
+#include "bench_pcs_common.hpp"
 
 namespace basefold_bench_pcs_artifact {
 
@@ -264,6 +264,23 @@ inline std::string ManifestObjectRelPath(const std::string &artifact_id) {
   return std::string("objects/") + artifact_id;
 }
 
+inline void ValidateArtifactIdOrThrow(const std::string &artifact_id) {
+  if (artifact_id.empty()) {
+    throw std::runtime_error("ValidateArtifactIdOrThrow: artifact_id is empty");
+  }
+  if (artifact_id == "." || artifact_id == "..") {
+    throw std::runtime_error(
+        "ValidateArtifactIdOrThrow: artifact_id must not be . or ..");
+  }
+  for (unsigned char ch : artifact_id) {
+    if (std::isalnum(ch) || ch == '_' || ch == '-' || ch == '.') {
+      continue;
+    }
+    throw std::runtime_error(
+        "ValidateArtifactIdOrThrow: artifact_id contains unsafe characters");
+  }
+}
+
 inline fs::path ArtifactObjectDir(const fs::path &root,
                                   const std::string &artifact_id) {
   return root / "objects" / artifact_id;
@@ -395,6 +412,39 @@ inline void WriteStringToFile(const fs::path &path, const std::string &text) {
     throw std::runtime_error("WriteStringToFile: failed to write " +
                              path.string());
   }
+}
+
+inline void WriteBytesToFile(const fs::path &path, const basefold::Bytes &bytes) {
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  if (!out) {
+    throw std::runtime_error("WriteBytesToFile: failed to open " +
+                             path.string());
+  }
+  if (!bytes.empty()) {
+    out.write(reinterpret_cast<const char *>(bytes.data()),
+              static_cast<std::streamsize>(bytes.size()));
+  }
+  if (!out) {
+    throw std::runtime_error("WriteBytesToFile: failed to write " +
+                             path.string());
+  }
+}
+
+inline basefold::Bytes ReadBytesFromFile(const fs::path &path) {
+  std::ifstream in(path, std::ios::binary);
+  if (!in) {
+    throw std::runtime_error("ReadBytesFromFile: failed to open " +
+                             path.string());
+  }
+  std::vector<char> raw((std::istreambuf_iterator<char>(in)),
+                        std::istreambuf_iterator<char>());
+  basefold::Bytes bytes;
+  bytes.reserve(raw.size());
+  for (char ch : raw) {
+    bytes.push_back(
+        static_cast<basefold::Byte>(static_cast<unsigned char>(ch)));
+  }
+  return bytes;
 }
 
 inline std::string TrimAscii(const std::string &s) {
@@ -916,20 +966,301 @@ inline void WritePublicInputsBinary(const fs::path &path,
 }
 
 inline ArtifactPublicInputs ReadPublicInputsBinary(const fs::path &path) {
-  std::ifstream in(path, std::ios::binary);
-  if (!in) {
-    throw std::runtime_error("ReadPublicInputsBinary: failed to open " +
-                             path.string());
+  return DeserializePublicInputs(ReadBytesFromFile(path));
+}
+
+inline std::vector<ZZ> FieldElementToCoeffVector(const basefold::FieldElement &x) {
+  std::vector<ZZ> coeffs;
+  const ZZ_pX poly = NTL::rep(x);
+  const long degree = NTL::deg(poly);
+  if (degree < 0) {
+    coeffs.push_back(ZZ(0));
+    return coeffs;
   }
-  std::vector<char> raw((std::istreambuf_iterator<char>(in)),
-                        std::istreambuf_iterator<char>());
-  basefold::Bytes bytes;
-  bytes.reserve(raw.size());
-  for (char ch : raw) {
-    bytes.push_back(static_cast<basefold::Byte>(
-        static_cast<unsigned char>(ch)));
+  coeffs.reserve(static_cast<std::size_t>(degree + 1));
+  for (long i = 0; i <= degree; ++i) {
+    coeffs.push_back(NTL::rep(NTL::coeff(poly, i)));
   }
-  return DeserializePublicInputs(bytes);
+  return coeffs;
+}
+
+inline std::vector<std::vector<ZZ>> ExtensionPolyToCoeffVectors(
+    const ZZ_pEX &poly) {
+  std::vector<std::vector<ZZ>> coeffs;
+  const long degree = NTL::deg(poly);
+  if (degree < 0) {
+    return coeffs;
+  }
+  coeffs.reserve(static_cast<std::size_t>(degree + 1));
+  for (long i = 0; i <= degree; ++i) {
+    coeffs.push_back(FieldElementToCoeffVector(NTL::coeff(poly, i)));
+  }
+  return coeffs;
+}
+
+inline std::string CoeffVectorToken(const std::vector<ZZ> &coeffs) {
+  std::ostringstream out;
+  for (std::size_t i = 0; i < coeffs.size(); ++i) {
+    if (i != 0) {
+      out << '_';
+    }
+    out << coeffs[i];
+  }
+  return out.str();
+}
+
+inline std::string NestedCoeffVectorToken(
+    const std::vector<std::vector<ZZ>> &coeffs) {
+  std::ostringstream out;
+  for (std::size_t i = 0; i < coeffs.size(); ++i) {
+    if (i != 0) {
+      out << "__";
+    }
+    out << CoeffVectorToken(coeffs[i]);
+  }
+  return out.str();
+}
+
+inline std::string BuildDefaultContextId(
+    const std::string &mode, const basefold_bench_pcs_common::ContextSpec &spec,
+    const std::vector<ZZ> &actual_zeta_coeffs, const std::string &zeta_source,
+    const std::vector<std::vector<ZZ>> &actual_challenge_ext_coeffs) {
+  std::ostringstream out;
+  out << NormalizeModeLabel(mode) << "-mod" << spec.scalar_modulus;
+  if (spec.base_prime > 1) {
+    out << "-p" << spec.base_prime;
+  }
+  out << "-F" << CoeffVectorToken(spec.F_coeffs) << "-zeta"
+      << CoeffVectorToken(actual_zeta_coeffs) << "-zsrc-" << zeta_source;
+  if (!actual_challenge_ext_coeffs.empty()) {
+    out << "-E" << NestedCoeffVectorToken(actual_challenge_ext_coeffs);
+  }
+  return out.str();
+}
+
+struct DumpArtifactRequest {
+  fs::path artifact_root;
+  std::string artifact_id;
+  std::string context_id;
+  std::string context_label;
+  std::string mode;
+  std::string lambda = "unspecified";
+  std::string gamma = "unspecified";
+  long c = 2;
+  long k0 = 1;
+  long d = 16;
+  long queries = 4;
+  std::uint64_t seed = 0;
+  bool use_checked_prover_path = false;
+  bool use_extension_challenges = false;
+  bool auto_zeta_teich = false;
+};
+
+struct DumpArtifactResult {
+  ArtifactMetadata metadata;
+  fs::path manifest_path;
+  fs::path object_dir;
+  fs::path metadata_path;
+  fs::path public_inputs_path;
+  fs::path proof_path;
+};
+
+inline DumpArtifactResult DumpEvalArtifact(
+    const basefold_bench_pcs_common::ContextSpec &spec,
+    const DumpArtifactRequest &request) {
+  using namespace basefold_bench_pcs_common;
+
+  if (request.artifact_root.empty()) {
+    throw std::runtime_error("DumpEvalArtifact: artifact_root is required");
+  }
+  if (request.c <= 0) {
+    throw std::runtime_error("DumpEvalArtifact: c must be positive");
+  }
+  if (request.k0 <= 0 || !IsPowerOfTwoLong(request.k0)) {
+    throw std::runtime_error(
+        "DumpEvalArtifact: k0 must be a positive power of two");
+  }
+  if (request.d < 0) {
+    throw std::runtime_error("DumpEvalArtifact: d must be non-negative");
+  }
+  if (request.queries < 0) {
+    throw std::runtime_error("DumpEvalArtifact: queries must be non-negative");
+  }
+  if (spec.scalar_modulus <= 1) {
+    throw std::runtime_error("DumpEvalArtifact: scalar_modulus must be > 1");
+  }
+
+  const std::string mode = NormalizeModeLabel(request.mode);
+  ZZ_pPush mod_push(spec.scalar_modulus);
+
+  ValidateMonic(spec.F_coeffs, spec.scalar_modulus, "F");
+  const ZZ_pX F = BuildZZpX(spec.F_coeffs);
+  ZZ_pEPush e_push(F);
+
+  ZZ_pE zeta;
+  std::string zeta_source = "explicit";
+  if (request.auto_zeta_teich) {
+    ZZ p_base;
+    long k_base = 0;
+    DeduceBasePrimeAndExponent(spec, p_base, k_base);
+    zeta = FindTeichmullerGenerator(p_base, k_base, NTL::deg(F), F);
+    zeta_source = "auto_teich";
+  } else {
+    zeta = BuildZZpE(spec.zeta_coeffs);
+  }
+  const std::vector<ZZ> actual_zeta_coeffs = FieldElementToCoeffVector(zeta);
+
+  const basefold::FoldableCodeParams params =
+      (request.k0 == 1)
+          ? BuildParams_k0_1(
+                request.c, request.d,
+                (spec.base_prime > 1) ? spec.base_prime : spec.scalar_modulus,
+                zeta)
+          : BuildParams_k0_pow2(
+                request.c, request.k0, request.d,
+                (spec.base_prime > 1) ? spec.base_prime : spec.scalar_modulus,
+                zeta);
+
+  const long poly_dim = ComputePolyDimOrThrow(request.k0, request.d);
+  const vec_ZZ_pE f_coeffs = MakeDeterministicCoefficients(poly_dim, request.seed);
+  const long point_dim = request.d + Log2ExactPowerOfTwoLong(request.k0);
+  const std::vector<ZZ_pE> z =
+      MakeDeterministicPoint(point_dim, request.seed ^ 0xdeadbeefULL);
+  const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
+
+  basefold::BaseFoldPCSChallengeConfig challenge_cfg;
+  ZZ_pEX challenge_modulus;
+  long challenge_ext_degree = 0;
+  const basefold::BaseFoldPCSChallengeConfig *challenge_cfg_ptr = nullptr;
+  std::vector<std::vector<ZZ>> actual_challenge_ext_coeffs;
+  if (request.use_extension_challenges) {
+    if (spec.challenge_ext_coeffs.empty()) {
+      NTL::clear(challenge_modulus);
+      NTL::SetCoeff(challenge_modulus, 0, zeta);
+      NTL::SetCoeff(challenge_modulus, 1, ZZ_pE(1));
+      NTL::SetCoeff(challenge_modulus, 2, ZZ_pE(1));
+    } else {
+      challenge_modulus = BuildZZpEX(spec.challenge_ext_coeffs);
+    }
+    challenge_cfg.use_extension_challenges = true;
+    challenge_cfg.challenge_extension_modulus = challenge_modulus;
+    challenge_cfg_ptr = &challenge_cfg;
+    challenge_ext_degree = NTL::deg(challenge_modulus);
+    actual_challenge_ext_coeffs = ExtensionPolyToCoeffVectors(challenge_modulus);
+  }
+
+  const basefold::BaseFoldPCSCommitArtifacts commit_artifacts =
+      basefold::BaseFoldPCSBuildCommitArtifactsUnchecked(f_coeffs, params);
+  const basefold::BaseFoldPCSEvalProof proof =
+      (challenge_cfg_ptr != nullptr)
+          ? (request.use_checked_prover_path
+                 ? basefold::BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle(
+                       f_coeffs, z, y, request.queries, params,
+                       commit_artifacts, *challenge_cfg_ptr)
+                 : basefold::BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked(
+                       f_coeffs, z, y, request.queries, params,
+                       commit_artifacts, *challenge_cfg_ptr))
+          : (request.use_checked_prover_path
+                 ? basefold::BaseFoldPCSProveEvalFromCommittedTopOracle(
+                       f_coeffs, z, y, request.queries, params,
+                       commit_artifacts)
+                 : basefold::BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked(
+                       f_coeffs, z, y, request.queries, params,
+                       commit_artifacts));
+
+  ArtifactPublicInputs public_inputs;
+  public_inputs.commitment_root = commit_artifacts.root_d;
+  public_inputs.z = z;
+  public_inputs.claimed_y = y;
+
+  basefold::FixedProofEncodingOptions encoding_options;
+  encoding_options.include_version_byte = true;
+  if (request.use_extension_challenges || proof.extension.has_extension_payload) {
+    encoding_options.challenge_ext_degree = challenge_ext_degree;
+  }
+  const basefold::Bytes proof_bytes =
+      basefold::SerializeBaseFoldPCSEvalProofFixedBytes(proof, encoding_options);
+  const std::uint64_t expected_proof_size_bytes = ComputeProofSizeBytes(
+      proof, request.use_extension_challenges, challenge_ext_degree);
+  if (proof_bytes.size() != expected_proof_size_bytes) {
+    throw std::runtime_error(
+        "DumpEvalArtifact: serializer byte size does not match proof size accounting");
+  }
+
+  ArtifactMetadata metadata;
+  metadata.context_label =
+      request.context_label.empty() ? spec.label : request.context_label;
+  metadata.context_id =
+      request.context_id.empty()
+          ? BuildDefaultContextId(mode, spec, actual_zeta_coeffs, zeta_source,
+                                  actual_challenge_ext_coeffs)
+          : request.context_id;
+  metadata.mode = mode;
+  metadata.c = request.c;
+  metadata.k0 = request.k0;
+  metadata.d = request.d;
+  metadata.poly_dim = poly_dim;
+  metadata.lambda = request.lambda;
+  metadata.gamma = request.gamma;
+  metadata.queries = request.queries;
+  metadata.seed = request.seed;
+  metadata.use_checked_prover_path = request.use_checked_prover_path;
+  metadata.use_extension_challenges = request.use_extension_challenges;
+  metadata.scalar_modulus = spec.scalar_modulus;
+  metadata.base_prime = spec.base_prime;
+  metadata.F_coeffs = spec.F_coeffs;
+  metadata.zeta_coeffs = actual_zeta_coeffs;
+  metadata.zeta_source = zeta_source;
+  metadata.challenge_extension_coeffs = actual_challenge_ext_coeffs;
+  metadata.hash_backend = basefold::SelectedHashBackendName();
+  metadata.proof_encoding = "basefold_fixed_v1";
+  metadata.proof_size_bytes = expected_proof_size_bytes;
+  metadata.artifact_id = request.artifact_id.empty()
+                             ? ComputeCanonicalArtifactId(metadata)
+                             : request.artifact_id;
+  ValidateArtifactIdOrThrow(metadata.artifact_id);
+  metadata.display_key = BuildArtifactDisplayKey(metadata);
+
+  const fs::path manifest_path = ArtifactManifestPath(request.artifact_root);
+  const fs::path object_dir =
+      ArtifactObjectDir(request.artifact_root, metadata.artifact_id);
+  const fs::path metadata_path =
+      ArtifactMetadataPath(request.artifact_root, metadata.artifact_id);
+  const fs::path public_inputs_path =
+      ArtifactPublicInputsPath(request.artifact_root, metadata.artifact_id);
+  const fs::path proof_path =
+      ArtifactProofPath(request.artifact_root, metadata.artifact_id);
+
+  if (fs::exists(object_dir)) {
+    throw std::runtime_error("DumpEvalArtifact: artifact already exists at " +
+                             object_dir.string());
+  }
+  if (fs::exists(manifest_path)) {
+    const std::vector<ArtifactManifestEntry> entries =
+        LoadManifestEntries(manifest_path);
+    for (const ArtifactManifestEntry &entry : entries) {
+      if (entry.artifact_id == metadata.artifact_id) {
+        throw std::runtime_error(
+            "DumpEvalArtifact: artifact_id already exists in manifest");
+      }
+    }
+  }
+
+  fs::create_directories(request.artifact_root / "objects");
+  fs::create_directories(object_dir);
+  WriteMetadataJson(metadata_path, metadata);
+  WritePublicInputsBinary(public_inputs_path, public_inputs);
+  WriteBytesToFile(proof_path, proof_bytes);
+  AppendManifestEntry(manifest_path, ManifestEntryFromMetadata(metadata));
+
+  DumpArtifactResult result;
+  result.metadata = metadata;
+  result.manifest_path = manifest_path;
+  result.object_dir = object_dir;
+  result.metadata_path = metadata_path;
+  result.public_inputs_path = public_inputs_path;
+  result.proof_path = proof_path;
+  return result;
 }
 
 inline RestoredVerificationContext RestoreVerificationContext(

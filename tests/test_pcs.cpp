@@ -979,6 +979,128 @@ void TestPCS_ArtifactRestoreVerificationContext_GF4() {
   CHECK_EQ(restored.params.zeta, expected_zeta);
 }
 
+void CheckDumpedArtifactVerifies(
+    const basefold_bench_pcs_artifact::DumpArtifactResult &result) {
+  const auto meta =
+      basefold_bench_pcs_artifact::ReadMetadataJson(result.metadata_path);
+  CHECK_EQ(meta.artifact_id, result.metadata.artifact_id);
+  CHECK_EQ(meta.proof_size_bytes, result.metadata.proof_size_bytes);
+
+  const auto restored =
+      basefold_bench_pcs_artifact::RestoreVerificationContext(meta);
+  const auto inputs =
+      basefold_bench_pcs_artifact::ReadPublicInputsBinary(result.public_inputs_path);
+  const basefold::Bytes proof_bytes =
+      basefold_bench_pcs_artifact::ReadBytesFromFile(result.proof_path);
+
+  basefold::FixedProofEncodingOptions options;
+  options.include_version_byte = true;
+  long challenge_ext_degree = 0;
+  if (meta.use_extension_challenges) {
+    challenge_ext_degree = NTL::deg(
+        restored.challenge_cfg.challenge_extension_modulus);
+    options.challenge_ext_degree = challenge_ext_degree;
+  }
+  const basefold::BaseFoldPCSEvalProof proof =
+      basefold::DeserializeBaseFoldPCSEvalProofFixedBytes(proof_bytes, options);
+  CHECK_EQ(proof_bytes.size(), meta.proof_size_bytes);
+
+  const bool ok =
+      meta.use_extension_challenges
+          ? basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+                inputs.commitment_root, inputs.z, inputs.claimed_y, meta.queries,
+                proof, restored.params, restored.challenge_cfg)
+          : basefold::BaseFoldPCSVerifyEval(inputs.commitment_root, inputs.z,
+                                            inputs.claimed_y, meta.queries,
+                                            proof, restored.params);
+  CHECK(ok);
+}
+
+void TestPCS_DumpEvalArtifact_FieldCompleteCase() {
+  testutil::PrintInfo("PCS artifact: dump tool writes a complete field artifact case");
+
+  const fs::path root =
+      fs::temp_directory_path() / "basefold_phase3_dump_field_test";
+  fs::remove_all(root);
+
+  basefold_bench_pcs_common::ContextSpec field;
+  field.label = "Field";
+  field.scalar_modulus = to_ZZ(2);
+  field.base_prime = ZZ(0);
+  field.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};
+  field.zeta_coeffs = {to_ZZ(0), to_ZZ(1)};
+
+  basefold_bench_pcs_artifact::DumpArtifactRequest request;
+  request.artifact_root = root;
+  request.mode = "field";
+  request.c = 2;
+  request.k0 = 1;
+  request.d = 3;
+  request.queries = 2;
+  request.seed = 11;
+  request.lambda = "128";
+  request.gamma = "auto";
+
+  const auto result =
+      basefold_bench_pcs_artifact::DumpEvalArtifact(field, request);
+  CHECK(fs::exists(result.manifest_path));
+  CHECK(fs::exists(result.metadata_path));
+  CHECK(fs::exists(result.public_inputs_path));
+  CHECK(fs::exists(result.proof_path));
+
+  const auto entries =
+      basefold_bench_pcs_artifact::LoadManifestEntries(result.manifest_path);
+  CHECK_EQ(entries.size(), static_cast<std::size_t>(1));
+  CHECK_EQ(entries[0].artifact_id, result.metadata.artifact_id);
+  CHECK_EQ(entries[0].object_relpath,
+           basefold_bench_pcs_artifact::ManifestObjectRelPath(
+               result.metadata.artifact_id));
+
+  CheckDumpedArtifactVerifies(result);
+  fs::remove_all(root);
+}
+
+void TestPCS_DumpEvalArtifact_RingCompleteCase_ExtensionMode() {
+  testutil::PrintInfo("PCS artifact: dump tool writes a complete ring artifact case with extension challenges");
+
+  const fs::path root =
+      fs::temp_directory_path() / "basefold_phase3_dump_ring_test";
+  fs::remove_all(root);
+
+  basefold_bench_pcs_common::ContextSpec ring;
+  ring.label = "Ring";
+  ring.scalar_modulus = to_ZZ(4);
+  ring.base_prime = to_ZZ(2);
+  ring.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};
+  ring.zeta_coeffs = {to_ZZ(0), to_ZZ(1)};
+
+  basefold_bench_pcs_artifact::DumpArtifactRequest request;
+  request.artifact_root = root;
+  request.mode = "ring";
+  request.c = 2;
+  request.k0 = 1;
+  request.d = 2;
+  request.queries = 2;
+  request.seed = 19;
+  request.use_extension_challenges = true;
+  request.use_checked_prover_path = true;
+  request.lambda = "128";
+  request.gamma = "auto";
+
+  const auto result =
+      basefold_bench_pcs_artifact::DumpEvalArtifact(ring, request);
+  const auto meta =
+      basefold_bench_pcs_artifact::ReadMetadataJson(result.metadata_path);
+  CHECK(meta.use_extension_challenges);
+  CHECK(!meta.challenge_extension_coeffs.empty());
+  CHECK_EQ(meta.proof_size_bytes,
+           basefold_bench_pcs_artifact::ReadBytesFromFile(result.proof_path)
+               .size());
+
+  CheckDumpedArtifactVerifies(result);
+  fs::remove_all(root);
+}
+
 }  // namespace
 
 int main() {
@@ -998,6 +1120,8 @@ int main() {
     RUN_TEST(TestPCS_ArtifactManifestJsonlRoundTrip);
     RUN_TEST(TestPCS_ArtifactPublicInputsRoundTrip_GF4);
     RUN_TEST(TestPCS_ArtifactRestoreVerificationContext_GF4);
+    RUN_TEST(TestPCS_DumpEvalArtifact_FieldCompleteCase);
+    RUN_TEST(TestPCS_DumpEvalArtifact_RingCompleteCase_ExtensionMode);
   } catch (const exception &e) {
     cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;
