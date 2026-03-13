@@ -2201,6 +2201,81 @@ void TestRingSwitchProofSerialize_ComposedSizeMatchesBytes() {
                    composed_bytes.begin()));
 }
 
+void TestRingSwitchProofSerialize_ComposedSizeMatchesBytesWithProvidedAlphaBeta() {
+  testutil::PrintInfo("Ring-switch WP4: serializer and proof-size helpers stay exact under provided non-polynomial alpha/beta bases");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::RingSwitchPCSParams params = BuildProvidedRingSwitchParamsGR42(
+      /*ell=*/3, /*kappa=*/1, modulus, F, p, alpha,
+      BuildNonPolynomialAlphaBasisGR42(), BuildNonPolynomialBetaBasisGR42());
+  const vec_ZZ_pE t_table =
+      BuildBaseRingCoeffVector({3, 1, 0, 2, 1, 2, 3, 0});
+  const std::vector<ZZ_pE> z = {alpha + testutil::ConstZZpE(1), alpha,
+                                testutil::ConstZZpE(3)};
+  const ZZ_pE claimed_s = basefold::EvalMultilinearMonomialCoeffs(
+      basefold::BooleanHypercubeTableToMonomialCoeffs(t_table), z);
+
+  const basefold::RingSwitchPCSCommitArtifacts artifacts =
+      basefold::RingSwitchPCSBuildCommitArtifacts(params, t_table);
+  const basefold::RingSwitchPCSEvalProof proof =
+      basefold::RingSwitchPCSProveEvalFromCommitArtifacts(
+          params, t_table, z, claimed_s, /*num_queries=*/2, artifacts);
+  const basefold::RingSwitchPCSOuterEvalProof outer_proof =
+      basefold::RingSwitchPCSProveOuterEvalFromCommitArtifacts(
+          params, t_table, artifacts.commitment, z, claimed_s,
+          /*num_queries=*/2,
+          basefold::RingSwitchPCSBuildOuterCommitArtifacts(params, t_table));
+
+  CHECK_EQ(static_cast<long>(outer_proof.s_by_u.size()),
+           static_cast<long>(params.beta_basis.basis.size()));
+
+  const std::uint64_t field_elem_bytes = FixedFieldElementBytesForCurrentContext();
+  const std::uint64_t expected_outer_bytes =
+      1U + 8U +
+      static_cast<std::uint64_t>(outer_proof.s_by_u.size()) * field_elem_bytes + 8U +
+      static_cast<std::uint64_t>(outer_proof.h_by_level.size()) * 3U *
+          field_elem_bytes +
+      field_elem_bytes;
+
+  const basefold::Bytes outer_bytes =
+      basefold::SerializeRingSwitchPCSOuterProofFixedBytes(params, outer_proof);
+  const std::uint64_t outer_size =
+      basefold::RingSwitchPCSOuterProofSizeBytes(params, outer_proof);
+  CHECK_EQ(outer_bytes.size(), static_cast<std::size_t>(outer_size));
+  CHECK_EQ(outer_size, expected_outer_bytes);
+
+  const basefold::Bytes backend_bytes =
+      basefold::Z2kPCSBackendSerializeEvalProof(params.backend,
+                                                proof.backend_proof);
+  const std::uint64_t backend_size =
+      basefold::Z2kPCSBackendEvalProofSizeBytes(params.backend,
+                                                proof.backend_proof);
+  CHECK_EQ(backend_bytes.size(), static_cast<std::size_t>(backend_size));
+
+  const basefold::Bytes composed_bytes =
+      basefold::SerializeRingSwitchPCSEvalProofFixedBytes(params, proof);
+  const std::uint64_t composed_size =
+      basefold::RingSwitchPCSEvalProofSizeBytes(params, proof);
+  CHECK_EQ(composed_bytes.size(), static_cast<std::size_t>(composed_size));
+  CHECK_EQ(composed_size, outer_size + 8U + backend_size);
+  CHECK(std::equal(outer_bytes.begin(), outer_bytes.end(),
+                   composed_bytes.begin()));
+}
+
 void TestProductSumcheckProver_BooleanTablesPasses() {
   testutil::PrintInfo("Ring-switch WP2: product sumcheck passes on honest Boolean tables");
 
@@ -2449,6 +2524,8 @@ int main() {
     RUN_TEST(TestRingSwitchVerifyEval_DimensionZeroUsesNoSumcheckRounds);
     RUN_TEST(TestRingSwitchOuterProveVerify_AcceptsHonestProof);
     RUN_TEST(TestRingSwitchProofSerialize_ComposedSizeMatchesBytes);
+    RUN_TEST(
+        TestRingSwitchProofSerialize_ComposedSizeMatchesBytesWithProvidedAlphaBeta);
     RUN_TEST(TestProductSumcheckProver_BooleanTablesPasses);
     RUN_TEST(TestProductSumcheckChain_RejectsTamperedPolynomial);
     RUN_TEST(TestProductSumcheckProver_FromMonomialCoeffsMatchesTables);

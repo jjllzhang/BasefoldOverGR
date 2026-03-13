@@ -1,6 +1,6 @@
 # Ring-Switch General Basis Shared-Layer Plan
 
-Status: WP0-WP3 completed; WP4-WP6 pending
+Status: WP0-WP4 completed; WP5-WP6 pending
 Last updated: 2026-03-14
 Scope: make `RingSwitchPCS` support paper-aligned general `alpha/beta` Galois-ring bases through a clean shared basis layer
 
@@ -30,6 +30,12 @@ Scope: make `RingSwitchPCS` support paper-aligned general `alpha/beta` Galois-ri
   - `s_u` recovery decomposes against `beta` and recombines with `alpha`.
 - End-to-end single-point `Commit/ProveEval/VerifyEval` now passes under a
   non-polynomial `alpha != beta` test pair.
+- 2026-03-14: `WP4` landed in the working tree.
+- `RingSwitchProofSerialize.*` already used canonical basis sizes from
+  `params.beta_basis.basis.size()`, so no serializer layout change was needed.
+- Added provided-basis regression coverage to lock in that outer/composed proof
+  serialization and proof-size helpers stay exact under non-polynomial
+  `alpha/beta` bases.
 
 ## Goal
 
@@ -52,11 +58,10 @@ The plan intentionally keeps the backend PCS boundary unchanged and does not cha
 
 ## Current Gaps
 
-Current remaining gaps after `WP3` are no longer in the protocol core.
+Current remaining gaps after `WP4` are no longer in the protocol core or proof
+size plumbing.
 They are mostly follow-up plumbing and coverage:
 
-- serializer/proof-size code should be audited for any remaining assumptions
-  about old basis descriptors
 - bench helpers should expose provided-basis runs instead of only the default
   polynomial setup
 - test coverage can still be expanded beyond the current non-polynomial
