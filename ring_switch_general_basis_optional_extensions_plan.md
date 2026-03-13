@@ -1,6 +1,6 @@
 # Ring-Switch General Basis Optional Extensions Plan
 
-Status: WP0-WP3 completed; WP4-WP6 pending
+Status: WP0-WP4 completed; WP5-WP6 pending
 Last updated: 2026-03-14
 Scope: finish the two follow-on optional extensions after `ring_switch_general_basis_shared_layer_plan.md`
 
@@ -48,6 +48,25 @@ Scope: finish the two follow-on optional extensions after `ring_switch_general_b
 - Existing provided-basis setup / packing / semantic / end-to-end / proof-size
   tests now consume the shared helper layer instead of the previous ad hoc
   `BuildNonPolynomial*GR42` helpers.
+- 2026-03-14: `WP4` landed in the working tree.
+- Positive end-to-end provided-basis coverage now includes:
+  - Context A `GR(4,2)`:
+    - non-polynomial `alpha` only,
+    - non-polynomial `beta` only,
+    - non-polynomial `alpha != beta`,
+    - explicit-dual `alpha != beta`,
+    - auto-derived-dual `alpha != beta`.
+  - Context B `GR(4,2)` variant backend:
+    - one non-polynomial `alpha != beta` end-to-end case.
+  - Context C `GR(4,4)`:
+    - non-polynomial `alpha` only,
+    - non-polynomial `beta` only,
+    - non-polynomial `alpha != beta`.
+- For Context A and Context C, the positive matrix now also locks:
+  - packing against the provided `beta` basis,
+  - `A_{u||w}` reconstruction against the provided `alpha` basis,
+  - partial-evaluation recovery against direct evaluation,
+  - composed proof size against serialized byte length.
 
 ## Goal
 

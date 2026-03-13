@@ -6,6 +6,7 @@
 #include <NTL/vec_ZZ_pE.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <exception>
@@ -743,6 +744,196 @@ basefold::RingSwitchPCSParams BuildProvidedRingSwitchParamsFromSpec(
   input.backend = basefold::MakeBaseFoldZ2kPCSBackend(
       BuildBackendParamsFromSpec(ctx.spec(), ctx.alpha()));
   return basefold::RingSwitchPCSSetup(input);
+}
+
+struct ProvidedBasisProofFixture {
+  basefold::RingSwitchPCSParams params;
+  RingSwitchEvalCaseData eval_case;
+  ZZ_pE claimed_s;
+  basefold::RingSwitchPCSCommitArtifacts artifacts;
+  basefold::RingSwitchPCSEvalProof proof;
+};
+
+ZZ_pE ComputeClaimedValue(const RingSwitchEvalCaseData &eval_case) {
+  return basefold::EvalMultilinearMonomialCoeffs(
+      basefold::BooleanHypercubeTableToMonomialCoeffs(eval_case.t_table),
+      eval_case.z);
+}
+
+ProvidedBasisProofFixture BuildProvidedBasisProofFixture(
+    long ell, long kappa, const ScopedRingSwitchTestContext &ctx,
+    const RingSwitchBasisCase &alpha_case, const RingSwitchBasisCase &beta_case,
+    const RingSwitchEvalCaseData &eval_case, bool provide_alpha_dual = false,
+    bool provide_beta_dual = false) {
+  ProvidedBasisProofFixture fixture;
+  fixture.params = BuildProvidedRingSwitchParamsFromSpec(
+      ell, kappa, ctx, alpha_case, beta_case, provide_alpha_dual,
+      provide_beta_dual);
+  fixture.eval_case = eval_case;
+  fixture.claimed_s = ComputeClaimedValue(fixture.eval_case);
+  fixture.artifacts = basefold::RingSwitchPCSBuildCommitArtifacts(
+      fixture.params, fixture.eval_case.t_table);
+  fixture.proof = basefold::RingSwitchPCSProveEvalFromCommitArtifacts(
+      fixture.params, fixture.eval_case.t_table, fixture.eval_case.z,
+      fixture.claimed_s, fixture.eval_case.num_queries, fixture.artifacts);
+  return fixture;
+}
+
+void CheckHonestProvidedBasisProof(const ProvidedBasisProofFixture &fixture) {
+  CHECK(basefold::RingSwitchPCSVerifyEval(
+      fixture.params, fixture.artifacts.commitment, fixture.eval_case.z,
+      fixture.claimed_s, fixture.eval_case.num_queries, fixture.proof));
+}
+
+std::vector<ZZ_pE> TakeSuffixPoint(const std::vector<ZZ_pE> &point,
+                                   long suffix_dimension) {
+  CHECK_GE(static_cast<long>(point.size()), suffix_dimension);
+  return std::vector<ZZ_pE>(
+      point.end() - static_cast<std::ptrdiff_t>(suffix_dimension), point.end());
+}
+
+void CheckPackingMatchesProvidedBetaBasis(const basefold::RingSwitchPCSParams &params,
+                                          const vec_ZZ_pE &t_coeffs,
+                                          const char *label) {
+  const vec_ZZ_pE packed = basefold::PackZ2kCoeffsToGREvals(params, t_coeffs);
+  CHECK_EQ(packed.length(), Pow2ForTest(params.ell_prime));
+
+  for (long w = 0; w < packed.length(); ++w) {
+    std::vector<NTL::ZZ_p> beta_coords(
+        static_cast<std::size_t>(Pow2ForTest(params.kappa)));
+    for (long v = 0; v < Pow2ForTest(params.kappa); ++v) {
+      beta_coords[static_cast<std::size_t>(v)] =
+          NTL::coeff(NTL::rep(t_coeffs[v + (w << params.kappa)]), 0);
+    }
+    CHECK_EQ(packed[w],
+             ComposeFromBasisCoordsOrThrow(params.beta_basis.basis, beta_coords,
+                                           label));
+
+    const vec_ZZ_pE recovered = basefold::DecomposeGRElementToBaseCoeffs(
+        params, packed[w], params.beta_basis);
+    CHECK_EQ(recovered.length(), Pow2ForTest(params.kappa));
+    for (long v = 0; v < recovered.length(); ++v) {
+      CHECK_EQ(recovered[v], t_coeffs[v + (w << params.kappa)]);
+    }
+  }
+}
+
+void CheckSuffixEqualityRecoveryInProvidedAlphaBasis(
+    const basefold::RingSwitchPCSParams &params,
+    const std::vector<ZZ_pE> &r_suffix, const char *label) {
+  const basefold::RingSwitchComponentTensor tensor =
+      basefold::BuildRingSwitchComponentTensor(params, r_suffix);
+  const long num_w = Pow2ForTest(params.ell_prime);
+  for (long w = 0; w < num_w; ++w) {
+    std::vector<NTL::ZZ_p> alpha_coords(
+        static_cast<std::size_t>(tensor.basis_dimension));
+    for (long u = 0; u < tensor.basis_dimension; ++u) {
+      alpha_coords[static_cast<std::size_t>(u)] =
+          NTL::coeff(NTL::rep(tensor.a_by_u_then_w[u * num_w + w]), 0);
+    }
+    const ZZ_pE reconstructed = ComposeFromBasisCoordsOrThrow(
+        params.alpha_basis.basis, alpha_coords, label);
+    const ZZ_pE expected =
+        basefold::EqPolynomial(r_suffix,
+                               BooleanPointFromIndex(w, params.ell_prime));
+    CHECK_EQ(reconstructed, expected);
+  }
+}
+
+void CheckPartialEvaluationRecoveryWithProvidedBases(
+    const basefold::RingSwitchPCSParams &params, const vec_ZZ_pE &t_coeffs,
+    const std::vector<ZZ_pE> &r_suffix, const char *label) {
+  const vec_ZZ_pE packed = basefold::PackZ2kCoeffsToGREvals(params, t_coeffs);
+  const basefold::RingSwitchComponentTensor tensor =
+      basefold::BuildRingSwitchComponentTensor(params, r_suffix);
+
+  vec_ZZ_pE s_by_u;
+  s_by_u.SetLength(tensor.basis_dimension);
+  const long num_w = Pow2ForTest(params.ell_prime);
+  for (long u = 0; u < tensor.basis_dimension; ++u) {
+    ZZ_pE acc;
+    clear(acc);
+    for (long w = 0; w < num_w; ++w) {
+      acc += tensor.a_by_u_then_w[u * num_w + w] * packed[w];
+    }
+    s_by_u[u] = acc;
+  }
+
+  std::vector<vec_ZZ_pE> beta_coeff_rows(
+      static_cast<std::size_t>(tensor.basis_dimension));
+  for (long u = 0; u < tensor.basis_dimension; ++u) {
+    beta_coeff_rows[static_cast<std::size_t>(u)] =
+        basefold::DecomposeGRElementToBaseCoeffs(params, s_by_u[u],
+                                                 params.beta_basis);
+  }
+
+  for (long v = 0; v < tensor.basis_dimension; ++v) {
+    std::vector<NTL::ZZ_p> alpha_coords(
+        static_cast<std::size_t>(tensor.basis_dimension));
+    for (long u = 0; u < tensor.basis_dimension; ++u) {
+      alpha_coords[static_cast<std::size_t>(u)] = NTL::coeff(
+          NTL::rep(beta_coeff_rows[static_cast<std::size_t>(u)][v]), 0);
+    }
+    const ZZ_pE recovered_partial = ComposeFromBasisCoordsOrThrow(
+        params.alpha_basis.basis, alpha_coords, label);
+
+    vec_ZZ_pE slice;
+    slice.SetLength(num_w);
+    for (long w = 0; w < num_w; ++w) {
+      slice[w] = t_coeffs[v + (w << params.kappa)];
+    }
+    const vec_ZZ_pE slice_monomial =
+        basefold::BooleanHypercubeTableToMonomialCoeffs(slice);
+    const ZZ_pE direct_partial =
+        basefold::EvalMultilinearMonomialCoeffs(slice_monomial, r_suffix);
+    CHECK_EQ(recovered_partial, direct_partial);
+  }
+}
+
+void CheckProvidedBasisProofSizeMatchesBytes(
+    const ProvidedBasisProofFixture &fixture) {
+  const basefold::RingSwitchPCSOuterEvalProof outer_proof =
+      basefold::RingSwitchPCSProveOuterEvalFromCommitArtifacts(
+          fixture.params, fixture.eval_case.t_table, fixture.artifacts.commitment,
+          fixture.eval_case.z, fixture.claimed_s, fixture.eval_case.num_queries,
+          basefold::RingSwitchPCSBuildOuterCommitArtifacts(
+              fixture.params, fixture.eval_case.t_table));
+
+  CHECK_EQ(static_cast<long>(outer_proof.s_by_u.size()),
+           static_cast<long>(fixture.params.beta_basis.basis.size()));
+
+  const std::uint64_t field_elem_bytes = FixedFieldElementBytesForCurrentContext();
+  const std::uint64_t expected_outer_bytes =
+      1U + 8U +
+      static_cast<std::uint64_t>(outer_proof.s_by_u.size()) * field_elem_bytes +
+      8U +
+      static_cast<std::uint64_t>(outer_proof.h_by_level.size()) * 3U *
+          field_elem_bytes +
+      field_elem_bytes;
+
+  const basefold::Bytes outer_bytes =
+      basefold::SerializeRingSwitchPCSOuterProofFixedBytes(fixture.params,
+                                                           outer_proof);
+  const std::uint64_t outer_size =
+      basefold::RingSwitchPCSOuterProofSizeBytes(fixture.params, outer_proof);
+  CHECK_EQ(outer_bytes.size(), static_cast<std::size_t>(outer_size));
+  CHECK_EQ(outer_size, expected_outer_bytes);
+
+  const basefold::Bytes backend_bytes = basefold::Z2kPCSBackendSerializeEvalProof(
+      fixture.params.backend, fixture.proof.backend_proof);
+  const std::uint64_t backend_size = basefold::Z2kPCSBackendEvalProofSizeBytes(
+      fixture.params.backend, fixture.proof.backend_proof);
+  CHECK_EQ(backend_bytes.size(), static_cast<std::size_t>(backend_size));
+
+  const basefold::Bytes composed_bytes =
+      basefold::SerializeRingSwitchPCSEvalProofFixedBytes(fixture.params,
+                                                          fixture.proof);
+  const std::uint64_t composed_size =
+      basefold::RingSwitchPCSEvalProofSizeBytes(fixture.params, fixture.proof);
+  CHECK_EQ(composed_bytes.size(), static_cast<std::size_t>(composed_size));
+  CHECK_EQ(composed_size, outer_size + 8U + backend_size);
+  CHECK(std::equal(outer_bytes.begin(), outer_bytes.end(),
+                   composed_bytes.begin()));
 }
 
 basefold::Z2kPCSBackendEvalProof MutateBaseFoldBackendSubproof(
@@ -1848,6 +2039,60 @@ void TestBuildRingSwitchComponentTensor_RecoversPartialEvaluationsWithIndependen
   }
 }
 
+void TestPackZ2kCoeffsToGREvals_ComposesAgainstProvidedBetaBasis_GR44() {
+  testutil::PrintInfo("Ring-switch WP4: GR(4,4) packing composes t'(w) against the provided beta basis");
+
+  const ScopedRingSwitchTestContext ctx(MakeGR44ContextSpec());
+  const RingSwitchBasisCase alpha_case =
+      BuildTransformedBasisCase(/*seed=*/4, BasisTransformFamily::kUnitriangular);
+  const RingSwitchBasisCase beta_case =
+      BuildTransformedBasisCase(/*seed=*/5, BasisTransformFamily::kDense);
+  const basefold::RingSwitchPCSParams params = BuildProvidedRingSwitchParamsFromSpec(
+      /*ell=*/4, /*kappa=*/2, ctx, alpha_case, beta_case);
+  const RingSwitchEvalCaseData eval_case = BuildEvalCaseData(
+      {0, 1, 2, 3, 1, 3, 0, 2, 2, 0, 3, 1, 3, 2, 1, 0},
+      {{0, 1, 0, 0}, {1, 0, 0, 0}, {1, 1, 0, 0}, {3, 0, 1, 0}});
+  CheckPackingMatchesProvidedBetaBasis(
+      params, eval_case.t_table,
+      "TestPackZ2kCoeffsToGREvals_ComposesAgainstProvidedBetaBasis_GR44");
+}
+
+void TestBuildRingSwitchComponentTensor_ReconstructsSuffixEqualityValuesWithProvidedAlphaBasis_GR44() {
+  testutil::PrintInfo("Ring-switch WP4: GR(4,4) A_{u||w} reconstructs suffix equalities in the provided alpha basis");
+
+  const ScopedRingSwitchTestContext ctx(MakeGR44ContextSpec());
+  const RingSwitchBasisCase alpha_case =
+      BuildTransformedBasisCase(/*seed=*/4, BasisTransformFamily::kUnitriangular);
+  const RingSwitchBasisCase beta_case =
+      BuildTransformedBasisCase(/*seed=*/5, BasisTransformFamily::kDense);
+  const basefold::RingSwitchPCSParams params = BuildProvidedRingSwitchParamsFromSpec(
+      /*ell=*/4, /*kappa=*/2, ctx, alpha_case, beta_case);
+  const std::vector<ZZ_pE> r_suffix = {
+      BuildElementFromPolynomialCoords({1, 1, 0, 0}),
+      BuildElementFromPolynomialCoords({3, 0, 1, 0})};
+  CheckSuffixEqualityRecoveryInProvidedAlphaBasis(
+      params, r_suffix,
+      "TestBuildRingSwitchComponentTensor_ReconstructsSuffixEqualityValuesWithProvidedAlphaBasis_GR44");
+}
+
+void TestBuildRingSwitchComponentTensor_RecoversPartialEvaluationsWithIndependentAlphaBeta_GR44() {
+  testutil::PrintInfo("Ring-switch WP4: GR(4,4) s_u recovers partial evaluations with independent provided alpha/beta bases");
+
+  const ScopedRingSwitchTestContext ctx(MakeGR44ContextSpec());
+  const RingSwitchBasisCase alpha_case =
+      BuildTransformedBasisCase(/*seed=*/4, BasisTransformFamily::kUnitriangular);
+  const RingSwitchBasisCase beta_case =
+      BuildTransformedBasisCase(/*seed=*/5, BasisTransformFamily::kDense);
+  const basefold::RingSwitchPCSParams params = BuildProvidedRingSwitchParamsFromSpec(
+      /*ell=*/4, /*kappa=*/2, ctx, alpha_case, beta_case);
+  const RingSwitchEvalCaseData eval_case = BuildEvalCaseData(
+      {0, 1, 2, 3, 1, 3, 0, 2, 2, 0, 3, 1, 3, 2, 1, 0},
+      {{0, 1, 0, 0}, {1, 0, 0, 0}, {1, 1, 0, 0}, {3, 0, 1, 0}});
+  CheckPartialEvaluationRecoveryWithProvidedBases(
+      params, eval_case.t_table, TakeSuffixPoint(eval_case.z, params.ell_prime),
+      "TestBuildRingSwitchComponentTensor_RecoversPartialEvaluationsWithIndependentAlphaBeta_GR44");
+}
+
 void TestBuildRingSwitchComponentTensor_RCoeffsEvaluateAsExpected() {
   testutil::PrintInfo("Ring-switch WP3: verifier polynomial r evaluates with v||w flattening");
 
@@ -2315,6 +2560,91 @@ void TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedNonPolynomialBetaOnl
                                           /*num_queries=*/2, proof));
 }
 
+void TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedExplicitDualBases() {
+  testutil::PrintInfo("Ring-switch WP4: verifier accepts an honest proof with provided explicit alpha/beta dual bases");
+
+  const ScopedRingSwitchTestContext ctx(MakeGR42ContextSpec());
+  const RingSwitchBasisCase alpha_case =
+      BuildTransformedBasisCase(/*seed=*/0, BasisTransformFamily::kUnitriangular);
+  const RingSwitchBasisCase beta_case =
+      BuildTransformedBasisCase(/*seed=*/1, BasisTransformFamily::kDense);
+  const RingSwitchEvalCaseData eval_case = BuildEvalCaseData(
+      {0, 1, 2, 3, 1, 0, 3, 2},
+      {{0, 1}, {1, 0}, {1, 1}});
+  const ProvidedBasisProofFixture fixture = BuildProvidedBasisProofFixture(
+      /*ell=*/3, /*kappa=*/1, ctx, alpha_case, beta_case, eval_case,
+      /*provide_alpha_dual=*/true, /*provide_beta_dual=*/true);
+  CheckHonestProvidedBasisProof(fixture);
+}
+
+void TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedAlphaBetaBasesOnVariantBackend() {
+  testutil::PrintInfo("Ring-switch WP4: verifier accepts an honest provided alpha!=beta proof on the GR(4,2) variant backend");
+
+  const ScopedRingSwitchTestContext ctx(MakeGR42VariantContextSpec());
+  const RingSwitchBasisCase alpha_case =
+      BuildTransformedBasisCase(/*seed=*/2, BasisTransformFamily::kUnitriangular);
+  const RingSwitchBasisCase beta_case =
+      BuildTransformedBasisCase(/*seed=*/3, BasisTransformFamily::kDense);
+  const RingSwitchEvalCaseData eval_case = BuildEvalCaseData(
+      {0, 3, 1, 2, 2, 1, 3, 0},
+      {{1, 0}, {1, 1}, {3, 1}});
+  const ProvidedBasisProofFixture fixture = BuildProvidedBasisProofFixture(
+      /*ell=*/3, /*kappa=*/1, ctx, alpha_case, beta_case, eval_case);
+  CheckHonestProvidedBasisProof(fixture);
+}
+
+void TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedNonPolynomialAlphaOnly_GR44() {
+  testutil::PrintInfo("Ring-switch WP4: verifier accepts an honest GR(4,4) proof when only alpha is non-polynomial");
+
+  const ScopedRingSwitchTestContext ctx(MakeGR44ContextSpec());
+  const basefold::RingSwitchPCSParams default_params =
+      BuildRingSwitchParamsFromSpec(/*ell=*/4, /*kappa=*/2, ctx);
+  const RingSwitchBasisCase alpha_case =
+      BuildTransformedBasisCase(/*seed=*/4, BasisTransformFamily::kUnitriangular);
+  const RingSwitchBasisCase beta_case =
+      MakeBasisCase("default-beta", default_params.beta_basis);
+  const RingSwitchEvalCaseData eval_case = BuildEvalCaseData(
+      {0, 1, 2, 3, 1, 3, 0, 2, 2, 0, 3, 1, 3, 2, 1, 0},
+      {{0, 1, 0, 0}, {1, 0, 0, 0}, {1, 1, 0, 0}, {3, 0, 1, 0}});
+  const ProvidedBasisProofFixture fixture = BuildProvidedBasisProofFixture(
+      /*ell=*/4, /*kappa=*/2, ctx, alpha_case, beta_case, eval_case);
+  CheckHonestProvidedBasisProof(fixture);
+}
+
+void TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedNonPolynomialBetaOnly_GR44() {
+  testutil::PrintInfo("Ring-switch WP4: verifier accepts an honest GR(4,4) proof when only beta is non-polynomial");
+
+  const ScopedRingSwitchTestContext ctx(MakeGR44ContextSpec());
+  const basefold::RingSwitchPCSParams default_params =
+      BuildRingSwitchParamsFromSpec(/*ell=*/4, /*kappa=*/2, ctx);
+  const RingSwitchBasisCase alpha_case =
+      MakeBasisCase("default-alpha", default_params.alpha_basis);
+  const RingSwitchBasisCase beta_case =
+      BuildTransformedBasisCase(/*seed=*/5, BasisTransformFamily::kDense);
+  const RingSwitchEvalCaseData eval_case = BuildEvalCaseData(
+      {0, 1, 2, 3, 1, 3, 0, 2, 2, 0, 3, 1, 3, 2, 1, 0},
+      {{0, 1, 0, 0}, {1, 0, 0, 0}, {1, 1, 0, 0}, {3, 0, 1, 0}});
+  const ProvidedBasisProofFixture fixture = BuildProvidedBasisProofFixture(
+      /*ell=*/4, /*kappa=*/2, ctx, alpha_case, beta_case, eval_case);
+  CheckHonestProvidedBasisProof(fixture);
+}
+
+void TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedAlphaBetaBases_GR44() {
+  testutil::PrintInfo("Ring-switch WP4: verifier accepts an honest GR(4,4) proof with provided non-polynomial alpha!=beta bases");
+
+  const ScopedRingSwitchTestContext ctx(MakeGR44ContextSpec());
+  const RingSwitchBasisCase alpha_case =
+      BuildTransformedBasisCase(/*seed=*/4, BasisTransformFamily::kUnitriangular);
+  const RingSwitchBasisCase beta_case =
+      BuildTransformedBasisCase(/*seed=*/5, BasisTransformFamily::kDense);
+  const RingSwitchEvalCaseData eval_case = BuildEvalCaseData(
+      {0, 1, 2, 3, 1, 3, 0, 2, 2, 0, 3, 1, 3, 2, 1, 0},
+      {{0, 1, 0, 0}, {1, 0, 0, 0}, {1, 1, 0, 0}, {3, 0, 1, 0}});
+  const ProvidedBasisProofFixture fixture = BuildProvidedBasisProofFixture(
+      /*ell=*/4, /*kappa=*/2, ctx, alpha_case, beta_case, eval_case);
+  CheckHonestProvidedBasisProof(fixture);
+}
+
 void TestRingSwitchPaperAPI_AcceptsHonestProof() {
   testutil::PrintInfo("Ring-switch WP6: staged setup/commit/prove/verify API matches the legacy flow");
 
@@ -2658,6 +2988,22 @@ void TestRingSwitchProofSerialize_ComposedSizeMatchesBytesWithProvidedAlphaBeta(
                    composed_bytes.begin()));
 }
 
+void TestRingSwitchProofSerialize_ComposedSizeMatchesBytesWithProvidedAlphaBeta_GR44() {
+  testutil::PrintInfo("Ring-switch WP4: GR(4,4) serializer and proof-size helpers stay exact under provided non-polynomial alpha/beta bases");
+
+  const ScopedRingSwitchTestContext ctx(MakeGR44ContextSpec());
+  const RingSwitchBasisCase alpha_case =
+      BuildTransformedBasisCase(/*seed=*/4, BasisTransformFamily::kUnitriangular);
+  const RingSwitchBasisCase beta_case =
+      BuildTransformedBasisCase(/*seed=*/5, BasisTransformFamily::kDense);
+  const RingSwitchEvalCaseData eval_case = BuildEvalCaseData(
+      {0, 1, 2, 3, 1, 3, 0, 2, 2, 0, 3, 1, 3, 2, 1, 0},
+      {{0, 1, 0, 0}, {1, 0, 0, 0}, {1, 1, 0, 0}, {3, 0, 1, 0}});
+  const ProvidedBasisProofFixture fixture = BuildProvidedBasisProofFixture(
+      /*ell=*/4, /*kappa=*/2, ctx, alpha_case, beta_case, eval_case);
+  CheckProvidedBasisProofSizeMatchesBytes(fixture);
+}
+
 void TestProductSumcheckProver_BooleanTablesPasses() {
   testutil::PrintInfo("Ring-switch WP2: product sumcheck passes on honest Boolean tables");
 
@@ -2887,14 +3233,19 @@ int main() {
     RUN_TEST(TestRingSwitchSetup_RejectsBackendDimensionMismatch);
     RUN_TEST(TestPackZ2kCoeffsToGREvals_RoundTripsSmallExample);
     RUN_TEST(TestPackZ2kCoeffsToGREvals_ComposesAgainstProvidedBetaBasis);
+    RUN_TEST(TestPackZ2kCoeffsToGREvals_ComposesAgainstProvidedBetaBasis_GR44);
     RUN_TEST(TestBooleanHypercubeTableToMonomialCoeffs_EvaluatesTableCorrectly);
     RUN_TEST(TestPackZ2kCoeffsToGREvals_RejectsNonBaseRingInputs);
     RUN_TEST(TestBuildRingSwitchComponentTensor_ReconstructsSuffixEqualityValues);
     RUN_TEST(
         TestBuildRingSwitchComponentTensor_ReconstructsSuffixEqualityValuesWithProvidedAlphaBasis);
+    RUN_TEST(
+        TestBuildRingSwitchComponentTensor_ReconstructsSuffixEqualityValuesWithProvidedAlphaBasis_GR44);
     RUN_TEST(TestBuildRingSwitchComponentTensor_RecoversPartialEvaluations);
     RUN_TEST(
         TestBuildRingSwitchComponentTensor_RecoversPartialEvaluationsWithIndependentAlphaBeta);
+    RUN_TEST(
+        TestBuildRingSwitchComponentTensor_RecoversPartialEvaluationsWithIndependentAlphaBeta_GR44);
     RUN_TEST(TestBuildRingSwitchComponentTensor_RCoeffsEvaluateAsExpected);
     RUN_TEST(TestBuildRingSwitchComponentTensor_RejectsWrongSuffixDimension);
     RUN_TEST(TestRingSwitchCommit_MatchesDirectBackendCommit);
@@ -2908,6 +3259,16 @@ int main() {
         TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedNonPolynomialAlphaOnly);
     RUN_TEST(
         TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedNonPolynomialBetaOnly);
+    RUN_TEST(
+        TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedExplicitDualBases);
+    RUN_TEST(
+        TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedAlphaBetaBasesOnVariantBackend);
+    RUN_TEST(
+        TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedNonPolynomialAlphaOnly_GR44);
+    RUN_TEST(
+        TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedNonPolynomialBetaOnly_GR44);
+    RUN_TEST(
+        TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedAlphaBetaBases_GR44);
     RUN_TEST(TestRingSwitchPaperAPI_AcceptsHonestProof);
     RUN_TEST(TestRingSwitchVerifyEval_RejectsTampering);
     RUN_TEST(TestRingSwitchVerifyEval_DimensionZeroUsesNoSumcheckRounds);
@@ -2915,6 +3276,8 @@ int main() {
     RUN_TEST(TestRingSwitchProofSerialize_ComposedSizeMatchesBytes);
     RUN_TEST(
         TestRingSwitchProofSerialize_ComposedSizeMatchesBytesWithProvidedAlphaBeta);
+    RUN_TEST(
+        TestRingSwitchProofSerialize_ComposedSizeMatchesBytesWithProvidedAlphaBeta_GR44);
     RUN_TEST(TestProductSumcheckProver_BooleanTablesPasses);
     RUN_TEST(TestProductSumcheckChain_RejectsTamperedPolynomial);
     RUN_TEST(TestProductSumcheckProver_FromMonomialCoeffsMatchesTables);
