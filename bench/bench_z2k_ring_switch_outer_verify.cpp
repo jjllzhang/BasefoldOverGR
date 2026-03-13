@@ -100,7 +100,9 @@ void PrintHelp() {
       << "                                     [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
       << "Notes:\n"
       << "  Commitment and outer proof are prebuilt outside timed verify.\n"
-      << "  Timed verify only measures the compiler-side outer verification.\n";
+      << "  Timed verify only measures the compiler-side outer verification.\n"
+      << "  This bench currently uses the default polynomial alpha/beta setup mode.\n"
+      << "  Caller-provided alpha/beta bases are supported by the library but not exposed on this CLI.\n";
 }
 
 }  // namespace

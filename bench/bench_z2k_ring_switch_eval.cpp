@@ -561,7 +561,9 @@ void PrintHelp() {
       << "Notes:\n"
       << "  Commit/artifact construction happens before timed prove, matching current bench_pcs_eval semantics.\n"
       << "  Outer prover/verifier times are total times with the backend prove/verify subcall removed.\n"
-      << "  Proof size reports exact serializer-backed bytes for the public RingSwitchPCSEvalProof.\n";
+      << "  Proof size reports exact serializer-backed bytes for the public RingSwitchPCSEvalProof.\n"
+      << "  This bench currently uses the default polynomial alpha/beta setup mode.\n"
+      << "  Caller-provided alpha/beta bases are supported by the library but not exposed on this CLI.\n";
 }
 
 }  // namespace

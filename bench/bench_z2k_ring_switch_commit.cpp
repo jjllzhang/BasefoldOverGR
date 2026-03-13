@@ -468,7 +468,9 @@ void PrintHelp() {
       << "                               [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
       << "Notes:\n"
       << "  Headline packing time measures t -> t' packing plus Boolean-table to monomial conversion.\n"
-      << "  Headline commit time measures the full RingSwitchPCSCommit path.\n";
+      << "  Headline commit time measures the full RingSwitchPCSCommit path.\n"
+      << "  This bench currently uses the default polynomial alpha/beta setup mode.\n"
+      << "  Caller-provided alpha/beta bases are supported by the library but not exposed on this CLI.\n";
 }
 
 }  // namespace

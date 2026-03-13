@@ -271,6 +271,9 @@ Language versions:
     works with caller-provided non-polynomial `alpha/beta` bases.
 - Proof shape is unchanged: outer and composed proofs still carry only
   `s_by_u`, `h_by_level`, `t_star`, and the backend opening proof.
+- Current ring-switch bench binaries keep the default polynomial-basis setup.
+  The library API supports caller-provided `alpha/beta` basis data, but the
+  `bench_z2k_ring_switch_*` CLIs do not yet surface custom-basis flags.
 
 ### `include/Compiler/Z2k/FrobeniusPCS.hpp` / `src/Compiler/Z2k/FrobeniusPCS.cpp`
 

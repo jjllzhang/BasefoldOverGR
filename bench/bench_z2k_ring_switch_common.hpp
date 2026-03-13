@@ -394,6 +394,7 @@ inline basefold::RingSwitchPCSParams BuildRingSwitchParams(
   input.kappa = kappa;
   input.base_modulus = spec.scalar_modulus;
   input.extension_modulus = F;
+  // Bench CLIs currently exercise the default polynomial-basis setup mode.
   input.backend = basefold::MakeBaseFoldZ2kPCSBackend(
       BuildBackendParams(c, ell - kappa, p_base, zeta));
   return basefold::RingSwitchPCSSetup(input);

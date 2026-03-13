@@ -104,7 +104,9 @@ void PrintHelp() {
       << "                                     [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
       << "Notes:\n"
       << "  Headline commit time measures RingSwitchPCSBuildOuterCommitArtifacts only.\n"
-      << "  No backend PCS commit is executed inside the timed region.\n";
+      << "  No backend PCS commit is executed inside the timed region.\n"
+      << "  This bench currently uses the default polynomial alpha/beta setup mode.\n"
+      << "  Caller-provided alpha/beta bases are supported by the library but not exposed on this CLI.\n";
 }
 
 }  // namespace
