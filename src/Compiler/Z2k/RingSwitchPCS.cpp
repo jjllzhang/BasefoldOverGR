@@ -139,6 +139,24 @@ long BasisDimensionOrThrow(const GaloisRingBasisData &basis, const char *label,
   return dimension;
 }
 
+GaloisRingBasisData NormalizeSetupBasisDataOrThrow(const GaloisRingBasisData &basis,
+                                                   const char *label,
+                                                   const char *func_name) {
+  const std::string basis_label = std::string(label) + ".basis";
+  GaloisRingBasisData normalized = basis;
+  ValidateBasisShapeOrThrow(normalized.basis, basis_label.c_str(), func_name);
+  if (normalized.dual_basis.empty()) {
+    if (!IsBasisOverBaseRing(normalized.basis)) {
+      LogicError((std::string(func_name) + ": " + label +
+                  ".basis is not a basis over the base ring")
+                     .c_str());
+    }
+    normalized.dual_basis = BuildDualBasisOrThrow(normalized.basis);
+  }
+  ValidateBasisDataOrThrow(normalized, label, func_name);
+  return normalized;
+}
+
 void ValidateBaseRingConstantOrThrow(const ZZ_pE &value, const char *label,
                                      long index, const char *func_name) {
   if (!::IsBaseRingConstant(value)) {
@@ -225,6 +243,15 @@ void ValidateActivePolynomialBasisDataOrThrow(const GaloisRingBasisData &basis,
                      .c_str());
     }
   }
+}
+
+void ValidatePolynomialOnlyCoreOrThrow(const RingSwitchPCSParams &params,
+                                       const char *func_name) {
+  const long expected_degree = ZZ_pE::degree();
+  ValidateActivePolynomialBasisDataOrThrow(
+      params.alpha_basis, expected_degree, "alpha_basis", func_name);
+  ValidateActivePolynomialBasisDataOrThrow(
+      params.beta_basis, expected_degree, "beta_basis", func_name);
 }
 
 void ValidateBasicIrreducibilityModTwoOrThrow(const ZZ_pX &extension_modulus,
@@ -384,6 +411,8 @@ vec_ZZ_pE BuildEqualityTable(const std::vector<FieldElement> &point) {
 std::vector<FieldElement> RecoverPartialEvaluationsFromSByU(
     const RingSwitchPCSParams &params,
     const std::vector<FieldElement> &s_by_u) {
+  ValidatePolynomialOnlyCoreOrThrow(params,
+                                    "RecoverPartialEvaluationsFromSByU");
   const long basis_dimension =
       BasisDimensionOrThrow(params.alpha_basis, "alpha_basis",
                             "RecoverPartialEvaluationsFromSByU");
@@ -415,6 +444,8 @@ std::vector<FieldElement> RecoverPartialEvaluationsFromSByU(
 std::vector<FieldElement> ComputeDirectPartialEvaluations(
     const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table,
     const std::vector<FieldElement> &z_suffix) {
+  ValidatePolynomialOnlyCoreOrThrow(params,
+                                    "ComputeDirectPartialEvaluations");
   const long basis_dimension =
       BasisDimensionOrThrow(params.alpha_basis, "alpha_basis",
                             "ComputeDirectPartialEvaluations");
@@ -767,13 +798,10 @@ void ValidateRingSwitchPCSParamsOrThrow(const RingSwitchPCSParams &params) {
                                        params.extension_modulus, params.kappa);
   Z2kPCSBackendValidateParamsOrThrow(params.backend);
 
-  const long expected_degree = ZZ_pE::degree();
-  ValidateActivePolynomialBasisDataOrThrow(
-      params.alpha_basis, expected_degree, "alpha_basis",
-      "ValidateRingSwitchPCSParamsOrThrow");
-  ValidateActivePolynomialBasisDataOrThrow(
-      params.beta_basis, expected_degree, "beta_basis",
-      "ValidateRingSwitchPCSParamsOrThrow");
+  ValidateBasisDataOrThrow(params.alpha_basis, "alpha_basis",
+                           "ValidateRingSwitchPCSParamsOrThrow");
+  ValidateBasisDataOrThrow(params.beta_basis, "beta_basis",
+                           "ValidateRingSwitchPCSParamsOrThrow");
 
   const long ell_prime = params.ell - params.kappa;
   if (params.ell_prime != ell_prime) {
@@ -796,6 +824,7 @@ void ValidateRingSwitchPCSParamsOrThrow(const RingSwitchPCSParams &params) {
 }
 
 RingSwitchPCSParams RingSwitchPCSSetup(const RingSwitchPCSSetupInput &input) {
+  const char *const func_name = "RingSwitchPCSSetup";
   RingSwitchPCSParams params;
   params.ell = input.ell;
   params.kappa = input.kappa;
@@ -803,13 +832,21 @@ RingSwitchPCSParams RingSwitchPCSSetup(const RingSwitchPCSSetupInput &input) {
   params.base_modulus = input.base_modulus;
   params.extension_modulus = input.extension_modulus;
   if (input.use_provided_basis) {
-    LogicError(
-        "RingSwitchPCSSetup: caller-provided alpha/beta bases are not implemented yet; continue after WP2");
+    if (!input.provided_basis.has_alpha_basis ||
+        !input.provided_basis.has_beta_basis) {
+      LogicError(
+          "RingSwitchPCSSetup: provided alpha_basis and beta_basis are both required when use_provided_basis=true");
+    }
+    params.alpha_basis = NormalizeSetupBasisDataOrThrow(
+        input.provided_basis.alpha_basis, "provided_basis.alpha_basis",
+        func_name);
+    params.beta_basis = NormalizeSetupBasisDataOrThrow(
+        input.provided_basis.beta_basis, "provided_basis.beta_basis",
+        func_name);
+  } else {
+    params.alpha_basis = BuildActivePolynomialBasisDataOrThrow(func_name);
+    params.beta_basis = BuildActivePolynomialBasisDataOrThrow(func_name);
   }
-  params.alpha_basis =
-      BuildActivePolynomialBasisDataOrThrow("RingSwitchPCSSetup");
-  params.beta_basis =
-      BuildActivePolynomialBasisDataOrThrow("RingSwitchPCSSetup");
   params.backend = input.backend;
   ValidateRingSwitchPCSParamsOrThrow(params);
   return params;
@@ -839,6 +876,7 @@ vec_ZZ_pE BooleanHypercubeTableToMonomialCoeffs(const vec_ZZ_pE &table_values) {
 vec_ZZ_pE PackZ2kCoeffsToGREvals(const RingSwitchPCSParams &params,
                                  const vec_ZZ_pE &t_table) {
   ValidateRingSwitchPCSParamsOrThrow(params);
+  ValidatePolynomialOnlyCoreOrThrow(params, "PackZ2kCoeffsToGREvals");
   const long expected_length = Pow2LongOrThrow(
       params.ell, "PackZ2kCoeffsToGREvals: ell is too large for long");
   if (t_table.length() != expected_length) {
@@ -1009,6 +1047,8 @@ bool RingSwitchPCSVerifyOuterEval(const RingSwitchPCSParams &params,
 vec_ZZ_pE DecomposeGRElementToBaseCoeffsPolynomialBasis(
     const RingSwitchPCSParams &params, const ZZ_pE &element) {
   ValidateRingSwitchPCSParamsOrThrow(params);
+  ValidatePolynomialOnlyCoreOrThrow(params,
+                                    "DecomposeGRElementToBaseCoeffsPolynomialBasis");
   return DecomposeGRElementToBaseCoeffsPolynomialBasisUnchecked(
       BasisDimensionOrThrow(params.alpha_basis, "alpha_basis",
                             "DecomposeGRElementToBaseCoeffsPolynomialBasis"),
@@ -1019,6 +1059,7 @@ vec_ZZ_pE DecomposeGRElementToBaseCoeffs(
     const RingSwitchPCSParams &params, const ZZ_pE &element,
     const GaloisRingBasisData &basis) {
   ValidateRingSwitchPCSParamsOrThrow(params);
+  ValidatePolynomialOnlyCoreOrThrow(params, "DecomposeGRElementToBaseCoeffs");
   ValidateActivePolynomialBasisDataOrThrow(
       basis, ZZ_pE::degree(), "basis", "DecomposeGRElementToBaseCoeffs");
   return DecomposeGRElementToBaseCoeffsPolynomialBasisUnchecked(
@@ -1029,6 +1070,7 @@ vec_ZZ_pE DecomposeGRElementToBaseCoeffs(
 RingSwitchComponentTensor BuildRingSwitchComponentTensor(
     const RingSwitchPCSParams &params, const std::vector<ZZ_pE> &r_suffix) {
   ValidateRingSwitchPCSParamsOrThrow(params);
+  ValidatePolynomialOnlyCoreOrThrow(params, "BuildRingSwitchComponentTensor");
   if (static_cast<long>(r_suffix.size()) != params.ell_prime) {
     LogicError(
         "BuildRingSwitchComponentTensor: r_suffix dimension must equal ell_prime");

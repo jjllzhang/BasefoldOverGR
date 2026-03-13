@@ -258,11 +258,12 @@ Language versions:
 - Current implementation status:
   - `alpha` and `beta` are modeled as independent basis objects in the public
     API and stored in `RingSwitchPCSParams`,
-  - runtime semantics are still intentionally restricted to the default
-    polynomial-basis path until the shared basis-validation and general-basis
-    algebra work lands,
-  - `RingSwitchPCSSetup(...)` therefore rejects caller-provided basis data for
-    now instead of silently accepting a partial implementation.
+  - `RingSwitchPCSSetup(...)` now accepts caller-provided basis data, validates
+    it in the active context, and derives missing dual bases,
+  - runtime semantics below setup are still intentionally restricted to the
+    current polynomial-basis core until the later general-basis protocol work
+    lands, so provided non-polynomial bases are a setup-level capability at the
+    moment rather than a completed end-to-end protocol path.
 - Proof shape is unchanged: outer and composed proofs still carry only
   `s_by_u`, `h_by_level`, `t_star`, and the backend opening proof.
 

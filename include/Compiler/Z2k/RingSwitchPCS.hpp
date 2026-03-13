@@ -28,8 +28,8 @@ struct RingSwitchPCSSetupInput {
   NTL::ZZ_pX extension_modulus;
   // false: setup builds the active polynomial basis for both alpha and beta.
   // true: callers can pass independent alpha/beta basis data through
-  // provided_basis. RingSwitchPCSSetup currently reserves that path until the
-  // shared basis-validation layer lands in later work packages.
+  // provided_basis; setup validates them in the active context and derives
+  // missing dual bases.
   bool use_provided_basis = false;
   RingSwitchPCSProvidedBasisInput provided_basis;
   Z2kPCSBackendHandle backend;
