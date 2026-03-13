@@ -26,6 +26,7 @@
 #include "Compiler/Z2k/BaseFoldBackendAdapter.hpp"
 #include "Compiler/Z2k/RingSwitchPCS.hpp"
 #include "Compiler/Z2k/RingSwitchProofSerialize.hpp"
+#include "GaloisRing/Basis.hpp"
 #include "GaloisRing/utils.hpp"
 #include "tests/test_common.hpp"
 
@@ -36,6 +37,7 @@ using NTL::SetCoeff;
 using NTL::to_ZZ;
 using NTL::vec_ZZ_pE;
 using NTL::ZZ;
+using NTL::ZZ_p;
 using NTL::ZZ_pE;
 using NTL::ZZ_pEPush;
 using NTL::ZZ_pPush;
@@ -115,6 +117,306 @@ basefold::FoldableCodeParams BuildParamsGR42D0(const ZZ &p, const ZZ_pE &alpha) 
   G0[0][1] = alpha;
   params.G0 = G0;
   return params;
+}
+
+enum class RingSwitchBackendVariant {
+  kDefault,
+  kVariant,
+  kD0,
+};
+
+enum class BasisTransformFamily {
+  kUnitriangular,
+  kDense,
+};
+
+struct RingSwitchTestContextSpec {
+  const char *name = nullptr;
+  ZZ p;
+  ZZ modulus;
+  std::vector<long> extension_coeffs;
+  std::vector<long> alpha_coeffs;
+  RingSwitchBackendVariant backend_variant = RingSwitchBackendVariant::kDefault;
+};
+
+struct RingSwitchBasisCase {
+  std::string label;
+  std::vector<ZZ_pE> basis;
+  std::vector<ZZ_pE> dual_basis;
+};
+
+struct RingSwitchEvalCaseData {
+  vec_ZZ_pE t_table;
+  std::vector<ZZ_pE> z;
+  long num_queries = 2;
+};
+
+RingSwitchTestContextSpec MakeGR42ContextSpec() {
+  RingSwitchTestContextSpec spec;
+  spec.name = "GR(4,2)";
+  spec.p = to_ZZ(2);
+  spec.modulus = to_ZZ(4);
+  spec.extension_coeffs = {1, 1, 1};
+  spec.alpha_coeffs = {0, 1};
+  spec.backend_variant = RingSwitchBackendVariant::kDefault;
+  return spec;
+}
+
+RingSwitchTestContextSpec MakeGR42VariantContextSpec() {
+  RingSwitchTestContextSpec spec = MakeGR42ContextSpec();
+  spec.name = "GR(4,2)-variant";
+  spec.backend_variant = RingSwitchBackendVariant::kVariant;
+  return spec;
+}
+
+RingSwitchTestContextSpec MakeGR44ContextSpec() {
+  RingSwitchTestContextSpec spec = MakeGR42ContextSpec();
+  spec.name = "GR(4,4)";
+  spec.extension_coeffs = {1, 1, 0, 0, 1};
+  spec.alpha_coeffs = {0, 1, 0, 0};
+  return spec;
+}
+
+ZZ_pX BuildExtensionPolynomial(const RingSwitchTestContextSpec &spec) {
+  ZZ_pX F;
+  for (long i = 0; i < static_cast<long>(spec.extension_coeffs.size()); ++i) {
+    SetCoeff(F, i, spec.extension_coeffs[static_cast<std::size_t>(i)]);
+  }
+  return F;
+}
+
+ZZ_pE BuildElementFromPolynomialCoords(const std::vector<long> &coeffs) {
+  ZZ_pX poly;
+  for (long i = 0; i < static_cast<long>(coeffs.size()); ++i) {
+    SetCoeff(poly, i, coeffs[static_cast<std::size_t>(i)]);
+  }
+  ZZ_pE out;
+  conv(out, poly);
+  return out;
+}
+
+basefold::FoldableCodeParams BuildBackendParamsFromSpec(
+    const RingSwitchTestContextSpec &spec, const ZZ_pE &alpha) {
+  switch (spec.backend_variant) {
+    case RingSwitchBackendVariant::kDefault:
+      return BuildParamsGR42(spec.p, alpha);
+    case RingSwitchBackendVariant::kVariant:
+      return BuildParamsGR42Variant(spec.p, alpha);
+    case RingSwitchBackendVariant::kD0:
+      return BuildParamsGR42D0(spec.p, alpha);
+  }
+  CHECK_MSG(false, "BuildBackendParamsFromSpec: unknown backend variant");
+  return basefold::FoldableCodeParams{};
+}
+
+class ScopedRingSwitchTestContext {
+ public:
+  explicit ScopedRingSwitchTestContext(const RingSwitchTestContextSpec &spec)
+      : spec_(spec),
+        mod_push_(spec.modulus),
+        F_(BuildExtensionPolynomial(spec_)),
+        ext_push_(F_),
+        alpha_(BuildElementFromPolynomialCoords(spec_.alpha_coeffs)) {}
+
+  const RingSwitchTestContextSpec &spec() const { return spec_; }
+  const ZZ_pX &F() const { return F_; }
+  const ZZ_pE &alpha() const { return alpha_; }
+
+ private:
+  RingSwitchTestContextSpec spec_;
+  ZZ_pPush mod_push_;
+  ZZ_pX F_;
+  ZZ_pEPush ext_push_;
+  ZZ_pE alpha_;
+};
+
+std::vector<NTL::ZZ_p> LongVecToZZp(const std::vector<long> &coeffs) {
+  std::vector<NTL::ZZ_p> out(coeffs.size());
+  for (long i = 0; i < static_cast<long>(coeffs.size()); ++i) {
+    conv(out[static_cast<std::size_t>(i)], coeffs[static_cast<std::size_t>(i)]);
+  }
+  return out;
+}
+
+long CurrentBaseModulusLong() { return NTL::conv<long>(ZZ_p::modulus()); }
+
+long NormalizeBaseCoeff(long value) {
+  const long modulus = CurrentBaseModulusLong();
+  CHECK_MSG(modulus > 1, "NormalizeBaseCoeff: invalid base modulus");
+  value %= modulus;
+  if (value < 0) {
+    value += modulus;
+  }
+  return value;
+}
+
+std::vector<std::vector<long>> IdentityBaseCoeffMatrix(long dimension) {
+  std::vector<std::vector<long>> matrix(static_cast<std::size_t>(dimension),
+                                        std::vector<long>(
+                                            static_cast<std::size_t>(dimension),
+                                            0));
+  for (long i = 0; i < dimension; ++i) {
+    matrix[static_cast<std::size_t>(i)][static_cast<std::size_t>(i)] = 1;
+  }
+  return matrix;
+}
+
+std::vector<std::vector<long>> MultiplyBaseCoeffMatrices(
+    const std::vector<std::vector<long>> &lhs,
+    const std::vector<std::vector<long>> &rhs) {
+  const long dimension = static_cast<long>(lhs.size());
+  CHECK_EQ(dimension, static_cast<long>(rhs.size()));
+  std::vector<std::vector<long>> out(static_cast<std::size_t>(dimension),
+                                     std::vector<long>(
+                                         static_cast<std::size_t>(dimension),
+                                         0));
+  for (long i = 0; i < dimension; ++i) {
+    CHECK_EQ(static_cast<long>(lhs[static_cast<std::size_t>(i)].size()),
+             dimension);
+    CHECK_EQ(static_cast<long>(rhs[static_cast<std::size_t>(i)].size()),
+             dimension);
+    for (long k = 0; k < dimension; ++k) {
+      const long lhs_ik =
+          lhs[static_cast<std::size_t>(i)][static_cast<std::size_t>(k)];
+      for (long j = 0; j < dimension; ++j) {
+        out[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)] =
+            NormalizeBaseCoeff(out[static_cast<std::size_t>(i)]
+                                   [static_cast<std::size_t>(j)] +
+                               lhs_ik * rhs[static_cast<std::size_t>(k)]
+                                           [static_cast<std::size_t>(j)]);
+      }
+    }
+  }
+  return out;
+}
+
+long NonZeroBaseCoeff(long seed_offset) {
+  const long modulus = CurrentBaseModulusLong();
+  CHECK_MSG(modulus > 1, "NonZeroBaseCoeff: invalid base modulus");
+  return 1L + (seed_offset % (modulus - 1L));
+}
+
+std::vector<std::vector<long>> BuildUpperUnitriangularMatrix(long dimension,
+                                                             long seed) {
+  std::vector<std::vector<long>> matrix = IdentityBaseCoeffMatrix(dimension);
+  for (long i = 0; i < dimension; ++i) {
+    for (long j = i + 1; j < dimension; ++j) {
+      matrix[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)] =
+          NonZeroBaseCoeff(seed + i + j);
+    }
+  }
+  return matrix;
+}
+
+std::vector<std::vector<long>> BuildLowerUnitriangularMatrix(long dimension,
+                                                             long seed) {
+  std::vector<std::vector<long>> matrix = IdentityBaseCoeffMatrix(dimension);
+  for (long i = 1; i < dimension; ++i) {
+    for (long j = 0; j < i; ++j) {
+      matrix[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)] =
+          NonZeroBaseCoeff(seed + i + j);
+    }
+  }
+  return matrix;
+}
+
+std::vector<std::vector<long>> BuildDeterministicBasisMatrix(
+    long dimension, long seed, BasisTransformFamily family) {
+  switch (family) {
+    case BasisTransformFamily::kUnitriangular:
+      return BuildUpperUnitriangularMatrix(dimension, seed);
+    case BasisTransformFamily::kDense:
+      return MultiplyBaseCoeffMatrices(
+          BuildLowerUnitriangularMatrix(dimension, seed),
+          BuildUpperUnitriangularMatrix(dimension, seed + 1));
+  }
+  CHECK_MSG(false, "BuildDeterministicBasisMatrix: unknown family");
+  return {};
+}
+
+std::vector<ZZ_pE> ApplyBasisChangeMatrixOrThrow(
+    const std::vector<ZZ_pE> &source_basis,
+    const std::vector<std::vector<long>> &matrix, const char *func_name) {
+  const long dimension = static_cast<long>(source_basis.size());
+  CHECK_EQ(static_cast<long>(matrix.size()), dimension);
+  std::vector<ZZ_pE> out(static_cast<std::size_t>(dimension));
+  for (long row = 0; row < dimension; ++row) {
+    const std::vector<long> &coords = matrix[static_cast<std::size_t>(row)];
+    CHECK_EQ(static_cast<long>(coords.size()), dimension);
+    out[static_cast<std::size_t>(row)] = ComposeFromBasisCoordsOrThrow(
+        source_basis, LongVecToZZp(coords), func_name);
+  }
+  return out;
+}
+
+RingSwitchBasisCase BuildPolynomialBasisCase() {
+  RingSwitchBasisCase out;
+  out.label = "polynomial";
+  out.basis = BuildPolynomialBasis(ZZ_pE::degree());
+  out.dual_basis = BuildDualBasisOrThrow(out.basis);
+  return out;
+}
+
+RingSwitchBasisCase BuildTransformedBasisCase(long seed,
+                                              BasisTransformFamily family) {
+  const std::vector<ZZ_pE> polynomial_basis =
+      BuildPolynomialBasis(ZZ_pE::degree());
+  RingSwitchBasisCase out;
+  out.label = (family == BasisTransformFamily::kUnitriangular)
+                  ? "unitriangular"
+                  : "dense";
+  out.basis = ApplyBasisChangeMatrixOrThrow(
+      polynomial_basis,
+      BuildDeterministicBasisMatrix(ZZ_pE::degree(), seed, family),
+      "BuildTransformedBasisCase");
+  out.dual_basis = BuildDualBasisOrThrow(out.basis);
+  return out;
+}
+
+RingSwitchBasisCase BuildSingularBasisCase(long seed,
+                                           BasisTransformFamily family) {
+  RingSwitchBasisCase out = BuildTransformedBasisCase(seed, family);
+  if (!out.basis.empty()) {
+    out.basis.back() = out.basis.front();
+  }
+  out.dual_basis.clear();
+  out.label += "-singular";
+  return out;
+}
+
+RingSwitchBasisCase BuildBrokenDualBasisCase(long seed,
+                                             BasisTransformFamily family) {
+  RingSwitchBasisCase out = BuildTransformedBasisCase(seed, family);
+  if (!out.dual_basis.empty()) {
+    out.dual_basis[0] += testutil::ConstZZpE(1);
+  }
+  out.label += "-broken-dual";
+  return out;
+}
+
+RingSwitchBasisCase MakeBasisCase(const std::string &label,
+                                  const GaloisRingBasisData &basis_data) {
+  RingSwitchBasisCase out;
+  out.label = label;
+  out.basis = basis_data.basis;
+  out.dual_basis = basis_data.dual_basis;
+  return out;
+}
+
+vec_ZZ_pE BuildBaseRingCoeffVector(const std::vector<long> &coeffs);
+
+RingSwitchEvalCaseData BuildEvalCaseData(
+    const std::vector<long> &t_table_coeffs,
+    const std::vector<std::vector<long>> &query_point_coeffs,
+    long num_queries = 2) {
+  RingSwitchEvalCaseData out;
+  out.t_table = BuildBaseRingCoeffVector(t_table_coeffs);
+  out.z.reserve(query_point_coeffs.size());
+  for (const std::vector<long> &coeffs : query_point_coeffs) {
+    out.z.push_back(BuildElementFromPolynomialCoords(coeffs));
+  }
+  out.num_queries = num_queries;
+  return out;
 }
 
 long Pow2ForTest(long exponent) {
@@ -374,66 +676,72 @@ ZZ_pE SumOfPointwiseProducts(const vec_ZZ_pE &f_table,
   return acc;
 }
 
+basefold::RingSwitchPCSParams BuildRingSwitchParamsFromSpec(
+    long ell, long kappa, const ScopedRingSwitchTestContext &ctx) {
+  basefold::RingSwitchPCSSetupInput input;
+  input.ell = ell;
+  input.kappa = kappa;
+  input.base_modulus = ctx.spec().modulus;
+  input.extension_modulus = ctx.F();
+  input.backend = basefold::MakeBaseFoldZ2kPCSBackend(
+      BuildBackendParamsFromSpec(ctx.spec(), ctx.alpha()));
+  return basefold::RingSwitchPCSSetup(input);
+}
+
 basefold::RingSwitchPCSParams BuildRingSwitchParamsGR42(long ell, long kappa,
                                                         const ZZ &base_modulus,
                                                         const ZZ_pX &F,
                                                         const ZZ &p,
                                                         const ZZ_pE &alpha) {
-  basefold::RingSwitchPCSSetupInput input;
-  input.ell = ell;
-  input.kappa = kappa;
-  input.base_modulus = base_modulus;
-  input.extension_modulus = F;
-  input.backend = basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
-  return basefold::RingSwitchPCSSetup(input);
+  (void)base_modulus;
+  (void)F;
+  RingSwitchTestContextSpec spec = MakeGR42ContextSpec();
+  spec.p = p;
+  spec.modulus = base_modulus;
+  spec.extension_coeffs = {1, 1, 1};
+  ScopedRingSwitchTestContext ctx(spec);
+  CHECK_EQ(ctx.F(), F);
+  CHECK_EQ(ctx.alpha(), alpha);
+  return BuildRingSwitchParamsFromSpec(ell, kappa, ctx);
 }
 
 basefold::RingSwitchPCSParams BuildRingSwitchParamsGR42D0(
     long ell, long kappa, const ZZ &base_modulus, const ZZ_pX &F, const ZZ &p,
     const ZZ_pE &alpha) {
+  (void)base_modulus;
+  (void)F;
+  RingSwitchTestContextSpec spec = MakeGR42ContextSpec();
+  spec.p = p;
+  spec.modulus = base_modulus;
+  spec.backend_variant = RingSwitchBackendVariant::kD0;
+  ScopedRingSwitchTestContext ctx(spec);
+  CHECK_EQ(ctx.F(), F);
+  CHECK_EQ(ctx.alpha(), alpha);
+  return BuildRingSwitchParamsFromSpec(ell, kappa, ctx);
+}
+
+basefold::RingSwitchPCSParams BuildProvidedRingSwitchParamsFromSpec(
+    long ell, long kappa, const ScopedRingSwitchTestContext &ctx,
+    const RingSwitchBasisCase &alpha_case, const RingSwitchBasisCase &beta_case,
+    bool provide_alpha_dual = false, bool provide_beta_dual = false) {
   basefold::RingSwitchPCSSetupInput input;
   input.ell = ell;
   input.kappa = kappa;
-  input.base_modulus = base_modulus;
-  input.extension_modulus = F;
-  input.backend =
-      basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42D0(p, alpha));
-  return basefold::RingSwitchPCSSetup(input);
-}
-
-std::vector<ZZ_pE> BuildNonPolynomialAlphaBasisGR42() {
-  const ZZ_pE one = testutil::ConstZZpE(1);
-  const ZZ_pE x = PolynomialBasisElement(1);
-  return {one + x, x};
-}
-
-std::vector<ZZ_pE> BuildNonPolynomialBetaBasisGR42() {
-  const ZZ_pE one = testutil::ConstZZpE(1);
-  const ZZ_pE x = PolynomialBasisElement(1);
-  return {one, one + x};
-}
-
-std::vector<ZZ_pE> BuildSingularNonBasisGR42() {
-  const ZZ_pE one = testutil::ConstZZpE(1);
-  const ZZ_pE x = PolynomialBasisElement(1);
-  return {one + x, one + x};
-}
-
-basefold::RingSwitchPCSParams BuildProvidedRingSwitchParamsGR42(
-    long ell, long kappa, const ZZ &base_modulus, const ZZ_pX &F, const ZZ &p,
-    const ZZ_pE &alpha, const std::vector<ZZ_pE> &alpha_basis,
-    const std::vector<ZZ_pE> &beta_basis) {
-  basefold::RingSwitchPCSSetupInput input;
-  input.ell = ell;
-  input.kappa = kappa;
-  input.base_modulus = base_modulus;
-  input.extension_modulus = F;
+  input.base_modulus = ctx.spec().modulus;
+  input.extension_modulus = ctx.F();
   input.use_provided_basis = true;
   input.provided_basis.has_alpha_basis = true;
-  input.provided_basis.alpha_basis.basis = alpha_basis;
+  input.provided_basis.alpha_basis.basis = alpha_case.basis;
+  if (provide_alpha_dual) {
+    input.provided_basis.alpha_basis.dual_basis = alpha_case.dual_basis;
+  }
   input.provided_basis.has_beta_basis = true;
-  input.provided_basis.beta_basis.basis = beta_basis;
-  input.backend = basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
+  input.provided_basis.beta_basis.basis = beta_case.basis;
+  if (provide_beta_dual) {
+    input.provided_basis.beta_basis.dual_basis = beta_case.dual_basis;
+  }
+  input.backend = basefold::MakeBaseFoldZ2kPCSBackend(
+      BuildBackendParamsFromSpec(ctx.spec(), ctx.alpha()));
   return basefold::RingSwitchPCSSetup(input);
 }
 
@@ -856,30 +1164,24 @@ void TestRingSwitchSetup_Succeeds() {
 void TestRingSwitchSetup_ProvidedBasisAcceptsValidNonPolynomialBases() {
   testutil::PrintInfo("Ring-switch setup: provided alpha/beta bases can be valid non-polynomial bases");
 
-  const ZZ p = to_ZZ(2);
-  const ZZ modulus = to_ZZ(4);
-  ZZ_pPush mod_push(modulus);
-
-  ZZ_pX F;
-  SetCoeff(F, 2, 1);
-  SetCoeff(F, 1, 1);
-  SetCoeff(F, 0, 1);
-  ZZ_pEPush ext_push(F);
-
-  const ZZ_pE one = testutil::ConstZZpE(1);
-  const ZZ_pE x = PolynomialBasisElement(1);
+  const ScopedRingSwitchTestContext ctx(MakeGR42ContextSpec());
+  const RingSwitchBasisCase alpha_case =
+      BuildTransformedBasisCase(/*seed=*/0, BasisTransformFamily::kUnitriangular);
+  const RingSwitchBasisCase beta_case =
+      BuildTransformedBasisCase(/*seed=*/1, BasisTransformFamily::kDense);
 
   basefold::RingSwitchPCSSetupInput input;
   input.ell = 3;
   input.kappa = 1;
-  input.base_modulus = modulus;
-  input.extension_modulus = F;
+  input.base_modulus = ctx.spec().modulus;
+  input.extension_modulus = ctx.F();
   input.use_provided_basis = true;
   input.provided_basis.has_alpha_basis = true;
   input.provided_basis.has_beta_basis = true;
-  input.provided_basis.alpha_basis.basis = {one + x, x};
-  input.provided_basis.beta_basis.basis = {one, one + x};
-  input.backend = basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, x));
+  input.provided_basis.alpha_basis.basis = alpha_case.basis;
+  input.provided_basis.beta_basis.basis = beta_case.basis;
+  input.backend = basefold::MakeBaseFoldZ2kPCSBackend(
+      BuildBackendParamsFromSpec(ctx.spec(), ctx.alpha()));
 
   const basefold::RingSwitchPCSParams params = basefold::RingSwitchPCSSetup(input);
   CHECK_EQ(params.alpha_basis.basis, input.provided_basis.alpha_basis.basis);
@@ -891,41 +1193,59 @@ void TestRingSwitchSetup_ProvidedBasisAcceptsValidNonPolynomialBases() {
 void TestRingSwitchSetup_ProvidedBasisDerivesMissingDualBases() {
   testutil::PrintInfo("Ring-switch setup: provided alpha/beta bases derive missing dual bases");
 
-  const ZZ p = to_ZZ(2);
-  const ZZ modulus = to_ZZ(4);
-  ZZ_pPush mod_push(modulus);
-
-  ZZ_pX F;
-  SetCoeff(F, 2, 1);
-  SetCoeff(F, 1, 1);
-  SetCoeff(F, 0, 1);
-  ZZ_pEPush ext_push(F);
-
-  ZZ_pX xpoly;
-  SetCoeff(xpoly, 1, 1);
-  ZZ_pE alpha;
-  conv(alpha, xpoly);
-
+  const ScopedRingSwitchTestContext ctx(MakeGR42ContextSpec());
   const basefold::RingSwitchPCSParams auto_params =
-      BuildRingSwitchParamsGR42(/*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
+      BuildRingSwitchParamsFromSpec(/*ell=*/3, /*kappa=*/1, ctx);
 
   basefold::RingSwitchPCSSetupInput input;
   input.ell = 3;
   input.kappa = 1;
-  input.base_modulus = modulus;
-  input.extension_modulus = F;
+  input.base_modulus = ctx.spec().modulus;
+  input.extension_modulus = ctx.F();
   input.use_provided_basis = true;
   input.provided_basis.has_alpha_basis = true;
   input.provided_basis.has_beta_basis = true;
   input.provided_basis.alpha_basis.basis = auto_params.alpha_basis.basis;
   input.provided_basis.beta_basis.basis = auto_params.beta_basis.basis;
-  input.backend = basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
+  input.backend = basefold::MakeBaseFoldZ2kPCSBackend(
+      BuildBackendParamsFromSpec(ctx.spec(), ctx.alpha()));
 
   const basefold::RingSwitchPCSParams params = basefold::RingSwitchPCSSetup(input);
   CHECK_EQ(params.alpha_basis.basis, auto_params.alpha_basis.basis);
   CHECK_EQ(params.beta_basis.basis, auto_params.beta_basis.basis);
   CHECK_EQ(params.alpha_basis.dual_basis, auto_params.alpha_basis.dual_basis);
   CHECK_EQ(params.beta_basis.dual_basis, auto_params.beta_basis.dual_basis);
+}
+
+void TestRingSwitchWP3Helpers_BuildReusableContextAndBasisCases() {
+  testutil::PrintInfo("Ring-switch WP3: reusable context and basis helpers span variant GR(4,2) and GR(4,4)");
+
+  {
+    const ScopedRingSwitchTestContext ctx(MakeGR42VariantContextSpec());
+    const RingSwitchBasisCase alpha_case = BuildTransformedBasisCase(
+        /*seed=*/2, BasisTransformFamily::kUnitriangular);
+    const RingSwitchBasisCase beta_case =
+        BuildTransformedBasisCase(/*seed=*/3, BasisTransformFamily::kDense);
+    const basefold::RingSwitchPCSParams params =
+        BuildProvidedRingSwitchParamsFromSpec(
+            /*ell=*/3, /*kappa=*/1, ctx, alpha_case, beta_case,
+            /*provide_alpha_dual=*/true, /*provide_beta_dual=*/true);
+    CHECK_EQ(params.alpha_basis.basis, alpha_case.basis);
+    CHECK_EQ(params.beta_basis.basis, beta_case.basis);
+    CHECK_EQ(params.alpha_basis.dual_basis, alpha_case.dual_basis);
+    CHECK_EQ(params.beta_basis.dual_basis, beta_case.dual_basis);
+  }
+
+  {
+    const ScopedRingSwitchTestContext ctx(MakeGR44ContextSpec());
+    const basefold::RingSwitchPCSParams params =
+        BuildRingSwitchParamsFromSpec(/*ell=*/4, /*kappa=*/2, ctx);
+    const RingSwitchBasisCase dense_case =
+        BuildTransformedBasisCase(/*seed=*/4, BasisTransformFamily::kDense);
+    CHECK_EQ(static_cast<long>(params.alpha_basis.basis.size()), 4L);
+    CHECK_EQ(static_cast<long>(dense_case.basis.size()), 4L);
+    CHECK(IsBasisOverBaseRing(dense_case.basis));
+  }
 }
 
 void TestRingSwitchSetup_RejectsMismatchedBaseModulus() {
@@ -1071,36 +1391,25 @@ void TestRingSwitchSetup_ProvidedBasisRejectsWrongDimension() {
 void TestRingSwitchSetup_ProvidedBasisRejectsBrokenDualBasis() {
   testutil::PrintInfo("Ring-switch setup: provided bases reject malformed dual bases");
 
-  const ZZ p = to_ZZ(2);
-  const ZZ modulus = to_ZZ(4);
-  ZZ_pPush mod_push(modulus);
-
-  ZZ_pX F;
-  SetCoeff(F, 2, 1);
-  SetCoeff(F, 1, 1);
-  SetCoeff(F, 0, 1);
-  ZZ_pEPush ext_push(F);
-
-  ZZ_pX xpoly;
-  SetCoeff(xpoly, 1, 1);
-  ZZ_pE alpha;
-  conv(alpha, xpoly);
-
+  const ScopedRingSwitchTestContext ctx(MakeGR42ContextSpec());
   const basefold::RingSwitchPCSParams auto_params =
-      BuildRingSwitchParamsGR42(/*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
+      BuildRingSwitchParamsFromSpec(/*ell=*/3, /*kappa=*/1, ctx);
+  const RingSwitchBasisCase broken_alpha =
+      BuildBrokenDualBasisCase(/*seed=*/0, BasisTransformFamily::kUnitriangular);
 
   basefold::RingSwitchPCSSetupInput input;
   input.ell = 3;
   input.kappa = 1;
-  input.base_modulus = modulus;
-  input.extension_modulus = F;
+  input.base_modulus = ctx.spec().modulus;
+  input.extension_modulus = ctx.F();
   input.use_provided_basis = true;
   input.provided_basis.has_alpha_basis = true;
   input.provided_basis.has_beta_basis = true;
-  input.provided_basis.alpha_basis = auto_params.alpha_basis;
-  input.provided_basis.alpha_basis.dual_basis[0] += testutil::ConstZZpE(1);
+  input.provided_basis.alpha_basis.basis = broken_alpha.basis;
+  input.provided_basis.alpha_basis.dual_basis = broken_alpha.dual_basis;
   input.provided_basis.beta_basis = auto_params.beta_basis;
-  input.backend = basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
+  input.backend = basefold::MakeBaseFoldZ2kPCSBackend(
+      BuildBackendParamsFromSpec(ctx.spec(), ctx.alpha()));
 
   ExpectChildFailureContains(
       [&]() { (void)basefold::RingSwitchPCSSetup(input); },
@@ -1111,32 +1420,24 @@ void TestRingSwitchSetup_ProvidedBasisRejectsBrokenDualBasis() {
 void TestRingSwitchSetup_ProvidedBasisRejectsNonBasisAlpha() {
   testutil::PrintInfo("Ring-switch WP5: provided setup rejects a non-basis alpha");
 
-  const ZZ p = to_ZZ(2);
-  const ZZ modulus = to_ZZ(4);
-  ZZ_pPush mod_push(modulus);
-
-  ZZ_pX F;
-  SetCoeff(F, 2, 1);
-  SetCoeff(F, 1, 1);
-  SetCoeff(F, 0, 1);
-  ZZ_pEPush ext_push(F);
-
-  ZZ_pX xpoly;
-  SetCoeff(xpoly, 1, 1);
-  ZZ_pE alpha;
-  conv(alpha, xpoly);
+  const ScopedRingSwitchTestContext ctx(MakeGR42ContextSpec());
+  const RingSwitchBasisCase bad_alpha =
+      BuildSingularBasisCase(/*seed=*/0, BasisTransformFamily::kUnitriangular);
+  const RingSwitchBasisCase beta_case =
+      BuildTransformedBasisCase(/*seed=*/1, BasisTransformFamily::kDense);
 
   basefold::RingSwitchPCSSetupInput input;
   input.ell = 3;
   input.kappa = 1;
-  input.base_modulus = modulus;
-  input.extension_modulus = F;
+  input.base_modulus = ctx.spec().modulus;
+  input.extension_modulus = ctx.F();
   input.use_provided_basis = true;
   input.provided_basis.has_alpha_basis = true;
   input.provided_basis.has_beta_basis = true;
-  input.provided_basis.alpha_basis.basis = BuildSingularNonBasisGR42();
-  input.provided_basis.beta_basis.basis = BuildNonPolynomialBetaBasisGR42();
-  input.backend = basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
+  input.provided_basis.alpha_basis.basis = bad_alpha.basis;
+  input.provided_basis.beta_basis.basis = beta_case.basis;
+  input.backend = basefold::MakeBaseFoldZ2kPCSBackend(
+      BuildBackendParamsFromSpec(ctx.spec(), ctx.alpha()));
 
   ExpectChildFailureContains(
       [&]() { (void)basefold::RingSwitchPCSSetup(input); },
@@ -1147,32 +1448,24 @@ void TestRingSwitchSetup_ProvidedBasisRejectsNonBasisAlpha() {
 void TestRingSwitchSetup_ProvidedBasisRejectsNonBasisBeta() {
   testutil::PrintInfo("Ring-switch WP5: provided setup rejects a non-basis beta");
 
-  const ZZ p = to_ZZ(2);
-  const ZZ modulus = to_ZZ(4);
-  ZZ_pPush mod_push(modulus);
-
-  ZZ_pX F;
-  SetCoeff(F, 2, 1);
-  SetCoeff(F, 1, 1);
-  SetCoeff(F, 0, 1);
-  ZZ_pEPush ext_push(F);
-
-  ZZ_pX xpoly;
-  SetCoeff(xpoly, 1, 1);
-  ZZ_pE alpha;
-  conv(alpha, xpoly);
+  const ScopedRingSwitchTestContext ctx(MakeGR42ContextSpec());
+  const RingSwitchBasisCase alpha_case =
+      BuildTransformedBasisCase(/*seed=*/0, BasisTransformFamily::kUnitriangular);
+  const RingSwitchBasisCase bad_beta =
+      BuildSingularBasisCase(/*seed=*/1, BasisTransformFamily::kDense);
 
   basefold::RingSwitchPCSSetupInput input;
   input.ell = 3;
   input.kappa = 1;
-  input.base_modulus = modulus;
-  input.extension_modulus = F;
+  input.base_modulus = ctx.spec().modulus;
+  input.extension_modulus = ctx.F();
   input.use_provided_basis = true;
   input.provided_basis.has_alpha_basis = true;
   input.provided_basis.has_beta_basis = true;
-  input.provided_basis.alpha_basis.basis = BuildNonPolynomialAlphaBasisGR42();
-  input.provided_basis.beta_basis.basis = BuildSingularNonBasisGR42();
-  input.backend = basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
+  input.provided_basis.alpha_basis.basis = alpha_case.basis;
+  input.provided_basis.beta_basis.basis = bad_beta.basis;
+  input.backend = basefold::MakeBaseFoldZ2kPCSBackend(
+      BuildBackendParamsFromSpec(ctx.spec(), ctx.alpha()));
 
   ExpectChildFailureContains(
       [&]() { (void)basefold::RingSwitchPCSSetup(input); },
@@ -1255,26 +1548,17 @@ void TestPackZ2kCoeffsToGREvals_RoundTripsSmallExample() {
 void TestPackZ2kCoeffsToGREvals_ComposesAgainstProvidedBetaBasis() {
   testutil::PrintInfo("Ring-switch WP3: packing composes t'(w) against the provided beta basis");
 
-  const ZZ p = to_ZZ(2);
-  const ZZ modulus = to_ZZ(4);
-  ZZ_pPush mod_push(modulus);
-
-  ZZ_pX F;
-  SetCoeff(F, 2, 1);
-  SetCoeff(F, 1, 1);
-  SetCoeff(F, 0, 1);
-  ZZ_pEPush ext_push(F);
-
-  ZZ_pX xpoly;
-  SetCoeff(xpoly, 1, 1);
-  ZZ_pE alpha;
-  conv(alpha, xpoly);
-
-  const basefold::RingSwitchPCSParams params = BuildProvidedRingSwitchParamsGR42(
-      /*ell=*/3, /*kappa=*/1, modulus, F, p, alpha,
-      BuildNonPolynomialAlphaBasisGR42(), BuildNonPolynomialBetaBasisGR42());
-  const vec_ZZ_pE t_coeffs =
-      BuildBaseRingCoeffVector({0, 1, 2, 3, 1, 0, 3, 2});
+  const ScopedRingSwitchTestContext ctx(MakeGR42ContextSpec());
+  const RingSwitchBasisCase alpha_case =
+      BuildTransformedBasisCase(/*seed=*/0, BasisTransformFamily::kUnitriangular);
+  const RingSwitchBasisCase beta_case =
+      BuildTransformedBasisCase(/*seed=*/1, BasisTransformFamily::kDense);
+  const basefold::RingSwitchPCSParams params = BuildProvidedRingSwitchParamsFromSpec(
+      /*ell=*/3, /*kappa=*/1, ctx, alpha_case, beta_case);
+  const RingSwitchEvalCaseData eval_case = BuildEvalCaseData(
+      {0, 1, 2, 3, 1, 0, 3, 2},
+      {{0, 1}, {1, 0}, {1, 1}});
+  const vec_ZZ_pE &t_coeffs = eval_case.t_table;
 
   const vec_ZZ_pE packed = basefold::PackZ2kCoeffsToGREvals(params, t_coeffs);
   CHECK_EQ(packed.length(), 4L);
@@ -1406,26 +1690,15 @@ void TestBuildRingSwitchComponentTensor_ReconstructsSuffixEqualityValues() {
 void TestBuildRingSwitchComponentTensor_ReconstructsSuffixEqualityValuesWithProvidedAlphaBasis() {
   testutil::PrintInfo("Ring-switch WP3: A_{u||w} reconstructs suffix equalities in the provided alpha basis");
 
-  const ZZ p = to_ZZ(2);
-  const ZZ modulus = to_ZZ(4);
-  ZZ_pPush mod_push(modulus);
-
-  ZZ_pX F;
-  SetCoeff(F, 2, 1);
-  SetCoeff(F, 1, 1);
-  SetCoeff(F, 0, 1);
-  ZZ_pEPush ext_push(F);
-
-  ZZ_pX xpoly;
-  SetCoeff(xpoly, 1, 1);
-  ZZ_pE alpha;
-  conv(alpha, xpoly);
-
-  const basefold::RingSwitchPCSParams params = BuildProvidedRingSwitchParamsGR42(
-      /*ell=*/3, /*kappa=*/1, modulus, F, p, alpha,
-      BuildNonPolynomialAlphaBasisGR42(), BuildNonPolynomialBetaBasisGR42());
-  const std::vector<ZZ_pE> r_suffix = {alpha + testutil::ConstZZpE(1),
-                                       testutil::ConstZZpE(3)};
+  const ScopedRingSwitchTestContext ctx(MakeGR42ContextSpec());
+  const RingSwitchBasisCase alpha_case =
+      BuildTransformedBasisCase(/*seed=*/0, BasisTransformFamily::kUnitriangular);
+  const RingSwitchBasisCase beta_case =
+      BuildTransformedBasisCase(/*seed=*/1, BasisTransformFamily::kDense);
+  const basefold::RingSwitchPCSParams params = BuildProvidedRingSwitchParamsFromSpec(
+      /*ell=*/3, /*kappa=*/1, ctx, alpha_case, beta_case);
+  const std::vector<ZZ_pE> r_suffix = {
+      ctx.alpha() + testutil::ConstZZpE(1), testutil::ConstZZpE(3)};
   const basefold::RingSwitchComponentTensor tensor =
       basefold::BuildRingSwitchComponentTensor(params, r_suffix);
 
@@ -1514,29 +1787,20 @@ void TestBuildRingSwitchComponentTensor_RecoversPartialEvaluations() {
 void TestBuildRingSwitchComponentTensor_RecoversPartialEvaluationsWithIndependentAlphaBeta() {
   testutil::PrintInfo("Ring-switch WP3: s_u recovers partial evaluations with independent provided alpha/beta bases");
 
-  const ZZ p = to_ZZ(2);
-  const ZZ modulus = to_ZZ(4);
-  ZZ_pPush mod_push(modulus);
-
-  ZZ_pX F;
-  SetCoeff(F, 2, 1);
-  SetCoeff(F, 1, 1);
-  SetCoeff(F, 0, 1);
-  ZZ_pEPush ext_push(F);
-
-  ZZ_pX xpoly;
-  SetCoeff(xpoly, 1, 1);
-  ZZ_pE alpha;
-  conv(alpha, xpoly);
-
-  const basefold::RingSwitchPCSParams params = BuildProvidedRingSwitchParamsGR42(
-      /*ell=*/3, /*kappa=*/1, modulus, F, p, alpha,
-      BuildNonPolynomialAlphaBasisGR42(), BuildNonPolynomialBetaBasisGR42());
-  const vec_ZZ_pE t_coeffs =
-      BuildBaseRingCoeffVector({0, 1, 2, 3, 1, 0, 3, 2});
+  const ScopedRingSwitchTestContext ctx(MakeGR42ContextSpec());
+  const RingSwitchBasisCase alpha_case =
+      BuildTransformedBasisCase(/*seed=*/0, BasisTransformFamily::kUnitriangular);
+  const RingSwitchBasisCase beta_case =
+      BuildTransformedBasisCase(/*seed=*/1, BasisTransformFamily::kDense);
+  const basefold::RingSwitchPCSParams params = BuildProvidedRingSwitchParamsFromSpec(
+      /*ell=*/3, /*kappa=*/1, ctx, alpha_case, beta_case);
+  const RingSwitchEvalCaseData eval_case = BuildEvalCaseData(
+      {0, 1, 2, 3, 1, 0, 3, 2},
+      {{0, 1}, {1, 0}, {1, 1}});
+  const vec_ZZ_pE &t_coeffs = eval_case.t_table;
   const vec_ZZ_pE packed = basefold::PackZ2kCoeffsToGREvals(params, t_coeffs);
-  const std::vector<ZZ_pE> r_suffix = {alpha + testutil::ConstZZpE(1),
-                                       testutil::ConstZZpE(3)};
+  const std::vector<ZZ_pE> r_suffix = {
+      ctx.alpha() + testutil::ConstZZpE(1), testutil::ConstZZpE(3)};
   const basefold::RingSwitchComponentTensor tensor =
       basefold::BuildRingSwitchComponentTensor(params, r_suffix);
 
@@ -1966,28 +2230,18 @@ void TestRingSwitchVerifyEval_AcceptsHonestProofFromDirectProvePath() {
 void TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedAlphaBetaBases() {
   testutil::PrintInfo("Ring-switch WP3: verifier accepts an honest proof with provided non-polynomial alpha/beta bases");
 
-  const ZZ p = to_ZZ(2);
-  const ZZ modulus = to_ZZ(4);
-  ZZ_pPush mod_push(modulus);
-
-  ZZ_pX F;
-  SetCoeff(F, 2, 1);
-  SetCoeff(F, 1, 1);
-  SetCoeff(F, 0, 1);
-  ZZ_pEPush ext_push(F);
-
-  ZZ_pX xpoly;
-  SetCoeff(xpoly, 1, 1);
-  ZZ_pE alpha;
-  conv(alpha, xpoly);
-
-  const basefold::RingSwitchPCSParams params = BuildProvidedRingSwitchParamsGR42(
-      /*ell=*/3, /*kappa=*/1, modulus, F, p, alpha,
-      BuildNonPolynomialAlphaBasisGR42(), BuildNonPolynomialBetaBasisGR42());
-  const vec_ZZ_pE t_table =
-      BuildBaseRingCoeffVector({0, 1, 2, 3, 1, 0, 3, 2});
-  const std::vector<ZZ_pE> z = {alpha, testutil::ConstZZpE(1),
-                                alpha + testutil::ConstZZpE(1)};
+  const ScopedRingSwitchTestContext ctx(MakeGR42ContextSpec());
+  const RingSwitchBasisCase alpha_case =
+      BuildTransformedBasisCase(/*seed=*/0, BasisTransformFamily::kUnitriangular);
+  const RingSwitchBasisCase beta_case =
+      BuildTransformedBasisCase(/*seed=*/1, BasisTransformFamily::kDense);
+  const basefold::RingSwitchPCSParams params = BuildProvidedRingSwitchParamsFromSpec(
+      /*ell=*/3, /*kappa=*/1, ctx, alpha_case, beta_case);
+  const RingSwitchEvalCaseData eval_case = BuildEvalCaseData(
+      {0, 1, 2, 3, 1, 0, 3, 2},
+      {{0, 1}, {1, 0}, {1, 1}});
+  const vec_ZZ_pE &t_table = eval_case.t_table;
+  const std::vector<ZZ_pE> &z = eval_case.z;
   const ZZ_pE claimed_s = basefold::EvalMultilinearMonomialCoeffs(
       basefold::BooleanHypercubeTableToMonomialCoeffs(t_table), z);
 
@@ -2004,30 +2258,20 @@ void TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedAlphaBetaBases() {
 void TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedNonPolynomialAlphaOnly() {
   testutil::PrintInfo("Ring-switch WP5: verifier accepts an honest proof when only alpha is non-polynomial");
 
-  const ZZ p = to_ZZ(2);
-  const ZZ modulus = to_ZZ(4);
-  ZZ_pPush mod_push(modulus);
-
-  ZZ_pX F;
-  SetCoeff(F, 2, 1);
-  SetCoeff(F, 1, 1);
-  SetCoeff(F, 0, 1);
-  ZZ_pEPush ext_push(F);
-
-  ZZ_pX xpoly;
-  SetCoeff(xpoly, 1, 1);
-  ZZ_pE alpha;
-  conv(alpha, xpoly);
-
+  const ScopedRingSwitchTestContext ctx(MakeGR42ContextSpec());
   const basefold::RingSwitchPCSParams default_params =
-      BuildRingSwitchParamsGR42(/*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
-  const basefold::RingSwitchPCSParams params = BuildProvidedRingSwitchParamsGR42(
-      /*ell=*/3, /*kappa=*/1, modulus, F, p, alpha,
-      BuildNonPolynomialAlphaBasisGR42(), default_params.beta_basis.basis);
-  const vec_ZZ_pE t_table =
-      BuildBaseRingCoeffVector({3, 1, 0, 2, 1, 2, 3, 0});
-  const std::vector<ZZ_pE> z = {alpha + testutil::ConstZZpE(1), alpha,
-                                testutil::ConstZZpE(3)};
+      BuildRingSwitchParamsFromSpec(/*ell=*/3, /*kappa=*/1, ctx);
+  const RingSwitchBasisCase alpha_case =
+      BuildTransformedBasisCase(/*seed=*/0, BasisTransformFamily::kUnitriangular);
+  const RingSwitchBasisCase beta_case =
+      MakeBasisCase("default-beta", default_params.beta_basis);
+  const basefold::RingSwitchPCSParams params = BuildProvidedRingSwitchParamsFromSpec(
+      /*ell=*/3, /*kappa=*/1, ctx, alpha_case, beta_case);
+  const RingSwitchEvalCaseData eval_case = BuildEvalCaseData(
+      {3, 1, 0, 2, 1, 2, 3, 0},
+      {{1, 1}, {0, 1}, {3, 0}});
+  const vec_ZZ_pE &t_table = eval_case.t_table;
+  const std::vector<ZZ_pE> &z = eval_case.z;
   const ZZ_pE claimed_s = basefold::EvalMultilinearMonomialCoeffs(
       basefold::BooleanHypercubeTableToMonomialCoeffs(t_table), z);
 
@@ -2044,30 +2288,20 @@ void TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedNonPolynomialAlphaOn
 void TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedNonPolynomialBetaOnly() {
   testutil::PrintInfo("Ring-switch WP5: verifier accepts an honest proof when only beta is non-polynomial");
 
-  const ZZ p = to_ZZ(2);
-  const ZZ modulus = to_ZZ(4);
-  ZZ_pPush mod_push(modulus);
-
-  ZZ_pX F;
-  SetCoeff(F, 2, 1);
-  SetCoeff(F, 1, 1);
-  SetCoeff(F, 0, 1);
-  ZZ_pEPush ext_push(F);
-
-  ZZ_pX xpoly;
-  SetCoeff(xpoly, 1, 1);
-  ZZ_pE alpha;
-  conv(alpha, xpoly);
-
+  const ScopedRingSwitchTestContext ctx(MakeGR42ContextSpec());
   const basefold::RingSwitchPCSParams default_params =
-      BuildRingSwitchParamsGR42(/*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
-  const basefold::RingSwitchPCSParams params = BuildProvidedRingSwitchParamsGR42(
-      /*ell=*/3, /*kappa=*/1, modulus, F, p, alpha,
-      default_params.alpha_basis.basis, BuildNonPolynomialBetaBasisGR42());
-  const vec_ZZ_pE t_table =
-      BuildBaseRingCoeffVector({3, 1, 0, 2, 1, 2, 3, 0});
-  const std::vector<ZZ_pE> z = {alpha + testutil::ConstZZpE(1), alpha,
-                                testutil::ConstZZpE(3)};
+      BuildRingSwitchParamsFromSpec(/*ell=*/3, /*kappa=*/1, ctx);
+  const RingSwitchBasisCase alpha_case =
+      MakeBasisCase("default-alpha", default_params.alpha_basis);
+  const RingSwitchBasisCase beta_case =
+      BuildTransformedBasisCase(/*seed=*/1, BasisTransformFamily::kDense);
+  const basefold::RingSwitchPCSParams params = BuildProvidedRingSwitchParamsFromSpec(
+      /*ell=*/3, /*kappa=*/1, ctx, alpha_case, beta_case);
+  const RingSwitchEvalCaseData eval_case = BuildEvalCaseData(
+      {3, 1, 0, 2, 1, 2, 3, 0},
+      {{1, 1}, {0, 1}, {3, 0}});
+  const vec_ZZ_pE &t_table = eval_case.t_table;
+  const std::vector<ZZ_pE> &z = eval_case.z;
   const ZZ_pE claimed_s = basefold::EvalMultilinearMonomialCoeffs(
       basefold::BooleanHypercubeTableToMonomialCoeffs(t_table), z);
 
@@ -2362,28 +2596,18 @@ void TestRingSwitchProofSerialize_ComposedSizeMatchesBytes() {
 void TestRingSwitchProofSerialize_ComposedSizeMatchesBytesWithProvidedAlphaBeta() {
   testutil::PrintInfo("Ring-switch WP4: serializer and proof-size helpers stay exact under provided non-polynomial alpha/beta bases");
 
-  const ZZ p = to_ZZ(2);
-  const ZZ modulus = to_ZZ(4);
-  ZZ_pPush mod_push(modulus);
-
-  ZZ_pX F;
-  SetCoeff(F, 2, 1);
-  SetCoeff(F, 1, 1);
-  SetCoeff(F, 0, 1);
-  ZZ_pEPush ext_push(F);
-
-  ZZ_pX xpoly;
-  SetCoeff(xpoly, 1, 1);
-  ZZ_pE alpha;
-  conv(alpha, xpoly);
-
-  const basefold::RingSwitchPCSParams params = BuildProvidedRingSwitchParamsGR42(
-      /*ell=*/3, /*kappa=*/1, modulus, F, p, alpha,
-      BuildNonPolynomialAlphaBasisGR42(), BuildNonPolynomialBetaBasisGR42());
-  const vec_ZZ_pE t_table =
-      BuildBaseRingCoeffVector({3, 1, 0, 2, 1, 2, 3, 0});
-  const std::vector<ZZ_pE> z = {alpha + testutil::ConstZZpE(1), alpha,
-                                testutil::ConstZZpE(3)};
+  const ScopedRingSwitchTestContext ctx(MakeGR42ContextSpec());
+  const RingSwitchBasisCase alpha_case =
+      BuildTransformedBasisCase(/*seed=*/0, BasisTransformFamily::kUnitriangular);
+  const RingSwitchBasisCase beta_case =
+      BuildTransformedBasisCase(/*seed=*/1, BasisTransformFamily::kDense);
+  const basefold::RingSwitchPCSParams params = BuildProvidedRingSwitchParamsFromSpec(
+      /*ell=*/3, /*kappa=*/1, ctx, alpha_case, beta_case);
+  const RingSwitchEvalCaseData eval_case = BuildEvalCaseData(
+      {3, 1, 0, 2, 1, 2, 3, 0},
+      {{1, 1}, {0, 1}, {3, 0}});
+  const vec_ZZ_pE &t_table = eval_case.t_table;
+  const std::vector<ZZ_pE> &z = eval_case.z;
   const ZZ_pE claimed_s = basefold::EvalMultilinearMonomialCoeffs(
       basefold::BooleanHypercubeTableToMonomialCoeffs(t_table), z);
 
@@ -2652,6 +2876,7 @@ int main() {
     RUN_TEST(TestRingSwitchSetup_Succeeds);
     RUN_TEST(TestRingSwitchSetup_ProvidedBasisAcceptsValidNonPolynomialBases);
     RUN_TEST(TestRingSwitchSetup_ProvidedBasisDerivesMissingDualBases);
+    RUN_TEST(TestRingSwitchWP3Helpers_BuildReusableContextAndBasisCases);
     RUN_TEST(TestRingSwitchSetup_RejectsMismatchedBaseModulus);
     RUN_TEST(TestRingSwitchSetup_RejectsMismatchedExtensionModulus);
     RUN_TEST(TestRingSwitchSetup_ProvidedBasisRejectsMissingAlphaOrBeta);

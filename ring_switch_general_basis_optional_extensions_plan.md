@@ -1,6 +1,6 @@
 # Ring-Switch General Basis Optional Extensions Plan
 
-Status: WP0-WP2 completed; WP3-WP6 pending
+Status: WP0-WP3 completed; WP4-WP6 pending
 Last updated: 2026-03-14
 Scope: finish the two follow-on optional extensions after `ring_switch_general_basis_shared_layer_plan.md`
 
@@ -28,6 +28,26 @@ Scope: finish the two follow-on optional extensions after `ring_switch_general_b
 - Benchmark output now prints `basis mode ...`; in provided mode it also prints
   basis dimensions plus whether each dual basis was supplied or derived.
 - README now documents the provided-basis bench surface and a minimal example.
+- 2026-03-14: `WP3` landed in the working tree.
+- `tests/test_z2k_ring_switch_pcs.cpp` now has a reusable ring-switch context
+  spec layer for:
+  - default `GR(4,2)`,
+  - the existing `GR(4,2)` backend variant,
+  - `GR(4,4)`.
+- Provided-basis test helpers now synthesize bases from deterministic
+  unitriangular or dense base-ring change-of-basis matrices instead of
+  hand-coded one-off `GR(4,2)` vectors.
+- Deterministic helper builders now cover:
+  - extension polynomials,
+  - backend params from context specs,
+  - witness tables,
+  - query points,
+  - valid transformed bases,
+  - singular bases,
+  - malformed dual bases.
+- Existing provided-basis setup / packing / semantic / end-to-end / proof-size
+  tests now consume the shared helper layer instead of the previous ad hoc
+  `BuildNonPolynomial*GR42` helpers.
 
 ## Goal
 
