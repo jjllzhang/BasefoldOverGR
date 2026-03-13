@@ -291,6 +291,13 @@ Minimal ring-switch bench example with caller-provided basis data:
   --queries 1 --warmup 0 --reps 1
 ```
 
+- Deliberately deferred in this follow-up:
+  - bench CLIs do not yet load basis data from external files; inline
+    `--alpha-basis` / `--beta-basis` flags are the supported interface,
+  - the required bench validation path covers smoke runs in default and
+    provided modes, but it does not add a broader automated performance sweep
+    across many provided-basis families.
+
 ### `include/Compiler/Z2k/FrobeniusPCS.hpp` / `src/Compiler/Z2k/FrobeniusPCS.cpp`
 
 - Frobenius-map-based `Z_{2^k} -> GR(2^k, r)` compiler (`Protocol 2`) built on
