@@ -1,6 +1,6 @@
 # Ring-Switch General Basis Optional Extensions Plan
 
-Status: WP0-WP4 completed; WP5-WP6 pending
+Status: WP0-WP5 completed; WP6 pending
 Last updated: 2026-03-14
 Scope: finish the two follow-on optional extensions after `ring_switch_general_basis_shared_layer_plan.md`
 
@@ -67,6 +67,20 @@ Scope: finish the two follow-on optional extensions after `ring_switch_general_b
   - `A_{u||w}` reconstruction against the provided `alpha` basis,
   - partial-evaluation recovery against direct evaluation,
   - composed proof size against serialized byte length.
+- 2026-03-14: `WP5` landed in the working tree.
+- The negative/boundary matrix now explicitly covers every malformed-basis class
+  listed in the plan:
+  - missing `beta` in `GR(4,2)`,
+  - missing `alpha` in `GR(4,4)`,
+  - wrong-size `alpha` in `GR(4,2)`,
+  - wrong-size `beta` in `GR(4,4)`,
+  - malformed `alpha` dual in `GR(4,2)`,
+  - malformed `beta` dual in `GR(4,4)`,
+  - singular `alpha` in `GR(4,2)`,
+  - singular `beta` in `GR(4,2)`.
+- The explicit-dual positive boundary case from `WP4`, the `ell_prime=0`
+  regression, tamper rejection, and the provided-basis proof-size regression in
+  `GR(4,4)` all remain live in the test target.
 
 ## Goal
 
