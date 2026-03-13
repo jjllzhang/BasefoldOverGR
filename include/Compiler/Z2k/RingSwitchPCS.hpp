@@ -9,17 +9,16 @@
 #include <vector>
 
 #include "Compiler/Z2k/PCSBackend.hpp"
+#include "GaloisRing/Basis.hpp"
 #include "PCS/Common/Sumcheck.hpp"
 
 namespace basefold {
 
-enum class RingSwitchBasisKind {
-  kPolynomial = 0,
-};
-
-struct RingSwitchBasisDescriptor {
-  RingSwitchBasisKind kind = RingSwitchBasisKind::kPolynomial;
-  long dimension = 0;
+struct RingSwitchPCSProvidedBasisInput {
+  bool has_alpha_basis = false;
+  GaloisRingBasisData alpha_basis;
+  bool has_beta_basis = false;
+  GaloisRingBasisData beta_basis;
 };
 
 struct RingSwitchPCSSetupInput {
@@ -27,8 +26,12 @@ struct RingSwitchPCSSetupInput {
   long kappa = 0;
   NTL::ZZ base_modulus;
   NTL::ZZ_pX extension_modulus;
-  RingSwitchBasisDescriptor alpha_basis;
-  RingSwitchBasisDescriptor beta_basis;
+  // false: setup builds the active polynomial basis for both alpha and beta.
+  // true: callers can pass independent alpha/beta basis data through
+  // provided_basis. RingSwitchPCSSetup currently reserves that path until the
+  // shared basis-validation layer lands in later work packages.
+  bool use_provided_basis = false;
+  RingSwitchPCSProvidedBasisInput provided_basis;
   Z2kPCSBackendHandle backend;
 };
 
@@ -38,8 +41,9 @@ struct RingSwitchPCSParams {
   long ell_prime = 0;
   NTL::ZZ base_modulus;
   NTL::ZZ_pX extension_modulus;
-  RingSwitchBasisDescriptor alpha_basis;
-  RingSwitchBasisDescriptor beta_basis;
+  // alpha and beta are independent basis objects in the paper semantics.
+  GaloisRingBasisData alpha_basis;
+  GaloisRingBasisData beta_basis;
   Z2kPCSBackendHandle backend;
 };
 
@@ -80,8 +84,6 @@ struct RingSwitchPCSEvalProof {
   NTL::ZZ_pE t_star;
   Z2kPCSBackendEvalProof backend_proof;
 };
-
-RingSwitchBasisDescriptor ActivePolynomialBasisDescriptor();
 
 void ValidateCurrentZ2kRingContextOrThrow(const NTL::ZZ &base_modulus,
                                           const NTL::ZZ_pX &extension_modulus,
@@ -308,7 +310,7 @@ NTL::vec_ZZ_pE DecomposeGRElementToBaseCoeffsPolynomialBasis(
 
 NTL::vec_ZZ_pE DecomposeGRElementToBaseCoeffs(
     const RingSwitchPCSParams &params, const NTL::ZZ_pE &element,
-    const RingSwitchBasisDescriptor &basis);
+    const GaloisRingBasisData &basis);
 
 RingSwitchComponentTensor BuildRingSwitchComponentTensor(
     const RingSwitchPCSParams &params,

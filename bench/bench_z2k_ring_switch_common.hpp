@@ -394,8 +394,6 @@ inline basefold::RingSwitchPCSParams BuildRingSwitchParams(
   input.kappa = kappa;
   input.base_modulus = spec.scalar_modulus;
   input.extension_modulus = F;
-  input.alpha_basis = basefold::ActivePolynomialBasisDescriptor();
-  input.beta_basis = basefold::ActivePolynomialBasisDescriptor();
   input.backend = basefold::MakeBaseFoldZ2kPCSBackend(
       BuildBackendParams(c, ell - kappa, p_base, zeta));
   return basefold::RingSwitchPCSSetup(input);

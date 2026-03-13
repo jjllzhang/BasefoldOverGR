@@ -245,6 +245,27 @@ Language versions:
 - User-facing proof-size reporting is surfaced from `bench_pcs_eval`, which prints
   `proof_size_bytes` / `proof_size_kb` for the proof it just generated.
 
+### `include/Compiler/Z2k/RingSwitchPCS.hpp` / `src/Compiler/Z2k/RingSwitchPCS.cpp`
+
+- Ring-switch `Z_{2^k} -> GR(2^k, 2^kappa)` compiler (`Protocol 1`) built on
+  the existing generic backend boundary.
+- Public setup now exposes the final basis-carrying API shape:
+  - default mode: `use_provided_basis=false`, so setup instantiates the active
+    polynomial basis for both `alpha` and `beta`,
+  - caller-provided mode: `use_provided_basis=true`, with independent
+    `alpha_basis` and `beta_basis` carried in
+    `RingSwitchPCSProvidedBasisInput`.
+- Current implementation status:
+  - `alpha` and `beta` are modeled as independent basis objects in the public
+    API and stored in `RingSwitchPCSParams`,
+  - runtime semantics are still intentionally restricted to the default
+    polynomial-basis path until the shared basis-validation and general-basis
+    algebra work lands,
+  - `RingSwitchPCSSetup(...)` therefore rejects caller-provided basis data for
+    now instead of silently accepting a partial implementation.
+- Proof shape is unchanged: outer and composed proofs still carry only
+  `s_by_u`, `h_by_level`, `t_star`, and the backend opening proof.
+
 ### `include/Compiler/Z2k/FrobeniusPCS.hpp` / `src/Compiler/Z2k/FrobeniusPCS.cpp`
 
 - Frobenius-map-based `Z_{2^k} -> GR(2^k, r)` compiler (`Protocol 2`) built on

@@ -12,7 +12,8 @@ void ValidateOuterProofShapeOrThrow(const RingSwitchPCSParams &params,
                                     const OuterProofLike &proof,
                                     const char *func_name) {
   ValidateRingSwitchPCSParamsOrThrow(params);
-  const long expected_s_count = params.beta_basis.dimension;
+  const long expected_s_count =
+      static_cast<long>(params.beta_basis.basis.size());
   z2k_fixed_proof_serialize_detail::ValidateOuterProofShapeOrThrow(
       expected_s_count, proof.s_by_u.size(), "s_by_u", "beta basis dimension",
       params.ell_prime, proof.h_by_level.size(), func_name);

@@ -384,8 +384,6 @@ basefold::RingSwitchPCSParams BuildRingSwitchParamsGR42(long ell, long kappa,
   input.kappa = kappa;
   input.base_modulus = base_modulus;
   input.extension_modulus = F;
-  input.alpha_basis = basefold::ActivePolynomialBasisDescriptor();
-  input.beta_basis = basefold::ActivePolynomialBasisDescriptor();
   input.backend = basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
   return basefold::RingSwitchPCSSetup(input);
 }
@@ -398,8 +396,6 @@ basefold::RingSwitchPCSParams BuildRingSwitchParamsGR42D0(
   input.kappa = kappa;
   input.base_modulus = base_modulus;
   input.extension_modulus = F;
-  input.alpha_basis = basefold::ActivePolynomialBasisDescriptor();
-  input.beta_basis = basefold::ActivePolynomialBasisDescriptor();
   input.backend =
       basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42D0(p, alpha));
   return basefold::RingSwitchPCSSetup(input);
@@ -570,8 +566,6 @@ void TestBaseFoldBackendAdapter_RejectsSameDegreeContextSwitch() {
         input.kappa = 1;
         input.base_modulus = modulus;
         input.extension_modulus = F2;
-        input.alpha_basis = basefold::ActivePolynomialBasisDescriptor();
-        input.beta_basis = basefold::ActivePolynomialBasisDescriptor();
         input.backend = backend;
         (void)basefold::RingSwitchPCSSetup(input);
       },
@@ -716,9 +710,10 @@ void TestBaseFoldBackendAdapter_RejectsProofSizeAfterContextSwitch() {
       "TestBaseFoldBackendAdapter_RejectsProofSizeAfterContextSwitch");
 }
 
-void TestActivePolynomialBasisDescriptor_UsesCurrentDegree() {
-  testutil::PrintInfo("Ring-switch setup: active polynomial basis reflects ZZ_pE degree");
+void TestRingSwitchSetup_DefaultBasesUseCurrentDegree() {
+  testutil::PrintInfo("Ring-switch setup: default alpha/beta bases reflect current ZZ_pE degree");
 
+  const ZZ p = to_ZZ(2);
   const ZZ modulus = to_ZZ(4);
   ZZ_pPush mod_push(modulus);
 
@@ -728,10 +723,27 @@ void TestActivePolynomialBasisDescriptor_UsesCurrentDegree() {
   SetCoeff(F, 0, 1);
   ZZ_pEPush ext_push(F);
 
-  const basefold::RingSwitchBasisDescriptor basis =
-      basefold::ActivePolynomialBasisDescriptor();
-  CHECK(basis.kind == basefold::RingSwitchBasisKind::kPolynomial);
-  CHECK_EQ(basis.dimension, 2L);
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  basefold::RingSwitchPCSSetupInput input;
+  input.ell = 3;
+  input.kappa = 1;
+  input.base_modulus = modulus;
+  input.extension_modulus = F;
+  input.backend = basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
+
+  const basefold::RingSwitchPCSParams params = basefold::RingSwitchPCSSetup(input);
+  CHECK_EQ(static_cast<long>(params.alpha_basis.basis.size()), 2L);
+  CHECK_EQ(static_cast<long>(params.beta_basis.basis.size()), 2L);
+  CHECK_EQ(static_cast<long>(params.alpha_basis.dual_basis.size()), 2L);
+  CHECK_EQ(static_cast<long>(params.beta_basis.dual_basis.size()), 2L);
+  CHECK_EQ(params.alpha_basis.basis[0], testutil::ConstZZpE(1));
+  CHECK_EQ(params.beta_basis.basis[0], testutil::ConstZZpE(1));
+  CHECK_EQ(params.alpha_basis.basis[1], alpha);
+  CHECK_EQ(params.beta_basis.basis[1], alpha);
 }
 
 void TestValidateCurrentZ2kRingContext_SucceedsForGR42() {
@@ -792,18 +804,16 @@ void TestRingSwitchSetup_Succeeds() {
   input.kappa = 1;
   input.base_modulus = modulus;
   input.extension_modulus = F;
-  input.alpha_basis = basefold::ActivePolynomialBasisDescriptor();
-  input.beta_basis = basefold::ActivePolynomialBasisDescriptor();
   input.backend = basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
 
   const basefold::RingSwitchPCSParams params = basefold::RingSwitchPCSSetup(input);
   CHECK_EQ(params.ell, 3L);
   CHECK_EQ(params.kappa, 1L);
   CHECK_EQ(params.ell_prime, 2L);
-  CHECK(params.alpha_basis.kind == basefold::RingSwitchBasisKind::kPolynomial);
-  CHECK(params.beta_basis.kind == basefold::RingSwitchBasisKind::kPolynomial);
-  CHECK_EQ(params.alpha_basis.dimension, 2L);
-  CHECK_EQ(params.beta_basis.dimension, 2L);
+  CHECK_EQ(static_cast<long>(params.alpha_basis.basis.size()), 2L);
+  CHECK_EQ(static_cast<long>(params.beta_basis.basis.size()), 2L);
+  CHECK_EQ(static_cast<long>(params.alpha_basis.dual_basis.size()), 2L);
+  CHECK_EQ(static_cast<long>(params.beta_basis.dual_basis.size()), 2L);
   CHECK_EQ(basefold::Z2kPCSBackendPointDimension(params.backend), 2L);
 }
 
@@ -830,8 +840,6 @@ void TestRingSwitchSetup_RejectsMismatchedBaseModulus() {
   input.kappa = 1;
   input.base_modulus = to_ZZ(8);
   input.extension_modulus = F;
-  input.alpha_basis = basefold::ActivePolynomialBasisDescriptor();
-  input.beta_basis = basefold::ActivePolynomialBasisDescriptor();
   input.backend = basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
 
   ExpectChildFailureContains(
@@ -867,8 +875,6 @@ void TestRingSwitchSetup_RejectsMismatchedExtensionModulus() {
   input.kappa = 1;
   input.base_modulus = modulus;
   input.extension_modulus = F_bad;
-  input.alpha_basis = basefold::ActivePolynomialBasisDescriptor();
-  input.beta_basis = basefold::ActivePolynomialBasisDescriptor();
   input.backend = basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
 
   ExpectChildFailureContains(
@@ -877,8 +883,8 @@ void TestRingSwitchSetup_RejectsMismatchedExtensionModulus() {
       "TestRingSwitchSetup_RejectsMismatchedExtensionModulus");
 }
 
-void TestRingSwitchSetup_RejectsNonPolynomialBasis() {
-  testutil::PrintInfo("Ring-switch setup: Setup rejects unsupported basis kinds");
+void TestRingSwitchSetup_RejectsProvidedBasisUntilWP2() {
+  testutil::PrintInfo("Ring-switch setup: provided alpha/beta path is reserved until WP2");
 
   const ZZ p = to_ZZ(2);
   const ZZ modulus = to_ZZ(4);
@@ -900,15 +906,15 @@ void TestRingSwitchSetup_RejectsNonPolynomialBasis() {
   input.kappa = 1;
   input.base_modulus = modulus;
   input.extension_modulus = F;
-  input.alpha_basis.kind = static_cast<basefold::RingSwitchBasisKind>(1);
-  input.alpha_basis.dimension = 2;
-  input.beta_basis = basefold::ActivePolynomialBasisDescriptor();
+  input.use_provided_basis = true;
+  input.provided_basis.has_alpha_basis = true;
+  input.provided_basis.has_beta_basis = true;
   input.backend = basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
 
   ExpectChildFailureContains(
       [&]() { (void)basefold::RingSwitchPCSSetup(input); },
-      "alpha_basis must be the active polynomial basis",
-      "TestRingSwitchSetup_RejectsNonPolynomialBasis");
+      "caller-provided alpha/beta bases are not implemented yet",
+      "TestRingSwitchSetup_RejectsProvidedBasisUntilWP2");
 }
 
 void TestRingSwitchSetup_RejectsBackendDimensionMismatch() {
@@ -934,8 +940,6 @@ void TestRingSwitchSetup_RejectsBackendDimensionMismatch() {
   input.kappa = 1;
   input.base_modulus = modulus;
   input.extension_modulus = F;
-  input.alpha_basis = basefold::ActivePolynomialBasisDescriptor();
-  input.beta_basis = basefold::ActivePolynomialBasisDescriptor();
   input.backend = basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
 
   ExpectChildFailureContains(
@@ -1556,8 +1560,6 @@ void TestRingSwitchPaperAPI_AcceptsHonestProof() {
   input.kappa = 1;
   input.base_modulus = modulus;
   input.extension_modulus = F;
-  input.alpha_basis = basefold::ActivePolynomialBasisDescriptor();
-  input.beta_basis = basefold::ActivePolynomialBasisDescriptor();
   input.backend = basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
   const basefold::RingSwitchPCSSetupOutput api =
       basefold::RingSwitchPCSSetupProtocol(input);
@@ -2025,13 +2027,13 @@ int main() {
     RUN_TEST(TestBaseFoldBackendAdapter_RejectsArtifactsFromDifferentHandle);
     RUN_TEST(TestBaseFoldBackendAdapter_RejectsProofReuseAcrossHandles);
     RUN_TEST(TestBaseFoldBackendAdapter_RejectsProofSizeAfterContextSwitch);
-    RUN_TEST(TestActivePolynomialBasisDescriptor_UsesCurrentDegree);
+    RUN_TEST(TestRingSwitchSetup_DefaultBasesUseCurrentDegree);
     RUN_TEST(TestValidateCurrentZ2kRingContext_SucceedsForGR42);
     RUN_TEST(TestValidateCurrentZ2kRingContext_RejectsReducibleMod2Polynomial);
     RUN_TEST(TestRingSwitchSetup_Succeeds);
     RUN_TEST(TestRingSwitchSetup_RejectsMismatchedBaseModulus);
     RUN_TEST(TestRingSwitchSetup_RejectsMismatchedExtensionModulus);
-    RUN_TEST(TestRingSwitchSetup_RejectsNonPolynomialBasis);
+    RUN_TEST(TestRingSwitchSetup_RejectsProvidedBasisUntilWP2);
     RUN_TEST(TestRingSwitchSetup_RejectsBackendDimensionMismatch);
     RUN_TEST(TestPackZ2kCoeffsToGREvals_RoundTripsSmallExample);
     RUN_TEST(TestBooleanHypercubeTableToMonomialCoeffs_EvaluatesTableCorrectly);
