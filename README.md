@@ -255,8 +255,35 @@ Language versions:
   - outer-only proof (`FrobeniusPCSOuterEvalProof`),
   - composed proof (`FrobeniusPCSEvalProof`),
   - staged prover/verifier wrappers.
+- Setup now supports two modes:
+  - auto-discover the normal/dual basis during setup,
+  - accept paper-style caller-provided `beta/alpha` basis data through
+    `FrobeniusPCSProvidedBasisInput`.
+- Provided-basis setup still validates the basis strongly. If the caller omits a
+  Teichmuller generator, setup derives one internally and checks that the
+  supplied `beta/alpha` are ordered as a true Frobenius orbit.
 - Current scope is correctness-first single-point opening only; it does not
   implement multipoint opening, Blaze-Orion style composition, or WHIR.
+
+Minimal setup example with caller-provided basis:
+
+```cpp
+basefold::FrobeniusPCSSetupInput input;
+input.ell = ell;
+input.kappa = kappa;
+input.base_modulus = base_modulus;
+input.extension_modulus = extension_modulus;
+input.use_provided_basis = true;
+input.provided_basis.normal_basis = normal_basis;  // beta + alpha
+input.provided_basis.has_teichmuller_generator = false;
+input.backend = backend;
+
+const basefold::FrobeniusPCSParams params = basefold::FrobeniusPCSSetup(input);
+```
+
+If you already have a checked Teichmuller generator, set
+`input.provided_basis.has_teichmuller_generator = true` and fill
+`input.provided_basis.teichmuller_generator`.
 
 ### `include/Compiler/Z2k/FrobeniusProofSerialize.hpp` / `src/Compiler/Z2k/FrobeniusProofSerialize.cpp`
 
@@ -336,7 +363,7 @@ Available tests:
 - `tests/test_pcs.cpp`: BaseFold PCS (field + GR) proof generation and verification (including tampering-failure checks).
 - `tests/test_z2k_frobenius_feasibility.cpp`: algebraic Frobenius feasibility regression on small Galois-ring instances.
 - `tests/test_z2k_frobenius_bench_cli.cpp`: Frobenius commit/eval bench CLI regression for `--help`, smoke execution, and stable proof-size output fields.
-- `tests/test_z2k_frobenius_pcs.cpp`: Frobenius PCS setup/packing/prove/verify plus serializer-backed proof-size checks.
+- `tests/test_z2k_frobenius_pcs.cpp`: Frobenius PCS setup/packing/prove/verify, provided-basis setup validation, plus serializer-backed proof-size checks.
 
 After installing NTL/GMP, build with CMake (out-of-source recommended):
 

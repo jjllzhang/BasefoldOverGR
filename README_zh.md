@@ -245,8 +245,35 @@
   - outer-only proof（`FrobeniusPCSOuterEvalProof`），
   - composed proof（`FrobeniusPCSEvalProof`），
   - staged prover/verifier wrapper。
+- setup 现在支持两种模式：
+  - 在 setup 阶段自动搜索 normal/dual basis，
+  - 通过 `FrobeniusPCSProvidedBasisInput` 显式传入论文语义下的
+    `beta/alpha` basis 数据。
+- 显式 basis 路径仍然会做强校验。若调用方不提供 Teichmüller generator，
+  setup 会先自行构造一个，再检查给定的 `beta/alpha` 是否按真实
+  Frobenius orbit 顺序排列。
 - 当前范围仍然是 correctness-first 的单点评估证明；不包含 multipoint
   opening、Blaze-Orion 风格 proof composition、或 WHIR。
+
+使用显式 basis 的最小 setup 示例：
+
+```cpp
+basefold::FrobeniusPCSSetupInput input;
+input.ell = ell;
+input.kappa = kappa;
+input.base_modulus = base_modulus;
+input.extension_modulus = extension_modulus;
+input.use_provided_basis = true;
+input.provided_basis.normal_basis = normal_basis;  // beta + alpha
+input.provided_basis.has_teichmuller_generator = false;
+input.backend = backend;
+
+const basefold::FrobeniusPCSParams params = basefold::FrobeniusPCSSetup(input);
+```
+
+如果你已经有可信的 Teichmüller generator，可以把
+`input.provided_basis.has_teichmuller_generator = true`，并填入
+`input.provided_basis.teichmuller_generator`。
 
 ### `include/Compiler/Z2k/FrobeniusProofSerialize.hpp` / `src/Compiler/Z2k/FrobeniusProofSerialize.cpp`
 
@@ -320,7 +347,7 @@
 - `tests/test_pcs.cpp`：覆盖 BaseFold PCS（有限域与 GR）生成 proof 并验证通过（以及篡改后应失败）。
 - `tests/test_z2k_frobenius_feasibility.cpp`：覆盖小参数 Galois ring 上的 Frobenius 代数可行性回归。
 - `tests/test_z2k_frobenius_bench_cli.cpp`：覆盖 Frobenius commit/eval bench CLI 的 `--help`、smoke execution，以及稳定 proof-size 输出字段。
-- `tests/test_z2k_frobenius_pcs.cpp`：覆盖 Frobenius PCS 的 setup/packing/prove/verify，以及 serializer-backed proof-size 检查。
+- `tests/test_z2k_frobenius_pcs.cpp`：覆盖 Frobenius PCS 的 setup/packing/prove/verify、provided-basis setup 校验，以及 serializer-backed proof-size 检查。
 
 在安装好 NTL/GMP 后，使用 CMake（推荐 out-of-source 构建）：
 

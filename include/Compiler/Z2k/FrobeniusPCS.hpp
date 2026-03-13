@@ -14,6 +14,11 @@
 
 namespace basefold {
 
+// Optional paper-style setup input for Protocol 2. When enabled through
+// FrobeniusPCSSetupInput::use_provided_basis, setup validates that normal_basis
+// is a genuine Frobenius-ordered normal basis with the supplied dual basis.
+// If has_teichmuller_generator is false, setup derives a generator internally
+// and still performs the same strong validation.
 struct FrobeniusPCSProvidedBasisInput {
   NormalBasisData normal_basis;
   bool has_teichmuller_generator = false;
@@ -25,6 +30,8 @@ struct FrobeniusPCSSetupInput {
   long kappa = 0;
   NTL::ZZ base_modulus;
   NTL::ZZ_pX extension_modulus;
+  // false: discover the normal/dual basis during setup.
+  // true: use provided_basis instead and validate it against the active context.
   bool use_provided_basis = false;
   FrobeniusPCSProvidedBasisInput provided_basis;
   long teichmuller_generator_max_trials = 1024;

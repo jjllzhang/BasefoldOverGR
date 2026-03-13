@@ -18,9 +18,10 @@ while keeping the current auto-search path as a compatible fallback.
     and commitment agreement with the auto path, end-to-end prove/verify, and
     rejection of malformed dual-basis, wrong-dimension, and broken-orbit
     inputs.
+  - README/API-facing docs now describe the two setup modes and include a
+    minimal caller-provided basis example.
 - Remaining follow-up:
-  - optional README/API examples can be added later if we want the new setup
-    surface documented outside the test suite.
+  - none for the scope of this refactor.
 
 The target outcome is:
 
