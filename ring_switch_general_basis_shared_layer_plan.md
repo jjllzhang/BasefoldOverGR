@@ -1,6 +1,6 @@
 # Ring-Switch General Basis Shared-Layer Plan
 
-Status: WP0-WP4 completed; WP5-WP6 pending
+Status: WP0-WP5 completed; WP6 pending
 Last updated: 2026-03-14
 Scope: make `RingSwitchPCS` support paper-aligned general `alpha/beta` Galois-ring bases through a clean shared basis layer
 
@@ -36,6 +36,16 @@ Scope: make `RingSwitchPCS` support paper-aligned general `alpha/beta` Galois-ri
 - Added provided-basis regression coverage to lock in that outer/composed proof
   serialization and proof-size helpers stay exact under non-polynomial
   `alpha/beta` bases.
+- 2026-03-14: `WP5` landed in the working tree.
+- Test coverage now explicitly includes:
+  - non-basis `alpha` rejection,
+  - non-basis `beta` rejection,
+  - wrong-size and malformed-dual rejection,
+  - default polynomial mode,
+  - provided non-polynomial `alpha` only,
+  - provided non-polynomial `beta` only,
+  - provided non-polynomial `alpha != beta`,
+  - end-to-end single-point prove/verify under provided bases.
 
 ## Goal
 
@@ -58,14 +68,12 @@ The plan intentionally keeps the backend PCS boundary unchanged and does not cha
 
 ## Current Gaps
 
-Current remaining gaps after `WP4` are no longer in the protocol core or proof
-size plumbing.
-They are mostly follow-up plumbing and coverage:
+Current remaining gap after `WP5` is mostly bench/documentation exposure:
 
 - bench helpers should expose provided-basis runs instead of only the default
   polynomial setup
-- test coverage can still be expanded beyond the current non-polynomial
-  `GR(4,2)` witness pair
+- optional future coverage could still expand beyond the current non-polynomial
+  `GR(4,2)` witness pair, but the main `WP5` acceptance matrix is now covered
 
 These assumptions currently live mainly in:
 

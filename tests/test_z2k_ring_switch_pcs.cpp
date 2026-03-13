@@ -413,6 +413,12 @@ std::vector<ZZ_pE> BuildNonPolynomialBetaBasisGR42() {
   return {one, one + x};
 }
 
+std::vector<ZZ_pE> BuildSingularNonBasisGR42() {
+  const ZZ_pE one = testutil::ConstZZpE(1);
+  const ZZ_pE x = PolynomialBasisElement(1);
+  return {one + x, one + x};
+}
+
 basefold::RingSwitchPCSParams BuildProvidedRingSwitchParamsGR42(
     long ell, long kappa, const ZZ &base_modulus, const ZZ_pX &F, const ZZ &p,
     const ZZ_pE &alpha, const std::vector<ZZ_pE> &alpha_basis,
@@ -1100,6 +1106,78 @@ void TestRingSwitchSetup_ProvidedBasisRejectsBrokenDualBasis() {
       [&]() { (void)basefold::RingSwitchPCSSetup(input); },
       "dual-basis trace identity",
       "TestRingSwitchSetup_ProvidedBasisRejectsBrokenDualBasis");
+}
+
+void TestRingSwitchSetup_ProvidedBasisRejectsNonBasisAlpha() {
+  testutil::PrintInfo("Ring-switch WP5: provided setup rejects a non-basis alpha");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  basefold::RingSwitchPCSSetupInput input;
+  input.ell = 3;
+  input.kappa = 1;
+  input.base_modulus = modulus;
+  input.extension_modulus = F;
+  input.use_provided_basis = true;
+  input.provided_basis.has_alpha_basis = true;
+  input.provided_basis.has_beta_basis = true;
+  input.provided_basis.alpha_basis.basis = BuildSingularNonBasisGR42();
+  input.provided_basis.beta_basis.basis = BuildNonPolynomialBetaBasisGR42();
+  input.backend = basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
+
+  ExpectChildFailureContains(
+      [&]() { (void)basefold::RingSwitchPCSSetup(input); },
+      "provided_basis.alpha_basis.basis is not a basis over the base ring",
+      "TestRingSwitchSetup_ProvidedBasisRejectsNonBasisAlpha");
+}
+
+void TestRingSwitchSetup_ProvidedBasisRejectsNonBasisBeta() {
+  testutil::PrintInfo("Ring-switch WP5: provided setup rejects a non-basis beta");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  basefold::RingSwitchPCSSetupInput input;
+  input.ell = 3;
+  input.kappa = 1;
+  input.base_modulus = modulus;
+  input.extension_modulus = F;
+  input.use_provided_basis = true;
+  input.provided_basis.has_alpha_basis = true;
+  input.provided_basis.has_beta_basis = true;
+  input.provided_basis.alpha_basis.basis = BuildNonPolynomialAlphaBasisGR42();
+  input.provided_basis.beta_basis.basis = BuildSingularNonBasisGR42();
+  input.backend = basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
+
+  ExpectChildFailureContains(
+      [&]() { (void)basefold::RingSwitchPCSSetup(input); },
+      "provided_basis.beta_basis.basis is not a basis over the base ring",
+      "TestRingSwitchSetup_ProvidedBasisRejectsNonBasisBeta");
 }
 
 void TestRingSwitchSetup_RejectsBackendDimensionMismatch() {
@@ -1923,6 +2001,86 @@ void TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedAlphaBetaBases() {
                                           claimed_s, /*num_queries=*/2, proof));
 }
 
+void TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedNonPolynomialAlphaOnly() {
+  testutil::PrintInfo("Ring-switch WP5: verifier accepts an honest proof when only alpha is non-polynomial");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::RingSwitchPCSParams default_params =
+      BuildRingSwitchParamsGR42(/*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
+  const basefold::RingSwitchPCSParams params = BuildProvidedRingSwitchParamsGR42(
+      /*ell=*/3, /*kappa=*/1, modulus, F, p, alpha,
+      BuildNonPolynomialAlphaBasisGR42(), default_params.beta_basis.basis);
+  const vec_ZZ_pE t_table =
+      BuildBaseRingCoeffVector({3, 1, 0, 2, 1, 2, 3, 0});
+  const std::vector<ZZ_pE> z = {alpha + testutil::ConstZZpE(1), alpha,
+                                testutil::ConstZZpE(3)};
+  const ZZ_pE claimed_s = basefold::EvalMultilinearMonomialCoeffs(
+      basefold::BooleanHypercubeTableToMonomialCoeffs(t_table), z);
+
+  const basefold::MerkleRoot commitment =
+      basefold::RingSwitchPCSCommit(params, t_table);
+  const basefold::RingSwitchPCSEvalProof proof =
+      basefold::RingSwitchPCSProveEval(params, t_table, z, claimed_s,
+                                       /*num_queries=*/2);
+
+  CHECK(basefold::RingSwitchPCSVerifyEval(params, commitment, z, claimed_s,
+                                          /*num_queries=*/2, proof));
+}
+
+void TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedNonPolynomialBetaOnly() {
+  testutil::PrintInfo("Ring-switch WP5: verifier accepts an honest proof when only beta is non-polynomial");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::RingSwitchPCSParams default_params =
+      BuildRingSwitchParamsGR42(/*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
+  const basefold::RingSwitchPCSParams params = BuildProvidedRingSwitchParamsGR42(
+      /*ell=*/3, /*kappa=*/1, modulus, F, p, alpha,
+      default_params.alpha_basis.basis, BuildNonPolynomialBetaBasisGR42());
+  const vec_ZZ_pE t_table =
+      BuildBaseRingCoeffVector({3, 1, 0, 2, 1, 2, 3, 0});
+  const std::vector<ZZ_pE> z = {alpha + testutil::ConstZZpE(1), alpha,
+                                testutil::ConstZZpE(3)};
+  const ZZ_pE claimed_s = basefold::EvalMultilinearMonomialCoeffs(
+      basefold::BooleanHypercubeTableToMonomialCoeffs(t_table), z);
+
+  const basefold::MerkleRoot commitment =
+      basefold::RingSwitchPCSCommit(params, t_table);
+  const basefold::RingSwitchPCSEvalProof proof =
+      basefold::RingSwitchPCSProveEval(params, t_table, z, claimed_s,
+                                       /*num_queries=*/2);
+
+  CHECK(basefold::RingSwitchPCSVerifyEval(params, commitment, z, claimed_s,
+                                          /*num_queries=*/2, proof));
+}
+
 void TestRingSwitchPaperAPI_AcceptsHonestProof() {
   testutil::PrintInfo("Ring-switch WP6: staged setup/commit/prove/verify API matches the legacy flow");
 
@@ -2499,6 +2657,8 @@ int main() {
     RUN_TEST(TestRingSwitchSetup_ProvidedBasisRejectsMissingAlphaOrBeta);
     RUN_TEST(TestRingSwitchSetup_ProvidedBasisRejectsWrongDimension);
     RUN_TEST(TestRingSwitchSetup_ProvidedBasisRejectsBrokenDualBasis);
+    RUN_TEST(TestRingSwitchSetup_ProvidedBasisRejectsNonBasisAlpha);
+    RUN_TEST(TestRingSwitchSetup_ProvidedBasisRejectsNonBasisBeta);
     RUN_TEST(TestRingSwitchSetup_RejectsBackendDimensionMismatch);
     RUN_TEST(TestPackZ2kCoeffsToGREvals_RoundTripsSmallExample);
     RUN_TEST(TestPackZ2kCoeffsToGREvals_ComposesAgainstProvidedBetaBasis);
@@ -2519,6 +2679,10 @@ int main() {
     RUN_TEST(TestRingSwitchVerifyEval_AcceptsHonestProof);
     RUN_TEST(TestRingSwitchVerifyEval_AcceptsHonestProofFromDirectProvePath);
     RUN_TEST(TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedAlphaBetaBases);
+    RUN_TEST(
+        TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedNonPolynomialAlphaOnly);
+    RUN_TEST(
+        TestRingSwitchVerifyEval_AcceptsHonestProofWithProvidedNonPolynomialBetaOnly);
     RUN_TEST(TestRingSwitchPaperAPI_AcceptsHonestProof);
     RUN_TEST(TestRingSwitchVerifyEval_RejectsTampering);
     RUN_TEST(TestRingSwitchVerifyEval_DimensionZeroUsesNoSumcheckRounds);
