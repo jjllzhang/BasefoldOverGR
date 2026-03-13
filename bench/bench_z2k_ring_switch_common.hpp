@@ -44,6 +44,25 @@ struct ContextSpec {
   std::vector<ZZ> zeta_coeffs;
 };
 
+enum class BasisMode {
+  kDefault,
+  kProvided,
+};
+
+struct BasisCliData {
+  bool has_basis = false;
+  std::vector<ZZ_pE> basis;
+  bool has_dual_basis = false;
+  std::vector<ZZ_pE> dual_basis;
+};
+
+struct RingSwitchBenchCliConfig {
+  ContextSpec context;
+  BasisMode basis_mode = BasisMode::kDefault;
+  BasisCliData alpha;
+  BasisCliData beta;
+};
+
 struct Stats {
   double mean_ms = 0.0;
   double min_ms = 0.0;
@@ -187,6 +206,64 @@ inline std::vector<ZZ> ParseCoeffList(const std::string &s) {
     LogicError("ParseCoeffList: empty list");
   }
   return out;
+}
+
+inline ZZ_pX BuildZZpX(const std::vector<ZZ> &coeffs);
+inline ZZ_pE BuildZZpE(const std::vector<ZZ> &coeffs);
+
+inline std::vector<ZZ_pE> ParseBasisElementList(const std::string &s) {
+  std::vector<ZZ_pE> out;
+  std::size_t pos = 0;
+  while (pos < s.size()) {
+    const std::size_t sep = s.find(';', pos);
+    const std::size_t end = (sep == std::string::npos) ? s.size() : sep;
+    std::string token = s.substr(pos, end - pos);
+    const std::size_t first = token.find_first_not_of(" \t");
+    const std::size_t last = token.find_last_not_of(" \t");
+    if (first == std::string::npos) {
+      LogicError("ParseBasisElementList: empty basis element");
+    }
+    token = token.substr(first, last - first + 1);
+    out.push_back(BuildZZpE(ParseCoeffList(token)));
+    pos = (sep == std::string::npos) ? s.size() : (sep + 1);
+  }
+  if (out.empty()) {
+    LogicError("ParseBasisElementList: empty basis list");
+  }
+  return out;
+}
+
+inline bool ParseBasisMode(const char *s, BasisMode &out) {
+  if (s == nullptr) {
+    return false;
+  }
+  const std::string mode(s);
+  if (mode == "default") {
+    out = BasisMode::kDefault;
+    return true;
+  }
+  if (mode == "provided") {
+    out = BasisMode::kProvided;
+    return true;
+  }
+  return false;
+}
+
+inline const char *BasisModeName(BasisMode mode) {
+  return mode == BasisMode::kProvided ? "provided" : "default";
+}
+
+inline void SetBasisCliDataOrThrow(BasisCliData &out, const std::string &encoded,
+                                   bool is_dual_basis, const char *flag) {
+  std::vector<ZZ_pE> parsed = ParseBasisElementList(encoded);
+  if (is_dual_basis) {
+    out.has_dual_basis = true;
+    out.dual_basis = std::move(parsed);
+  } else {
+    out.has_basis = true;
+    out.basis = std::move(parsed);
+  }
+  (void)flag;
 }
 
 inline ZZ NormalizeMod(const ZZ &x, const ZZ &mod) {
@@ -347,6 +424,29 @@ inline void DeduceBasePrimeAndExponent(const ContextSpec &spec, ZZ &p_out,
   k_out = 1;
 }
 
+inline void ValidateBasisCliDataOrThrow(const BasisCliData &data,
+                                        long expected_dimension,
+                                        const char *label,
+                                        const char *func_name) {
+  if (data.has_basis &&
+      static_cast<long>(data.basis.size()) != expected_dimension) {
+    LogicError((std::string(func_name) + ": " + label +
+                ".basis size must equal extension degree")
+                   .c_str());
+  }
+  if (data.has_dual_basis &&
+      static_cast<long>(data.dual_basis.size()) != expected_dimension) {
+    LogicError((std::string(func_name) + ": " + label +
+                ".dual_basis size must equal extension degree")
+                   .c_str());
+  }
+  if (data.has_dual_basis && !data.has_basis) {
+    LogicError((std::string(func_name) + ": " + label +
+                ".dual_basis requires the corresponding basis")
+                   .c_str());
+  }
+}
+
 inline basefold::FoldableCodeParams BuildBackendParams(long c, long d,
                                                        const ZZ &p,
                                                        const ZZ_pE &zeta) {
@@ -381,23 +481,78 @@ inline basefold::FoldableCodeParams BuildBackendParams(long c, long d,
   return params;
 }
 
-inline basefold::RingSwitchPCSParams BuildRingSwitchParams(
-    long c, long ell, long kappa, const ContextSpec &spec, const ZZ_pX &F,
-    const ZZ_pE &zeta) {
+inline basefold::RingSwitchPCSSetupInput BuildRingSwitchSetupInput(
+    long c, long ell, long kappa, const RingSwitchBenchCliConfig &config,
+    const ZZ_pX &F, const ZZ_pE &zeta) {
   ZZ p_base;
   long k_base = 0;
-  DeduceBasePrimeAndExponent(spec, p_base, k_base);
+  DeduceBasePrimeAndExponent(config.context, p_base, k_base);
   (void)k_base;
+
+  const long basis_dimension = NTL::deg(F);
+  if (basis_dimension <= 0) {
+    LogicError("BuildRingSwitchSetupInput: extension degree must be positive");
+  }
+  ValidateBasisCliDataOrThrow(config.alpha, basis_dimension, "alpha",
+                              "BuildRingSwitchSetupInput");
+  ValidateBasisCliDataOrThrow(config.beta, basis_dimension, "beta",
+                              "BuildRingSwitchSetupInput");
 
   basefold::RingSwitchPCSSetupInput input;
   input.ell = ell;
   input.kappa = kappa;
-  input.base_modulus = spec.scalar_modulus;
+  input.base_modulus = config.context.scalar_modulus;
   input.extension_modulus = F;
-  // Bench CLIs currently exercise the default polynomial-basis setup mode.
   input.backend = basefold::MakeBaseFoldZ2kPCSBackend(
       BuildBackendParams(c, ell - kappa, p_base, zeta));
-  return basefold::RingSwitchPCSSetup(input);
+  if (config.basis_mode == BasisMode::kProvided) {
+    if (!config.alpha.has_basis || !config.beta.has_basis) {
+      LogicError(
+          "BuildRingSwitchSetupInput: provided basis mode requires both alpha and beta");
+    }
+    input.use_provided_basis = true;
+    input.provided_basis.has_alpha_basis = true;
+    input.provided_basis.alpha_basis.basis = config.alpha.basis;
+    if (config.alpha.has_dual_basis) {
+      input.provided_basis.alpha_basis.dual_basis = config.alpha.dual_basis;
+    }
+    input.provided_basis.has_beta_basis = true;
+    input.provided_basis.beta_basis.basis = config.beta.basis;
+    if (config.beta.has_dual_basis) {
+      input.provided_basis.beta_basis.dual_basis = config.beta.dual_basis;
+    }
+  }
+  return input;
+}
+
+inline basefold::RingSwitchPCSParams BuildRingSwitchParams(
+    long c, long ell, long kappa, const ContextSpec &spec, const ZZ_pX &F,
+    const ZZ_pE &zeta) {
+  RingSwitchBenchCliConfig config;
+  config.context = spec;
+  return basefold::RingSwitchPCSSetup(
+      BuildRingSwitchSetupInput(c, ell, kappa, config, F, zeta));
+}
+
+inline basefold::RingSwitchPCSParams BuildRingSwitchParams(
+    long c, long ell, long kappa, const RingSwitchBenchCliConfig &config,
+    const ZZ_pX &F, const ZZ_pE &zeta) {
+  return basefold::RingSwitchPCSSetup(
+      BuildRingSwitchSetupInput(c, ell, kappa, config, F, zeta));
+}
+
+inline void PrintProvidedBasisFlagHelp(std::ostream &os, const char *indent) {
+  os << indent << "[--basis-mode <default|provided>]\n"
+     << indent << "[--alpha-basis <elem0;elem1;...>] [--beta-basis <elem0;elem1;...>]\n"
+     << indent
+     << "[--alpha-dual-basis <elem0;elem1;...>] [--beta-dual-basis <elem0;elem1;...>]\n";
+}
+
+inline void PrintCurrentBasisModeNotes(std::ostream &os, const char *indent) {
+  os << indent
+     << "This bench currently uses the default polynomial alpha/beta setup mode.\n"
+     << indent
+     << "Caller-provided alpha/beta bases are supported by the library but not exposed on this CLI.\n";
 }
 
 inline std::uint64_t FixedCoeffBytesOrThrow() {

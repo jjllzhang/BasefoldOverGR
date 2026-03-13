@@ -94,9 +94,8 @@ void PrintHelp() {
       << "                                    [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
       << "Notes:\n"
       << "  Commitment and backend interface outputs are prebuilt outside timed prove.\n"
-      << "  Timed prove only measures the compiler-side outer proof generation.\n"
-      << "  This bench currently uses the default polynomial alpha/beta setup mode.\n"
-      << "  Caller-provided alpha/beta bases are supported by the library but not exposed on this CLI.\n";
+      << "  Timed prove only measures the compiler-side outer proof generation.\n";
+  PrintCurrentBasisModeNotes(std::cout, "  ");
 }
 
 }  // namespace

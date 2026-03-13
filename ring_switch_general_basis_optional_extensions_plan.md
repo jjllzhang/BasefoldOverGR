@@ -1,8 +1,22 @@
 # Ring-Switch General Basis Optional Extensions Plan
 
-Status: draft
+Status: WP0-WP1 completed; WP2-WP6 pending
 Last updated: 2026-03-14
 Scope: finish the two follow-on optional extensions after `ring_switch_general_basis_shared_layer_plan.md`
+
+## Progress
+
+- 2026-03-14: `WP0` landed with this plan file and froze the follow-up scope.
+- 2026-03-14: `WP1` landed in the working tree.
+- Ring-switch bench common helpers now own:
+  - the shared basis CLI data model,
+  - basis-mode parsing helpers,
+  - semicolon-separated basis-element parsing,
+  - basis-shape validation against `deg(F)`,
+  - a shared setup-input builder for default vs provided basis mode,
+  - a shared basis-mode help-text fragment.
+- `bench_z2k_ring_switch_commit.cpp` and `bench_z2k_ring_switch_eval.cpp` no longer carry their own private copies of the ring-switch common helper layer.
+- All five ring-switch bench binaries now consume the shared basis-mode note fragment, even though caller-provided basis flags are still intentionally deferred to `WP2`.
 
 ## Goal
 
