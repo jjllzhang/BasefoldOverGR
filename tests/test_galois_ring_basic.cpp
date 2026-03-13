@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "GaloisRing/HenselLift.hpp"
+#include "GaloisRing/Basis.hpp"
 #include "GaloisRing/FrobeniusBasis.hpp"
 #include "GaloisRing/PrimitiveElement.hpp"
 #include "GaloisRing/utils.hpp"

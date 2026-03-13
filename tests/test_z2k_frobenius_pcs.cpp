@@ -597,7 +597,7 @@ void TestFrobeniusPCSSetup_ProvidedBasisRejectsBrokenDualBasis() {
             basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
         (void)basefold::FrobeniusPCSSetup(input);
       },
-      "dual-basis trace identity failed",
+      "normal_basis.dual_basis",
       "TestFrobeniusPCSSetup_ProvidedBasisRejectsBrokenDualBasis");
 }
 
@@ -637,7 +637,7 @@ void TestFrobeniusPCSSetup_ProvidedBasisRejectsWrongDimension() {
             basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
         (void)basefold::FrobeniusPCSSetup(input);
       },
-      "normal_basis.beta.size() must equal ZZ_pE::degree()",
+      "normal_basis.basis.size() must equal ZZ_pE::degree()",
       "TestFrobeniusPCSSetup_ProvidedBasisRejectsWrongDimension");
 }
 

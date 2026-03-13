@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "GaloisRing/Basis.hpp"
 #include "GaloisRing/FrobeniusBasis.hpp"
 #include "GaloisRing/utils.hpp"
 #include "PCS/Common/Multilinear.hpp"

@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "GaloisRing/Basis.hpp"
 #include "PCS/Common/Multilinear.hpp"
 #include "PCS/Common/Profile.hpp"
 #include "PCS/Common/Transcript.hpp"

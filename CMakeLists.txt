@@ -47,6 +47,7 @@ function(configure_repo_cxx_target target_name)
 endfunction()
 
 add_library(galoisring_algebra
+  src/GaloisRing/Basis.cpp
   src/GaloisRing/utils.cpp
   src/GaloisRing/Inverse.cpp
   src/GaloisRing/HenselLift.cpp

@@ -11,7 +11,7 @@
 #include <limits>
 #include <string>
 
-#include "GaloisRing/FrobeniusBasis.hpp"
+#include "GaloisRing/Basis.hpp"
 #include "PCS/Common/Hash.hpp"
 #include "PCS/Common/Multilinear.hpp"
 #include "PCS/Common/Profile.hpp"
@@ -117,14 +117,7 @@ std::vector<ZZ_pE> BuildActivePolynomialBasisOrThrow(const char *func_name) {
                 ": current ZZ_pE degree must be positive")
                    .c_str());
   }
-
-  std::vector<ZZ_pE> basis(static_cast<std::size_t>(degree));
-  for (long i = 0; i < degree; ++i) {
-    ZZ_pX poly;
-    NTL::SetCoeff(poly, i, NTL::to_ZZ_p(1));
-    NTL::conv(basis[static_cast<std::size_t>(i)], poly);
-  }
-  return basis;
+  return ::BuildPolynomialBasis(degree);
 }
 
 GaloisRingBasisData BuildActivePolynomialBasisDataOrThrow(
@@ -146,20 +139,9 @@ long BasisDimensionOrThrow(const GaloisRingBasisData &basis, const char *label,
   return dimension;
 }
 
-bool IsBaseRingConstant(const ZZ_pE &value) {
-  const ZZ_pX poly = NTL::rep(value);
-  const long degree = NTL::deg(poly);
-  for (long i = 1; i <= degree; ++i) {
-    if (NTL::coeff(poly, i) != 0) {
-      return false;
-    }
-  }
-  return true;
-}
-
 void ValidateBaseRingConstantOrThrow(const ZZ_pE &value, const char *label,
                                      long index, const char *func_name) {
-  if (!IsBaseRingConstant(value)) {
+  if (!::IsBaseRingConstant(value)) {
     LogicError((std::string(func_name) + ": " + label + "[" +
                 std::to_string(index) + "] must be a base-ring constant")
                    .c_str());
@@ -214,15 +196,13 @@ void ValidateActivePolynomialBasisDataOrThrow(const GaloisRingBasisData &basis,
                                               long expected_dimension,
                                               const char *label,
                                               const char *func_name) {
+  const std::string basis_label = std::string(label) + ".basis";
+  const std::string dual_label = std::string(label) + ".dual_basis";
+  ValidateBasisShapeOrThrow(basis.basis, basis_label.c_str(), func_name);
+  ValidateBasisShapeOrThrow(basis.dual_basis, dual_label.c_str(), func_name);
   if (static_cast<long>(basis.basis.size()) != expected_dimension) {
     LogicError((std::string(func_name) + ": " + label +
                 ".basis size must match current ZZ_pE degree")
-                   .c_str());
-  }
-  if (!basis.dual_basis.empty() &&
-      static_cast<long>(basis.dual_basis.size()) != expected_dimension) {
-    LogicError((std::string(func_name) + ": " + label +
-                ".dual_basis size must match current ZZ_pE degree")
                    .c_str());
   }
 
@@ -235,10 +215,6 @@ void ValidateActivePolynomialBasisDataOrThrow(const GaloisRingBasisData &basis,
                   " must equal the active polynomial basis while general-basis support is pending")
                      .c_str());
     }
-  }
-
-  if (basis.dual_basis.empty()) {
-    return;
   }
   const std::vector<ZZ_pE> expected_dual = ::BuildDualBasisOrThrow(expected_basis);
   for (long i = 0; i < expected_dimension; ++i) {

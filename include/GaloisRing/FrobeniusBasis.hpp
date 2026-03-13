@@ -8,6 +8,8 @@
 
 #include <vector>
 
+#include "GaloisRing/Basis.hpp"
+
 // Frobenius/normal-basis helpers for GR(p^k, r).
 //
 // Context contract:
@@ -53,14 +55,7 @@ NormalBasisData FindNormalBasisOrThrow(
     const FrobeniusBasisParams &params,
     const NTL::ZZ_pE &teichmuller_generator);
 
-std::vector<NTL::ZZ_pE> BuildDualBasisOrThrow(
-    const std::vector<NTL::ZZ_pE> &basis);
-
 void ValidateNormalBasisOrThrow(const NormalBasisData &normal_basis);
-
-bool IsBaseRingConstant(const NTL::ZZ_pE &value);
-
-NTL::ZZ_p TraceToBaseRing(const NTL::ZZ_pE &element);
 
 std::vector<NTL::ZZ_p> RecoverNormalBasisCoords(
     const NormalBasisData &normal_basis, const NTL::ZZ_pE &element);

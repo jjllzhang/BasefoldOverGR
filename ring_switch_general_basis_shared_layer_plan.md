@@ -1,6 +1,6 @@
 # Ring-Switch General Basis Shared-Layer Plan
 
-Status: WP0 completed; WP1-WP6 pending
+Status: WP0-WP1 completed; WP2-WP6 pending
 Last updated: 2026-03-14
 Scope: make `RingSwitchPCS` support paper-aligned general `alpha/beta` Galois-ring bases through a clean shared basis layer
 
@@ -13,6 +13,11 @@ Scope: make `RingSwitchPCS` support paper-aligned general `alpha/beta` Galois-ri
 - Caller-provided `alpha/beta` basis mode is now expressible in the public API
   but intentionally rejected by `RingSwitchPCSSetup(...)` until `WP2`, so the
   repo does not pretend to support semantics that have not been implemented yet.
+- 2026-03-14: `WP1` landed in the working tree.
+- Generic basis algebra now lives in `include/GaloisRing/Basis.hpp` and
+  `src/GaloisRing/Basis.cpp`.
+- `FrobeniusBasis.*`, `FrobeniusPCS.cpp`, and `RingSwitchPCS.cpp` now consume
+  the shared basis helpers instead of owning generic basis algebra privately.
 
 ## Goal
 
@@ -186,6 +191,8 @@ Estimated effort:
 - small
 
 ### WP1. Extract shared basis algebra from `FrobeniusBasis`
+
+Status: completed on 2026-03-14
 
 Files:
 
