@@ -928,8 +928,15 @@ FrobeniusPCSParams FrobeniusPCSSetup(const FrobeniusPCSSetupInput &input) {
   params.ell_prime = input.ell - input.kappa;
   params.base_modulus = input.base_modulus;
   params.extension_modulus = input.extension_modulus;
-  params.basis_data =
-      ::BuildFrobeniusBasisOrThrow(basis_input, input.extension_modulus);
+  if (input.use_provided_basis) {
+    params.basis_data = ::BuildFrobeniusBasisFromProvidedNormalBasisOrThrow(
+        basis_input, input.extension_modulus, input.provided_basis.normal_basis,
+        input.provided_basis.has_teichmuller_generator,
+        input.provided_basis.teichmuller_generator);
+  } else {
+    params.basis_data =
+        ::BuildFrobeniusBasisOrThrow(basis_input, input.extension_modulus);
+  }
   params.precomputed =
       BuildFrobeniusPCSPrecomputedTables(params.basis_data.normal_basis);
   params.backend = input.backend;

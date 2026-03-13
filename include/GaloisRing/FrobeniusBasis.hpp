@@ -44,6 +44,11 @@ void ValidateFrobeniusBasisContextsOrThrow(
 FrobeniusBasisData BuildFrobeniusBasisOrThrow(
     const FrobeniusBasisParams &params, const NTL::ZZ_pX &extension_modulus);
 
+FrobeniusBasisData BuildFrobeniusBasisFromProvidedNormalBasisOrThrow(
+    const FrobeniusBasisParams &params, const NTL::ZZ_pX &extension_modulus,
+    const NormalBasisData &normal_basis, bool has_teichmuller_generator,
+    const NTL::ZZ_pE &teichmuller_generator);
+
 NormalBasisData FindNormalBasisOrThrow(
     const FrobeniusBasisParams &params,
     const NTL::ZZ_pE &teichmuller_generator);

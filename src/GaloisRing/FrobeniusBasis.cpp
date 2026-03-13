@@ -129,6 +129,45 @@ bool IsUnit(const ZZ_p &value) {
   return GCD(rep(value), ZZ_p::modulus()) == 1;
 }
 
+vector<long> UniquePrimeFactors(long n) {
+  vector<long> factors;
+  if (n <= 1) {
+    return factors;
+  }
+
+  for (long d = 2; d <= n / d; ++d) {
+    if (n % d != 0) {
+      continue;
+    }
+    factors.push_back(d);
+    while (n % d == 0) {
+      n /= d;
+    }
+  }
+  if (n > 1) {
+    factors.push_back(n);
+  }
+  return factors;
+}
+
+bool HasExactOrder(const ZZ_pE &element, long order,
+                   const vector<long> &prime_factors) {
+  if (element == 0 || order <= 0) {
+    return false;
+  }
+  ZZ_pE one;
+  set(one);
+  if (power(element, order) != one) {
+    return false;
+  }
+  for (long q : prime_factors) {
+    if (power(element, order / q) == one) {
+      return false;
+    }
+  }
+  return true;
+}
+
 vector<ZZ_pE> BuildPolynomialBasis(long r) {
   vector<ZZ_pE> basis(static_cast<size_t>(r));
   for (long i = 0; i < r; ++i) {
@@ -414,6 +453,48 @@ bool TryPromoteNormalBasisCandidate(const PowerBasisFrobeniusContext &context,
   return true;
 }
 
+void ValidateTeichmullerGeneratorOrThrow(const FrobeniusBasisParams &params,
+                                         const ZZ_pE &teichmuller_generator,
+                                         const char *func_name) {
+  const ZZ subgroup_order_zz = power(params.p, params.r) - ZZ(1);
+  const long subgroup_order = PositiveZZToLongChecked(
+      subgroup_order_zz, "p^r-1", func_name);
+  const vector<long> subgroup_order_factors =
+      UniquePrimeFactors(subgroup_order);
+  if (!HasExactOrder(teichmuller_generator, subgroup_order,
+                     subgroup_order_factors)) {
+    LogicError((string(func_name) +
+                ": teichmuller_generator must have multiplicative order p^r-1")
+                   .c_str());
+  }
+}
+
+void ValidateNormalBasisAgainstTeichmullerOrThrow(
+    const FrobeniusBasisParams &params, const NormalBasisData &normal_basis,
+    const ZZ_pE &teichmuller_generator, const char *func_name) {
+  ValidateTeichmullerGeneratorOrThrow(params, teichmuller_generator, func_name);
+  const PowerBasisFrobeniusContext context =
+      BuildPowerBasisFrobeniusContext(params, teichmuller_generator, func_name);
+  const long n = static_cast<long>(normal_basis.beta.size());
+  for (long i = 0; i < n; ++i) {
+    const long next = (i + 1) % n;
+    if (ApplyPowerBasisTau(context,
+                           normal_basis.beta[static_cast<size_t>(i)]) !=
+        normal_basis.beta[static_cast<size_t>(next)]) {
+      LogicError((string(func_name) +
+                  ": provided beta basis is not ordered as a Frobenius orbit")
+                     .c_str());
+    }
+    if (ApplyPowerBasisTau(context,
+                           normal_basis.alpha[static_cast<size_t>(i)]) !=
+        normal_basis.alpha[static_cast<size_t>(next)]) {
+      LogicError((string(func_name) +
+                  ": provided alpha basis is not ordered as a Frobenius orbit")
+                     .c_str());
+    }
+  }
+}
+
 }  // namespace
 
 void ValidateFrobeniusBasisContextsOrThrow(
@@ -454,6 +535,33 @@ FrobeniusBasisData BuildFrobeniusBasisOrThrow(
                                params.teichmuller_generator_max_trials);
   out.normal_basis = FindNormalBasisOrThrow(params, out.teichmuller_generator);
   ValidateNormalBasisOrThrow(out.normal_basis);
+  return out;
+}
+
+FrobeniusBasisData BuildFrobeniusBasisFromProvidedNormalBasisOrThrow(
+    const FrobeniusBasisParams &params, const ZZ_pX &extension_modulus,
+    const NormalBasisData &normal_basis, bool has_teichmuller_generator,
+    const ZZ_pE &teichmuller_generator) {
+  const char *const func_name =
+      "BuildFrobeniusBasisFromProvidedNormalBasisOrThrow";
+  ValidateFrobeniusBasisContextsOrThrow(params, extension_modulus);
+
+  FrobeniusBasisData out;
+  out.params = params;
+  out.modulus = ZZ_p::modulus();
+  out.extension_modulus = extension_modulus;
+  out.normal_basis = normal_basis;
+  ValidateNormalBasisOrThrow(out.normal_basis);
+
+  if (has_teichmuller_generator) {
+    out.teichmuller_generator = teichmuller_generator;
+  } else {
+    out.teichmuller_generator =
+        FindTeichmullerGenerator(params.p, params.k, params.r, extension_modulus,
+                                 params.teichmuller_generator_max_trials);
+  }
+  ValidateNormalBasisAgainstTeichmullerOrThrow(
+      params, out.normal_basis, out.teichmuller_generator, func_name);
   return out;
 }
 

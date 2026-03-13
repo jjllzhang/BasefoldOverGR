@@ -14,11 +14,19 @@
 
 namespace basefold {
 
+struct FrobeniusPCSProvidedBasisInput {
+  NormalBasisData normal_basis;
+  bool has_teichmuller_generator = false;
+  NTL::ZZ_pE teichmuller_generator;
+};
+
 struct FrobeniusPCSSetupInput {
   long ell = 0;
   long kappa = 0;
   NTL::ZZ base_modulus;
   NTL::ZZ_pX extension_modulus;
+  bool use_provided_basis = false;
+  FrobeniusPCSProvidedBasisInput provided_basis;
   long teichmuller_generator_max_trials = 1024;
   long affine_search_limit = 4;
   Z2kPCSBackendHandle backend;

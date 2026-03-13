@@ -407,6 +407,23 @@ basefold::FrobeniusPCSParams BuildFrobeniusParamsD0(const ZZ &p,
   return basefold::FrobeniusPCSSetup(input);
 }
 
+basefold::FrobeniusPCSParams BuildFrobeniusParamsWithProvidedBasis(
+    const ZZ &p, const ZZ &base_modulus, const ZZ_pX &F, const ZZ_pE &alpha,
+    long ell, long kappa, const NormalBasisData &normal_basis,
+    bool has_teichmuller_generator, const ZZ_pE &teichmuller_generator) {
+  basefold::FrobeniusPCSSetupInput input;
+  input.ell = ell;
+  input.kappa = kappa;
+  input.base_modulus = base_modulus;
+  input.extension_modulus = F;
+  input.use_provided_basis = true;
+  input.provided_basis.normal_basis = normal_basis;
+  input.provided_basis.has_teichmuller_generator = has_teichmuller_generator;
+  input.provided_basis.teichmuller_generator = teichmuller_generator;
+  input.backend = basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
+  return basefold::FrobeniusPCSSetup(input);
+}
+
 void TestFrobeniusPCSSetup_BuildsExpectedParams_GR42() {
   testutil::PrintInfo("Frobenius Phase 2: setup computes ell_prime and basis data");
 
@@ -501,6 +518,171 @@ void TestFrobeniusPCSSetup_RejectsDegreeMismatch() {
       "TestFrobeniusPCSSetup_RejectsDegreeMismatch");
 }
 
+void TestFrobeniusPCSSetup_ProvidedBasisAcceptsValidBasis() {
+  testutil::PrintInfo("Frobenius Provided Basis: setup accepts caller-supplied normal and dual bases");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::FrobeniusPCSParams auto_params =
+      BuildFrobeniusParams(p, modulus, F, alpha, /*ell=*/3, /*kappa=*/1);
+  const basefold::FrobeniusPCSParams provided_params =
+      BuildFrobeniusParamsWithProvidedBasis(
+          p, modulus, F, alpha, /*ell=*/3, /*kappa=*/1,
+          auto_params.basis_data.normal_basis,
+          /*has_teichmuller_generator=*/true,
+          auto_params.basis_data.teichmuller_generator);
+
+  CHECK_EQ(provided_params.basis_data.normal_basis.beta,
+           auto_params.basis_data.normal_basis.beta);
+  CHECK_EQ(provided_params.basis_data.normal_basis.alpha,
+           auto_params.basis_data.normal_basis.alpha);
+  CHECK_EQ(provided_params.basis_data.teichmuller_generator,
+           auto_params.basis_data.teichmuller_generator);
+  CHECK_EQ(provided_params.precomputed.tau_basis_rows,
+           auto_params.precomputed.tau_basis_rows);
+  CHECK_EQ(provided_params.precomputed.sigma_basis_rows,
+           auto_params.precomputed.sigma_basis_rows);
+  CHECK_EQ(provided_params.precomputed.tau_alpha_by_u_then_i,
+           auto_params.precomputed.tau_alpha_by_u_then_i);
+}
+
+void TestFrobeniusPCSSetup_ProvidedBasisRejectsBrokenDualBasis() {
+  testutil::PrintInfo("Frobenius Provided Basis: setup rejects a malformed supplied dual basis");
+
+  ExpectChildFailureContains(
+      [&]() {
+        const ZZ p = to_ZZ(2);
+        const ZZ modulus = to_ZZ(4);
+        ZZ_pPush mod_push(modulus);
+
+        ZZ_pX F;
+        SetCoeff(F, 2, 1);
+        SetCoeff(F, 1, 1);
+        SetCoeff(F, 0, 1);
+        ZZ_pEPush ext_push(F);
+
+        ZZ_pX xpoly;
+        SetCoeff(xpoly, 1, 1);
+        ZZ_pE alpha;
+        conv(alpha, xpoly);
+
+        const basefold::FrobeniusPCSParams auto_params =
+            BuildFrobeniusParams(p, modulus, F, alpha, /*ell=*/3, /*kappa=*/1);
+
+        basefold::FrobeniusPCSSetupInput input;
+        input.ell = 3;
+        input.kappa = 1;
+        input.base_modulus = modulus;
+        input.extension_modulus = F;
+        input.use_provided_basis = true;
+        input.provided_basis.normal_basis = auto_params.basis_data.normal_basis;
+        input.provided_basis.normal_basis.alpha[0] += testutil::ConstZZpE(1);
+        input.provided_basis.has_teichmuller_generator = true;
+        input.provided_basis.teichmuller_generator =
+            auto_params.basis_data.teichmuller_generator;
+        input.backend =
+            basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
+        (void)basefold::FrobeniusPCSSetup(input);
+      },
+      "dual-basis trace identity failed",
+      "TestFrobeniusPCSSetup_ProvidedBasisRejectsBrokenDualBasis");
+}
+
+void TestFrobeniusPCSSetup_ProvidedBasisRejectsWrongDimension() {
+  testutil::PrintInfo("Frobenius Provided Basis: setup rejects supplied basis with wrong dimension");
+
+  ExpectChildFailureContains(
+      [&]() {
+        const ZZ p = to_ZZ(2);
+        const ZZ modulus = to_ZZ(4);
+        ZZ_pPush mod_push(modulus);
+
+        ZZ_pX F;
+        SetCoeff(F, 2, 1);
+        SetCoeff(F, 1, 1);
+        SetCoeff(F, 0, 1);
+        ZZ_pEPush ext_push(F);
+
+        ZZ_pX xpoly;
+        SetCoeff(xpoly, 1, 1);
+        ZZ_pE alpha;
+        conv(alpha, xpoly);
+
+        const basefold::FrobeniusPCSParams auto_params =
+            BuildFrobeniusParams(p, modulus, F, alpha, /*ell=*/3, /*kappa=*/1);
+
+        basefold::FrobeniusPCSSetupInput input;
+        input.ell = 3;
+        input.kappa = 1;
+        input.base_modulus = modulus;
+        input.extension_modulus = F;
+        input.use_provided_basis = true;
+        input.provided_basis.normal_basis = auto_params.basis_data.normal_basis;
+        input.provided_basis.normal_basis.beta.pop_back();
+        input.provided_basis.normal_basis.alpha.pop_back();
+        input.backend =
+            basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
+        (void)basefold::FrobeniusPCSSetup(input);
+      },
+      "normal_basis.beta.size() must equal ZZ_pE::degree()",
+      "TestFrobeniusPCSSetup_ProvidedBasisRejectsWrongDimension");
+}
+
+void TestFrobeniusPCSSetup_ProvidedBasisRejectsBrokenOrbitOrder() {
+  testutil::PrintInfo("Frobenius Provided Basis: setup rejects supplied basis that is not ordered as a Frobenius orbit");
+
+  ExpectChildFailureContains(
+      [&]() {
+        const ZZ p = to_ZZ(2);
+        const ZZ modulus = to_ZZ(4);
+        ZZ_pPush mod_push(modulus);
+
+        ZZ_pX F;
+        SetCoeff(F, 4, 1);
+        SetCoeff(F, 1, 1);
+        SetCoeff(F, 0, 1);
+        ZZ_pEPush ext_push(F);
+
+        ZZ_pX xpoly;
+        SetCoeff(xpoly, 1, 1);
+        ZZ_pE alpha;
+        conv(alpha, xpoly);
+
+        const basefold::FrobeniusPCSParams auto_params =
+            BuildFrobeniusParams(p, modulus, F, alpha, /*ell=*/4, /*kappa=*/2);
+
+        basefold::FrobeniusPCSSetupInput input;
+        input.ell = 4;
+        input.kappa = 2;
+        input.base_modulus = modulus;
+        input.extension_modulus = F;
+        input.use_provided_basis = true;
+        input.provided_basis.normal_basis = auto_params.basis_data.normal_basis;
+        std::swap(input.provided_basis.normal_basis.beta[1],
+                  input.provided_basis.normal_basis.beta[2]);
+        std::swap(input.provided_basis.normal_basis.alpha[1],
+                  input.provided_basis.normal_basis.alpha[2]);
+        input.backend =
+            basefold::MakeBaseFoldZ2kPCSBackend(BuildParamsGR42(p, alpha));
+        (void)basefold::FrobeniusPCSSetup(input);
+      },
+      "provided beta basis is not ordered as a Frobenius orbit",
+      "TestFrobeniusPCSSetup_ProvidedBasisRejectsBrokenOrbitOrder");
+}
+
 void TestPackZ2kTableToFrobeniusGREvals_RoundTripsDegree2() {
   testutil::PrintInfo("Frobenius Phase 2: packing round-trips via dual basis in GR(4,2)");
 
@@ -575,6 +757,41 @@ void TestPackZ2kTableToFrobeniusGREvals_RoundTripsDegree4() {
   }
 }
 
+void TestPackZ2kTableToFrobeniusGREvals_ProvidedBasisMatchesAutoPath() {
+  testutil::PrintInfo("Frobenius Provided Basis: packing matches the auto-discovered setup path");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 4, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::FrobeniusPCSParams auto_params =
+      BuildFrobeniusParams(p, modulus, F, alpha, /*ell=*/4, /*kappa=*/2);
+  const basefold::FrobeniusPCSParams provided_params =
+      BuildFrobeniusParamsWithProvidedBasis(
+          p, modulus, F, alpha, /*ell=*/4, /*kappa=*/2,
+          auto_params.basis_data.normal_basis,
+          /*has_teichmuller_generator=*/false, ZZ_pE(0));
+  const vec_ZZ_pE t_table = BuildBaseRingCoeffVector(
+      {0, 1, 2, 3, 1, 2, 3, 0, 2, 0, 1, 3, 3, 1, 0, 2});
+
+  const vec_ZZ_pE auto_packed =
+      basefold::PackZ2kTableToFrobeniusGREvals(auto_params, t_table);
+  const vec_ZZ_pE provided_packed =
+      basefold::PackZ2kTableToFrobeniusGREvals(provided_params, t_table);
+  CHECK_EQ(provided_packed, auto_packed);
+}
+
 void TestPackZ2kTableToFrobeniusGREvals_RejectsNonBaseRingInputs() {
   testutil::PrintInfo("Frobenius Phase 2: packing rejects non-constant Z2k inputs");
 
@@ -637,6 +854,45 @@ void TestFrobeniusPCSCommit_MatchesDirectBackendCommit() {
       basefold::Z2kPCSBackendCommit(params.backend, outer.t_packed_monomial_coeffs);
 
   CHECK_EQ(compiler_commitment, direct_backend_commitment);
+}
+
+void TestFrobeniusPCSCommit_ProvidedBasisMatchesAutoPath() {
+  testutil::PrintInfo("Frobenius Provided Basis: commitment matches the auto-discovered setup path");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::FrobeniusPCSParams auto_params =
+      BuildFrobeniusParams(p, modulus, F, alpha, /*ell=*/3, /*kappa=*/1);
+  const basefold::FrobeniusPCSParams provided_params =
+      BuildFrobeniusParamsWithProvidedBasis(
+          p, modulus, F, alpha, /*ell=*/3, /*kappa=*/1,
+          auto_params.basis_data.normal_basis,
+          /*has_teichmuller_generator=*/false, ZZ_pE(0));
+  const vec_ZZ_pE t_table =
+      BuildBaseRingCoeffVector({0, 1, 2, 3, 1, 0, 3, 2});
+
+  const basefold::FrobeniusPCSCommitArtifacts auto_artifacts =
+      basefold::FrobeniusPCSBuildCommitArtifacts(auto_params, t_table);
+  const basefold::FrobeniusPCSCommitArtifacts provided_artifacts =
+      basefold::FrobeniusPCSBuildCommitArtifacts(provided_params, t_table);
+
+  CHECK_EQ(provided_artifacts.t_packed_table, auto_artifacts.t_packed_table);
+  CHECK_EQ(provided_artifacts.t_packed_monomial_coeffs,
+           auto_artifacts.t_packed_monomial_coeffs);
+  CHECK_EQ(provided_artifacts.commitment, auto_artifacts.commitment);
 }
 
 void TestFrobeniusPCSBuildCommitArtifacts_CachesPackedRepresentations() {
@@ -972,6 +1228,49 @@ void TestFrobeniusPCSVerifyEval_AcceptsHonestProof_GR44() {
       params, artifacts.commitment, z, claimed_s, /*num_queries=*/2, proof));
 }
 
+void TestFrobeniusPCSVerifyEval_AcceptsHonestProof_ProvidedBasis() {
+  testutil::PrintInfo("Frobenius Provided Basis: end-to-end prove/verify succeeds from the explicit setup path");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::FrobeniusPCSParams auto_params =
+      BuildFrobeniusParams(p, modulus, F, alpha, /*ell=*/3, /*kappa=*/1);
+  const basefold::FrobeniusPCSParams provided_params =
+      BuildFrobeniusParamsWithProvidedBasis(
+          p, modulus, F, alpha, /*ell=*/3, /*kappa=*/1,
+          auto_params.basis_data.normal_basis,
+          /*has_teichmuller_generator=*/false, ZZ_pE(0));
+  const vec_ZZ_pE t_table =
+      BuildBaseRingCoeffVector({3, 1, 0, 2, 1, 2, 3, 0});
+  const ZZ_pE omega = provided_params.basis_data.teichmuller_generator;
+  const vector<ZZ_pE> z = {omega, omega + testutil::ConstZZpE(1),
+                           testutil::ConstZZpE(3)};
+  const ZZ_pE claimed_s = EvalFromBooleanTable(t_table, provided_params.ell, z);
+
+  const basefold::FrobeniusPCSCommitArtifacts artifacts =
+      basefold::FrobeniusPCSBuildCommitArtifacts(provided_params, t_table);
+  const basefold::FrobeniusPCSEvalProof proof =
+      basefold::FrobeniusPCSProveEvalFromCommitArtifacts(
+          provided_params, t_table, z, claimed_s, /*num_queries=*/2, artifacts);
+
+  CHECK(basefold::FrobeniusPCSVerifyEval(
+      provided_params, artifacts.commitment, z, claimed_s, /*num_queries=*/2,
+      proof));
+}
+
 void TestFrobeniusPCSPaperAPI_AcceptsHonestProof() {
   testutil::PrintInfo("Frobenius Phase 3: staged setup/commit/prove/verify API matches the direct flow");
 
@@ -1255,10 +1554,16 @@ int main() {
     RUN_TEST(TestFrobeniusPCSSetup_BuildsExpectedParams_GR42);
     RUN_TEST(TestFrobeniusPCSSetup_RejectsBackendLengthMismatch);
     RUN_TEST(TestFrobeniusPCSSetup_RejectsDegreeMismatch);
+    RUN_TEST(TestFrobeniusPCSSetup_ProvidedBasisAcceptsValidBasis);
+    RUN_TEST(TestFrobeniusPCSSetup_ProvidedBasisRejectsBrokenDualBasis);
+    RUN_TEST(TestFrobeniusPCSSetup_ProvidedBasisRejectsWrongDimension);
+    RUN_TEST(TestFrobeniusPCSSetup_ProvidedBasisRejectsBrokenOrbitOrder);
     RUN_TEST(TestPackZ2kTableToFrobeniusGREvals_RoundTripsDegree2);
     RUN_TEST(TestPackZ2kTableToFrobeniusGREvals_RoundTripsDegree4);
+    RUN_TEST(TestPackZ2kTableToFrobeniusGREvals_ProvidedBasisMatchesAutoPath);
     RUN_TEST(TestPackZ2kTableToFrobeniusGREvals_RejectsNonBaseRingInputs);
     RUN_TEST(TestFrobeniusPCSCommit_MatchesDirectBackendCommit);
+    RUN_TEST(TestFrobeniusPCSCommit_ProvidedBasisMatchesAutoPath);
     RUN_TEST(TestFrobeniusPCSBuildCommitArtifacts_CachesPackedRepresentations);
     RUN_TEST(TestFrobeniusPCSSetup_PrecomputedTablesMatchDirectFrobeniusActions);
     RUN_TEST(TestFrobeniusPCSProveEval_ProducesConsistentOuterProof);
@@ -1266,6 +1571,7 @@ int main() {
     RUN_TEST(TestFrobeniusPCSVerifyEval_AcceptsHonestProof);
     RUN_TEST(TestFrobeniusPCSVerifyEval_AcceptsHonestProofFromDirectProvePath);
     RUN_TEST(TestFrobeniusPCSVerifyEval_AcceptsHonestProof_GR44);
+    RUN_TEST(TestFrobeniusPCSVerifyEval_AcceptsHonestProof_ProvidedBasis);
     RUN_TEST(TestFrobeniusPCSPaperAPI_AcceptsHonestProof);
     RUN_TEST(TestFrobeniusPCSVerifyEval_RejectsTampering);
     RUN_TEST(TestFrobeniusPCSVerifyEval_DimensionZeroUsesNoSumcheckRounds);
