@@ -484,7 +484,7 @@ Follow the same contract as ring-switch:
 
 ## Phase 5: Optimization and Refactor Cleanup
 
-Status: `[ ] Not started`
+Status: `[x] Done`
 
 ### Objective
 
@@ -492,11 +492,28 @@ Reduce obvious overhead only after correctness, serialization, and docs are in p
 
 ### Candidate optimizations
 
-- `[ ]` Cache normal-basis coordinates of the queried suffix point
-- `[ ]` Cache orbit points `sigma^i(r_suffix)`
-- `[ ]` Avoid repeated recomputation of `eq(sigma^i(r_suffix); w)`
-- `[ ]` Precompute setup-time tables for `tau`-rotation and basis recombination
-- `[ ]` Factor common proof-serialize helpers if Frobenius and ring-switch drift too close
+- `[x]` Cache normal-basis coordinates of the queried suffix point
+- `[x]` Cache orbit points `sigma^i(r_suffix)`
+- `[x]` Avoid repeated recomputation of `eq(sigma^i(r_suffix); w)`
+- `[x]` Precompute setup-time tables for `tau`-rotation and basis recombination
+- `[x]` Factor common proof-serialize helpers because Frobenius and ring-switch had converged to the same fixed-width outer-proof encoding pattern
+
+### Landed implementation notes
+
+- `FrobeniusPCSSetup(...)` now fills setup-time `precomputed` tables for:
+  - `tau^i(beta_j)` rows,
+  - `sigma^i(beta_j)` rows,
+  - `tau^i(alpha_u)` rows for the dual basis.
+- `ProveOuterEval` / `VerifyOuterEval` now build a per-query suffix-orbit cache that:
+  - recovers normal-basis coordinates of `r_suffix` once,
+  - materializes all orbit points `sigma^i(r_suffix)` once,
+  - materializes all Boolean equality tables `eq(sigma^i(r_suffix); w)` once when `ell_prime > 0`.
+- Frobenius partial recovery now uses the precomputed `tau^i(alpha_u)` table together with one recovered coordinate decomposition per `s_i`, instead of recomputing `tau` on each `(u, i)` product.
+- Ring-switch and Frobenius fixed-width proof serializers now share one common helper layer for:
+  - outer-proof encoding context construction,
+  - outer-proof shape validation,
+  - outer-proof body serialization,
+  - checked byte-count addition.
 
 ### Explicit non-goal for this phase
 
@@ -528,7 +545,9 @@ Add `tests/test_z2k_frobenius_pcs.cpp` with:
 - honest composed proof verify,
 - tamper rejection,
 - dimension-zero or smallest supported dimension cases,
-- serialize/size consistency.
+- serialize/size consistency,
+- setup-time precomputed tau/sigma tables match direct Frobenius actions,
+- at least one end-to-end `GR(4,4)` honest proof.
 
 ## Validation commands
 
@@ -553,6 +572,13 @@ Phase 4+:
 cmake --build build -j 4 --target bench_z2k_frobenius_commit bench_z2k_frobenius_eval
 ./build/bench_z2k_frobenius_commit --warmup 0 --reps 1
 ./build/bench_z2k_frobenius_eval --warmup 0 --reps 1 --queries 2
+```
+
+Phase 5:
+
+```bash
+cmake --build build -j 4 --target test_z2k_frobenius_pcs test_z2k_ring_switch_pcs
+ctest --test-dir build --output-on-failure -R "test_galois_ring|test_z2k_frobenius_feasibility|test_z2k_frobenius_pcs|test_z2k_frobenius_bench_cli|test_z2k_ring_switch_pcs"
 ```
 
 ## Risks and Mitigations

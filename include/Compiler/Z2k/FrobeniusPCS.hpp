@@ -24,6 +24,15 @@ struct FrobeniusPCSSetupInput {
   Z2kPCSBackendHandle backend;
 };
 
+struct FrobeniusPCSPrecomputedTables {
+  // tau_basis_rows[i][j] = tau^i(beta_j), sigma_basis_rows[i][j] = sigma^i(beta_j)
+  // for the normal basis beta.
+  std::vector<std::vector<NTL::ZZ_pE>> tau_basis_rows;
+  std::vector<std::vector<NTL::ZZ_pE>> sigma_basis_rows;
+  // tau_alpha_by_u_then_i[u][i] = tau^i(alpha_u) for the dual basis alpha.
+  std::vector<std::vector<NTL::ZZ_pE>> tau_alpha_by_u_then_i;
+};
+
 struct FrobeniusPCSParams {
   long ell = 0;
   long kappa = 0;
@@ -31,6 +40,7 @@ struct FrobeniusPCSParams {
   NTL::ZZ base_modulus;
   NTL::ZZ_pX extension_modulus;
   FrobeniusBasisData basis_data;
+  FrobeniusPCSPrecomputedTables precomputed;
   Z2kPCSBackendHandle backend;
 };
 

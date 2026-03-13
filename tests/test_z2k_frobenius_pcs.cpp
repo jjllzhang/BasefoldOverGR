@@ -160,6 +160,29 @@ ZZ_pE ApplyTauPower(const basefold::FrobeniusPCSParams &params,
   return out;
 }
 
+ZZ_pE ApplySigmaPower(const basefold::FrobeniusPCSParams &params,
+                     const ZZ_pE &element, long exp) {
+  ZZ_pE out = element;
+  for (long i = 0; i < exp; ++i) {
+    out = ApplyFrobeniusSigma(params.basis_data.normal_basis, out);
+  }
+  return out;
+}
+
+ZZ_pE ComposeWithBasisRow(const vector<ZZ_pE> &basis_row,
+                          const vector<NTL::ZZ_p> &coords) {
+  CHECK_EQ(basis_row.size(), coords.size());
+  ZZ_pE out = ZZ_pE(0);
+  for (long i = 0; i < static_cast<long>(coords.size()); ++i) {
+    ZZ_pX coeff_poly;
+    SetCoeff(coeff_poly, 0, coords[static_cast<std::size_t>(i)]);
+    ZZ_pE coeff_elem;
+    conv(coeff_elem, coeff_poly);
+    out += coeff_elem * basis_row[static_cast<std::size_t>(i)];
+  }
+  return out;
+}
+
 vector<ZZ_pE> ApplySigmaPowerToPoint(const basefold::FrobeniusPCSParams &params,
                                      const vector<ZZ_pE> &point, long exp) {
   vector<ZZ_pE> out = point;
@@ -653,6 +676,60 @@ void TestFrobeniusPCSBuildCommitArtifacts_CachesPackedRepresentations() {
            direct_backend_commitment);
 }
 
+void TestFrobeniusPCSSetup_PrecomputedTablesMatchDirectFrobeniusActions() {
+  testutil::PrintInfo("Frobenius Phase 5: setup precomputes tau/sigma tables consistent with direct actions");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 4, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::FrobeniusPCSParams params =
+      BuildFrobeniusParams(p, modulus, F, alpha, /*ell=*/4, /*kappa=*/2);
+  const long basis_dimension = Pow2ForTest(params.kappa);
+  CHECK_EQ(static_cast<long>(params.precomputed.tau_basis_rows.size()),
+           basis_dimension);
+  CHECK_EQ(static_cast<long>(params.precomputed.sigma_basis_rows.size()),
+           basis_dimension);
+  CHECK_EQ(static_cast<long>(params.precomputed.tau_alpha_by_u_then_i.size()),
+           basis_dimension);
+
+  const ZZ_pE sample =
+      params.basis_data.teichmuller_generator + alpha + testutil::ConstZZpE(1);
+  const vector<NTL::ZZ_p> coords =
+      RecoverNormalBasisCoords(params.basis_data.normal_basis, sample);
+  for (long i = 0; i < basis_dimension; ++i) {
+    CHECK_EQ(ComposeWithBasisRow(
+                 params.precomputed.tau_basis_rows[static_cast<std::size_t>(i)],
+                 coords),
+             ApplyTauPower(params, sample, i));
+    CHECK_EQ(ComposeWithBasisRow(
+                 params.precomputed.sigma_basis_rows[static_cast<std::size_t>(i)],
+                 coords),
+             ApplySigmaPower(params, sample, i));
+  }
+
+  for (long u = 0; u < basis_dimension; ++u) {
+    const ZZ_pE alpha_u =
+        params.basis_data.normal_basis.alpha[static_cast<std::size_t>(u)];
+    for (long i = 0; i < basis_dimension; ++i) {
+      CHECK_EQ(params.precomputed.tau_alpha_by_u_then_i
+                   [static_cast<std::size_t>(u)][static_cast<std::size_t>(i)],
+               ApplyTauPower(params, alpha_u, i));
+    }
+  }
+}
+
 void TestFrobeniusPCSProveEval_ProducesConsistentOuterProof() {
   testutil::PrintInfo("Frobenius Phase 3: prove path matches Protocol 2 outer proof checks");
 
@@ -856,6 +933,43 @@ void TestFrobeniusPCSVerifyEval_AcceptsHonestProofFromDirectProvePath() {
 
   CHECK(basefold::FrobeniusPCSVerifyEval(
       params, commitment, z, claimed_s, /*num_queries=*/2, proof));
+}
+
+void TestFrobeniusPCSVerifyEval_AcceptsHonestProof_GR44() {
+  testutil::PrintInfo("Frobenius Phase 5: optimized path verifies end-to-end in GR(4,4)");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 4, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::FrobeniusPCSParams params =
+      BuildFrobeniusParams(p, modulus, F, alpha, /*ell=*/4, /*kappa=*/2);
+  const vec_ZZ_pE t_table = BuildBaseRingCoeffVector(
+      {0, 1, 2, 3, 1, 2, 3, 0, 2, 3, 0, 1, 3, 0, 1, 2});
+  const ZZ_pE omega = params.basis_data.teichmuller_generator;
+  const vector<ZZ_pE> z = {omega + testutil::ConstZZpE(1), alpha,
+                           omega, testutil::ConstZZpE(3)};
+  const ZZ_pE claimed_s = EvalFromBooleanTable(t_table, params.ell, z);
+
+  const basefold::FrobeniusPCSCommitArtifacts artifacts =
+      basefold::FrobeniusPCSBuildCommitArtifacts(params, t_table);
+  const basefold::FrobeniusPCSEvalProof proof =
+      basefold::FrobeniusPCSProveEvalFromCommitArtifacts(
+          params, t_table, z, claimed_s, /*num_queries=*/2, artifacts);
+
+  CHECK(basefold::FrobeniusPCSVerifyEval(
+      params, artifacts.commitment, z, claimed_s, /*num_queries=*/2, proof));
 }
 
 void TestFrobeniusPCSPaperAPI_AcceptsHonestProof() {
@@ -1146,10 +1260,12 @@ int main() {
     RUN_TEST(TestPackZ2kTableToFrobeniusGREvals_RejectsNonBaseRingInputs);
     RUN_TEST(TestFrobeniusPCSCommit_MatchesDirectBackendCommit);
     RUN_TEST(TestFrobeniusPCSBuildCommitArtifacts_CachesPackedRepresentations);
+    RUN_TEST(TestFrobeniusPCSSetup_PrecomputedTablesMatchDirectFrobeniusActions);
     RUN_TEST(TestFrobeniusPCSProveEval_ProducesConsistentOuterProof);
     RUN_TEST(TestFrobeniusPCSProveEval_DirectAndArtifactPathsAgreeOnOuterMessages);
     RUN_TEST(TestFrobeniusPCSVerifyEval_AcceptsHonestProof);
     RUN_TEST(TestFrobeniusPCSVerifyEval_AcceptsHonestProofFromDirectProvePath);
+    RUN_TEST(TestFrobeniusPCSVerifyEval_AcceptsHonestProof_GR44);
     RUN_TEST(TestFrobeniusPCSPaperAPI_AcceptsHonestProof);
     RUN_TEST(TestFrobeniusPCSVerifyEval_RejectsTampering);
     RUN_TEST(TestFrobeniusPCSVerifyEval_DimensionZeroUsesNoSumcheckRounds);

@@ -35,6 +35,22 @@ struct OuterProveEvalResult {
   std::vector<FieldElement> rprime_suffix;
 };
 
+struct SuffixOrbitCache {
+  std::vector<std::vector<ZZ_p>> suffix_coords_by_var;
+  std::vector<std::vector<FieldElement>> sigma_points_by_i;
+  std::vector<NTL::vec_ZZ_pE> sigma_eq_tables_by_i;
+};
+
+long RotateIndex(long index, long shift, long dimension) {
+  if (dimension <= 0) {
+    LogicError("RotateIndex: dimension must be positive");
+  }
+  const long normalized_shift =
+      ((shift % dimension) + dimension) % dimension;
+  const long rotated = index + normalized_shift;
+  return (rotated >= dimension) ? (rotated - dimension) : rotated;
+}
+
 long Pow2LongOrThrow(long exponent, const char *what) {
   if (exponent < 0) {
     LogicError(what);
@@ -77,6 +93,106 @@ ZZ_pE BaseRingConstant(const ZZ_p &value) {
 
 ZZ_pE BaseRingConstant(long value) {
   return BaseRingConstant(NTL::to_ZZ_p(value));
+}
+
+FieldElement ComposeFromCoordsWithBasisRow(
+    const std::vector<FieldElement> &basis_row,
+    const std::vector<ZZ_p> &coords, const char *func_name) {
+  if (basis_row.size() != coords.size()) {
+    LogicError((string(func_name) +
+                ": basis row length must equal coordinate length")
+                   .c_str());
+  }
+  FieldElement out = FieldElement(0);
+  for (long i = 0; i < static_cast<long>(coords.size()); ++i) {
+    out += BaseRingConstant(coords[static_cast<std::size_t>(i)]) *
+           basis_row[static_cast<std::size_t>(i)];
+  }
+  return out;
+}
+
+FrobeniusPCSPrecomputedTables BuildFrobeniusPCSPrecomputedTables(
+    const NormalBasisData &normal_basis) {
+  const long basis_dimension =
+      static_cast<long>(normal_basis.beta.size());
+  if (basis_dimension <= 0 ||
+      static_cast<long>(normal_basis.alpha.size()) != basis_dimension) {
+    LogicError("BuildFrobeniusPCSPrecomputedTables: invalid normal basis shape");
+  }
+
+  FrobeniusPCSPrecomputedTables out;
+  out.tau_basis_rows.resize(static_cast<std::size_t>(basis_dimension));
+  out.sigma_basis_rows.resize(static_cast<std::size_t>(basis_dimension));
+  for (long power = 0; power < basis_dimension; ++power) {
+    std::vector<FieldElement> &tau_row =
+        out.tau_basis_rows[static_cast<std::size_t>(power)];
+    std::vector<FieldElement> &sigma_row =
+        out.sigma_basis_rows[static_cast<std::size_t>(power)];
+    tau_row.resize(static_cast<std::size_t>(basis_dimension));
+    sigma_row.resize(static_cast<std::size_t>(basis_dimension));
+    for (long j = 0; j < basis_dimension; ++j) {
+      tau_row[static_cast<std::size_t>(j)] =
+          normal_basis.beta[static_cast<std::size_t>(
+              RotateIndex(j, power, basis_dimension))];
+      sigma_row[static_cast<std::size_t>(j)] =
+          normal_basis.beta[static_cast<std::size_t>(
+              RotateIndex(j, -power, basis_dimension))];
+    }
+  }
+
+  out.tau_alpha_by_u_then_i.resize(static_cast<std::size_t>(basis_dimension));
+  for (long u = 0; u < basis_dimension; ++u) {
+    const std::vector<ZZ_p> alpha_coords =
+        ::RecoverNormalBasisCoords(normal_basis,
+                                   normal_basis.alpha[static_cast<std::size_t>(u)]);
+    std::vector<FieldElement> &row =
+        out.tau_alpha_by_u_then_i[static_cast<std::size_t>(u)];
+    row.resize(static_cast<std::size_t>(basis_dimension));
+    for (long power = 0; power < basis_dimension; ++power) {
+      row[static_cast<std::size_t>(power)] = ComposeFromCoordsWithBasisRow(
+          out.tau_basis_rows[static_cast<std::size_t>(power)], alpha_coords,
+          "BuildFrobeniusPCSPrecomputedTables");
+    }
+  }
+  return out;
+}
+
+void ValidatePrecomputedTablesOrThrow(const FrobeniusPCSParams &params) {
+  const long basis_dimension =
+      static_cast<long>(params.basis_data.normal_basis.beta.size());
+  if (static_cast<long>(params.precomputed.tau_basis_rows.size()) !=
+          basis_dimension ||
+      static_cast<long>(params.precomputed.sigma_basis_rows.size()) !=
+          basis_dimension ||
+      static_cast<long>(params.precomputed.tau_alpha_by_u_then_i.size()) !=
+          basis_dimension) {
+    LogicError("ValidatePrecomputedTablesOrThrow: precomputed table row count mismatch");
+  }
+  for (long power = 0; power < basis_dimension; ++power) {
+    if (static_cast<long>(
+            params.precomputed.tau_basis_rows[static_cast<std::size_t>(power)]
+                .size()) != basis_dimension ||
+        static_cast<long>(
+            params.precomputed.sigma_basis_rows[static_cast<std::size_t>(power)]
+                .size()) != basis_dimension) {
+      LogicError("ValidatePrecomputedTablesOrThrow: precomputed basis-row width mismatch");
+    }
+  }
+  for (long u = 0; u < basis_dimension; ++u) {
+    const std::vector<FieldElement> &row =
+        params.precomputed.tau_alpha_by_u_then_i[static_cast<std::size_t>(u)];
+    if (static_cast<long>(row.size()) != basis_dimension) {
+      LogicError("ValidatePrecomputedTablesOrThrow: tau_alpha row width mismatch");
+    }
+    if (row[0] != params.basis_data.normal_basis.alpha[static_cast<std::size_t>(u)]) {
+      LogicError("ValidatePrecomputedTablesOrThrow: tau_alpha power-0 entry mismatch");
+    }
+  }
+  if (params.precomputed.tau_basis_rows[0] != params.basis_data.normal_basis.beta ||
+      params.precomputed.sigma_basis_rows[0] !=
+          params.basis_data.normal_basis.beta) {
+    LogicError("ValidatePrecomputedTablesOrThrow: power-0 basis rows must equal beta");
+  }
 }
 
 void ValidateBaseRingConstantOrThrow(const ZZ_pE &value, const char *label,
@@ -248,27 +364,6 @@ std::vector<FieldElement> SlicePoint(const std::vector<FieldElement> &z,
   return std::vector<FieldElement>(z.begin() + begin, z.begin() + begin + count);
 }
 
-FieldElement ApplyTauPower(const FrobeniusPCSParams &params,
-                           const FieldElement &element, long exp) {
-  FieldElement out = element;
-  for (long i = 0; i < exp; ++i) {
-    out = ::ApplyFrobeniusTau(params.basis_data.normal_basis, out);
-  }
-  return out;
-}
-
-std::vector<FieldElement> ApplySigmaPowerToPoint(const FrobeniusPCSParams &params,
-                                                 const std::vector<FieldElement> &point,
-                                                 long exp) {
-  std::vector<FieldElement> out = point;
-  for (FieldElement &value : out) {
-    for (long i = 0; i < exp; ++i) {
-      value = ::ApplyFrobeniusSigma(params.basis_data.normal_basis, value);
-    }
-  }
-  return out;
-}
-
 NTL::vec_ZZ_pE BuildEqualityTable(const std::vector<FieldElement> &point) {
   const long dimension = static_cast<long>(point.size());
   const long length = Pow2LongOrThrow(
@@ -281,25 +376,99 @@ NTL::vec_ZZ_pE BuildEqualityTable(const std::vector<FieldElement> &point) {
   return table;
 }
 
+std::vector<std::vector<ZZ_p>> RecoverPointNormalBasisCoords(
+    const FrobeniusPCSParams &params, const std::vector<FieldElement> &point) {
+  std::vector<std::vector<ZZ_p>> coords_by_var(point.size());
+  for (long i = 0; i < static_cast<long>(point.size()); ++i) {
+    coords_by_var[static_cast<std::size_t>(i)] =
+        ::RecoverNormalBasisCoords(params.basis_data.normal_basis,
+                                   point[static_cast<std::size_t>(i)]);
+  }
+  return coords_by_var;
+}
+
+std::vector<FieldElement> ComposePointWithBasisRow(
+    const std::vector<FieldElement> &basis_row,
+    const std::vector<std::vector<ZZ_p>> &coords_by_var,
+    const char *func_name) {
+  std::vector<FieldElement> out(coords_by_var.size(), FieldElement(0));
+  for (long i = 0; i < static_cast<long>(coords_by_var.size()); ++i) {
+    out[static_cast<std::size_t>(i)] = ComposeFromCoordsWithBasisRow(
+        basis_row, coords_by_var[static_cast<std::size_t>(i)], func_name);
+  }
+  return out;
+}
+
+SuffixOrbitCache BuildSuffixOrbitCache(const FrobeniusPCSParams &params,
+                                       const std::vector<FieldElement> &r_suffix,
+                                       bool build_eq_tables) {
+  if (static_cast<long>(r_suffix.size()) != params.ell_prime) {
+    LogicError("BuildSuffixOrbitCache: r_suffix dimension must equal ell_prime");
+  }
+
+  SuffixOrbitCache out;
+  out.suffix_coords_by_var = RecoverPointNormalBasisCoords(params, r_suffix);
+  const long basis_dimension =
+      static_cast<long>(params.precomputed.sigma_basis_rows.size());
+  out.sigma_points_by_i.resize(static_cast<std::size_t>(basis_dimension));
+  if (build_eq_tables) {
+    out.sigma_eq_tables_by_i.resize(static_cast<std::size_t>(basis_dimension));
+  }
+  for (long i = 0; i < basis_dimension; ++i) {
+    out.sigma_points_by_i[static_cast<std::size_t>(i)] =
+        ComposePointWithBasisRow(
+            params.precomputed.sigma_basis_rows[static_cast<std::size_t>(i)],
+            out.suffix_coords_by_var, "BuildSuffixOrbitCache");
+    if (build_eq_tables) {
+      out.sigma_eq_tables_by_i[static_cast<std::size_t>(i)] = BuildEqualityTable(
+          out.sigma_points_by_i[static_cast<std::size_t>(i)]);
+    }
+  }
+  return out;
+}
+
+std::vector<FieldElement> ComputeIndexedTauPowers(
+    const FrobeniusPCSParams &params,
+    const std::vector<FieldElement> &elements) {
+  const long basis_dimension =
+      static_cast<long>(params.precomputed.tau_basis_rows.size());
+  if (static_cast<long>(elements.size()) != basis_dimension) {
+    LogicError(
+        "ComputeIndexedTauPowers: element count must equal basis dimension");
+  }
+
+  std::vector<FieldElement> out(static_cast<std::size_t>(basis_dimension),
+                                FieldElement(0));
+  for (long i = 0; i < basis_dimension; ++i) {
+    const std::vector<ZZ_p> coords = ::RecoverNormalBasisCoords(
+        params.basis_data.normal_basis, elements[static_cast<std::size_t>(i)]);
+    out[static_cast<std::size_t>(i)] = ComposeFromCoordsWithBasisRow(
+        params.precomputed.tau_basis_rows[static_cast<std::size_t>(i)], coords,
+        "ComputeIndexedTauPowers");
+  }
+  return out;
+}
+
 std::vector<FieldElement> RecoverPartialEvaluationsFromSByI(
     const FrobeniusPCSParams &params,
     const std::vector<FieldElement> &s_by_i) {
-  const std::vector<FieldElement> &alpha = params.basis_data.normal_basis.alpha;
-  const long basis_dimension = static_cast<long>(alpha.size());
+  const long basis_dimension = static_cast<long>(
+      params.precomputed.tau_alpha_by_u_then_i.size());
   if (static_cast<long>(s_by_i.size()) != basis_dimension) {
     LogicError(
         "RecoverPartialEvaluationsFromSByI: s_by_i size must equal basis dimension");
   }
 
+  const std::vector<FieldElement> tau_s_by_i =
+      ComputeIndexedTauPowers(params, s_by_i);
   std::vector<FieldElement> partials(static_cast<std::size_t>(basis_dimension),
                                      FieldElement(0));
   for (long u = 0; u < basis_dimension; ++u) {
     FieldElement acc = FieldElement(0);
     for (long i = 0; i < basis_dimension; ++i) {
-      acc += ApplyTauPower(params,
-                           alpha[static_cast<std::size_t>(u)] *
-                               s_by_i[static_cast<std::size_t>(i)],
-                           i);
+      acc += params.precomputed.tau_alpha_by_u_then_i
+                 [static_cast<std::size_t>(u)][static_cast<std::size_t>(i)] *
+             tau_s_by_i[static_cast<std::size_t>(i)];
     }
     partials[static_cast<std::size_t>(u)] = acc;
   }
@@ -342,53 +511,52 @@ FieldElement RecombineClaimFromPartials(const std::vector<FieldElement> &partial
 }
 
 std::vector<FieldElement> ComputeSByI(
-    const FrobeniusPCSParams &params,
     const NTL::vec_ZZ_pE &t_packed_monomial_coeffs,
-    const std::vector<FieldElement> &r_suffix) {
+    const SuffixOrbitCache &orbit_cache) {
   const long basis_dimension =
-      static_cast<long>(params.basis_data.normal_basis.beta.size());
+      static_cast<long>(orbit_cache.sigma_points_by_i.size());
   std::vector<FieldElement> s_by_i(static_cast<std::size_t>(basis_dimension),
                                    FieldElement(0));
   for (long i = 0; i < basis_dimension; ++i) {
-    const std::vector<FieldElement> sigma_point =
-        ApplySigmaPowerToPoint(params, r_suffix, i);
     s_by_i[static_cast<std::size_t>(i)] =
-        EvalMultilinearMonomialCoeffs(t_packed_monomial_coeffs, sigma_point);
+        EvalMultilinearMonomialCoeffs(
+            t_packed_monomial_coeffs,
+            orbit_cache.sigma_points_by_i[static_cast<std::size_t>(i)]);
   }
   return s_by_i;
 }
 
-NTL::vec_ZZ_pE BuildBatchedGTable(const FrobeniusPCSParams &params,
-                                  const std::vector<FieldElement> &r_suffix,
-                                  const std::vector<FieldElement> &rprime_prefix) {
-  const NTL::vec_ZZ_pE lambda_by_i = BuildEqualityTable(rprime_prefix);
+NTL::vec_ZZ_pE BuildBatchedGTable(const NTL::vec_ZZ_pE &lambda_by_i,
+                                  const SuffixOrbitCache &orbit_cache,
+                                  long ell_prime) {
   const long basis_dimension =
-      static_cast<long>(params.basis_data.normal_basis.beta.size());
+      static_cast<long>(orbit_cache.sigma_eq_tables_by_i.size());
   if (lambda_by_i.length() != basis_dimension) {
     LogicError("BuildBatchedGTable: prefix equality table length mismatch");
   }
 
   const long num_w = Pow2LongOrThrow(
-      params.ell_prime, "BuildBatchedGTable: ell_prime is too large for long");
+      ell_prime, "BuildBatchedGTable: ell_prime is too large for long");
   NTL::vec_ZZ_pE out;
   out.SetLength(num_w);
   for (long w = 0; w < num_w; ++w) {
-    const std::vector<FieldElement> bool_point =
-        BooleanPointFromIndex(w, params.ell_prime);
-    FieldElement acc = FieldElement(0);
-    for (long i = 0; i < basis_dimension; ++i) {
-      const std::vector<FieldElement> sigma_point =
-          ApplySigmaPowerToPoint(params, r_suffix, i);
-      acc += lambda_by_i[i] * EqPolynomial(sigma_point, bool_point);
+    NTL::clear(out[w]);
+  }
+  for (long i = 0; i < basis_dimension; ++i) {
+    const NTL::vec_ZZ_pE &eq_table =
+        orbit_cache.sigma_eq_tables_by_i[static_cast<std::size_t>(i)];
+    if (eq_table.length() != num_w) {
+      LogicError("BuildBatchedGTable: orbit equality-table width mismatch");
     }
-    out[w] = acc;
+    for (long w = 0; w < num_w; ++w) {
+      out[w] += lambda_by_i[i] * eq_table[w];
+    }
   }
   return out;
 }
 
 FieldElement ComputeInitialBatchedClaim(const std::vector<FieldElement> &s_by_i,
-                                        const std::vector<FieldElement> &rprime_prefix) {
-  const NTL::vec_ZZ_pE lambda_by_i = BuildEqualityTable(rprime_prefix);
+                                        const NTL::vec_ZZ_pE &lambda_by_i) {
   if (lambda_by_i.length() != static_cast<long>(s_by_i.size())) {
     LogicError(
         "ComputeInitialBatchedClaim: prefix equality table length mismatch");
@@ -400,22 +568,21 @@ FieldElement ComputeInitialBatchedClaim(const std::vector<FieldElement> &s_by_i,
   return acc;
 }
 
-FieldElement ComputeFinalGStar(const FrobeniusPCSParams &params,
-                               const std::vector<FieldElement> &r_suffix,
-                               const std::vector<FieldElement> &rprime_prefix,
+FieldElement ComputeFinalGStar(const NTL::vec_ZZ_pE &lambda_by_i,
+                               const SuffixOrbitCache &orbit_cache,
                                const std::vector<FieldElement> &rprime_suffix) {
-  const NTL::vec_ZZ_pE lambda_by_i = BuildEqualityTable(rprime_prefix);
   const long basis_dimension =
-      static_cast<long>(params.basis_data.normal_basis.beta.size());
+      static_cast<long>(orbit_cache.sigma_points_by_i.size());
   if (lambda_by_i.length() != basis_dimension) {
     LogicError("ComputeFinalGStar: prefix equality table length mismatch");
   }
 
   FieldElement g_star = FieldElement(0);
   for (long i = 0; i < basis_dimension; ++i) {
-    const std::vector<FieldElement> sigma_point =
-        ApplySigmaPowerToPoint(params, r_suffix, i);
-    g_star += lambda_by_i[i] * EqPolynomial(rprime_suffix, sigma_point);
+    g_star += lambda_by_i[i] *
+              EqPolynomial(
+                  rprime_suffix,
+                  orbit_cache.sigma_points_by_i[static_cast<std::size_t>(i)]);
   }
   return g_star;
 }
@@ -444,10 +611,12 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
   const std::vector<FieldElement> z_prefix = SlicePoint(z, 0, params.kappa);
   const std::vector<FieldElement> r_suffix =
       SlicePoint(z, params.kappa, params.ell_prime);
+  const SuffixOrbitCache suffix_orbit =
+      BuildSuffixOrbitCache(params, r_suffix, params.ell_prime > 0);
 
   OuterProveEvalResult out;
-  out.proof.s_by_i = ComputeSByI(params, commit_artifacts.t_packed_monomial_coeffs,
-                                 r_suffix);
+  out.proof.s_by_i =
+      ComputeSByI(commit_artifacts.t_packed_monomial_coeffs, suffix_orbit);
   out.proof.h_by_level.resize(static_cast<std::size_t>(params.ell_prime));
 
   const std::vector<FieldElement> recovered_partials =
@@ -477,14 +646,15 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
     rprime_prefix[static_cast<std::size_t>(i)] =
         transcript.ChallengeFieldElement("rprime/prefix/" + std::to_string(i));
   }
+  const NTL::vec_ZZ_pE lambda_by_i = BuildEqualityTable(rprime_prefix);
 
   const FieldElement initial_claim =
-      ComputeInitialBatchedClaim(out.proof.s_by_i, rprime_prefix);
-  const NTL::vec_ZZ_pE g_table =
-      BuildBatchedGTable(params, r_suffix, rprime_prefix);
+      ComputeInitialBatchedClaim(out.proof.s_by_i, lambda_by_i);
 
   out.rprime_suffix.resize(static_cast<std::size_t>(params.ell_prime));
   if (params.ell_prime > 0) {
+    const NTL::vec_ZZ_pE g_table =
+        BuildBatchedGTable(lambda_by_i, suffix_orbit, params.ell_prime);
     ProductSumcheckProver sumcheck(commit_artifacts.t_packed_table, g_table);
     out.proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)] =
         sumcheck.CurrentPolynomial();
@@ -517,7 +687,7 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
   out.proof.t_star = EvalMultilinearMonomialCoeffs(
       commit_artifacts.t_packed_monomial_coeffs, out.rprime_suffix);
   const FieldElement g_star =
-      ComputeFinalGStar(params, r_suffix, rprime_prefix, out.rprime_suffix);
+      ComputeFinalGStar(lambda_by_i, suffix_orbit, out.rprime_suffix);
   const FieldElement final_sumcheck_claim =
       (params.ell_prime == 0)
           ? initial_claim
@@ -550,6 +720,8 @@ bool VerifyOuterEvalAndMaybeRecoverSuffix(
   const std::vector<FieldElement> z_prefix = SlicePoint(z, 0, params.kappa);
   const std::vector<FieldElement> r_suffix =
       SlicePoint(z, params.kappa, params.ell_prime);
+  const SuffixOrbitCache suffix_orbit =
+      BuildSuffixOrbitCache(params, r_suffix, /*build_eq_tables=*/false);
 
   const std::vector<FieldElement> recovered_partials =
       RecoverPartialEvaluationsFromSByI(params, proof.s_by_i);
@@ -569,9 +741,10 @@ bool VerifyOuterEvalAndMaybeRecoverSuffix(
     rprime_prefix[static_cast<std::size_t>(i)] =
         transcript.ChallengeFieldElement("rprime/prefix/" + std::to_string(i));
   }
+  const NTL::vec_ZZ_pE lambda_by_i = BuildEqualityTable(rprime_prefix);
 
   const FieldElement initial_claim =
-      ComputeInitialBatchedClaim(proof.s_by_i, rprime_prefix);
+      ComputeInitialBatchedClaim(proof.s_by_i, lambda_by_i);
 
   std::vector<FieldElement> rprime_suffix(
       static_cast<std::size_t>(params.ell_prime));
@@ -596,7 +769,7 @@ bool VerifyOuterEvalAndMaybeRecoverSuffix(
   }
 
   const FieldElement g_star =
-      ComputeFinalGStar(params, r_suffix, rprime_prefix, rprime_suffix);
+      ComputeFinalGStar(lambda_by_i, suffix_orbit, rprime_suffix);
   const FieldElement final_sumcheck_claim =
       (params.ell_prime == 0)
           ? initial_claim
@@ -707,6 +880,7 @@ void ValidateFrobeniusPCSParamsOrThrow(const FrobeniusPCSParams &params) {
     LogicError(
         "ValidateFrobeniusPCSParamsOrThrow: alpha basis dimension must equal 2^kappa");
   }
+  ValidatePrecomputedTablesOrThrow(params);
 
   const long expected_backend_message_length = Pow2LongOrThrow(
       ell_prime,
@@ -756,6 +930,8 @@ FrobeniusPCSParams FrobeniusPCSSetup(const FrobeniusPCSSetupInput &input) {
   params.extension_modulus = input.extension_modulus;
   params.basis_data =
       ::BuildFrobeniusBasisOrThrow(basis_input, input.extension_modulus);
+  params.precomputed =
+      BuildFrobeniusPCSPrecomputedTables(params.basis_data.normal_basis);
   params.backend = input.backend;
   ValidateFrobeniusPCSParamsOrThrow(params);
   return params;
