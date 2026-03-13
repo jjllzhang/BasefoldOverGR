@@ -79,6 +79,7 @@ add_library(basefold_core
 add_library(z2k_compiler_core
   src/Compiler/Z2k/PCSBackend.cpp
   src/Compiler/Z2k/BaseFoldBackendAdapter.cpp
+  src/Compiler/Z2k/FrobeniusPCS.cpp
   src/Compiler/Z2k/RingSwitchPCS.cpp
   src/Compiler/Z2k/RingSwitchProofSerialize.cpp
 )
@@ -148,6 +149,12 @@ target_link_libraries(test_z2k_frobenius_feasibility PRIVATE pcs_common)
 target_include_directories(test_z2k_frobenius_feasibility PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR})
 
+add_executable(test_z2k_frobenius_pcs
+  tests/test_z2k_frobenius_pcs.cpp)
+target_link_libraries(test_z2k_frobenius_pcs PRIVATE z2k_compiler_core)
+target_include_directories(test_z2k_frobenius_pcs PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_executable(test_path_hygiene tests/test_path_hygiene.cpp)
 configure_repo_cxx_target(test_path_hygiene)
 target_include_directories(test_path_hygiene PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -196,4 +203,6 @@ add_test(NAME test_pcs COMMAND $<TARGET_FILE:test_pcs>)
 add_test(NAME test_z2k_ring_switch_pcs COMMAND $<TARGET_FILE:test_z2k_ring_switch_pcs>)
 add_test(NAME test_z2k_frobenius_feasibility
   COMMAND $<TARGET_FILE:test_z2k_frobenius_feasibility>)
+add_test(NAME test_z2k_frobenius_pcs
+  COMMAND $<TARGET_FILE:test_z2k_frobenius_pcs>)
 add_test(NAME test_path_hygiene COMMAND $<TARGET_FILE:test_path_hygiene>)

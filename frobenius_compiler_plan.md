@@ -310,7 +310,7 @@ Do not proceed to Phase 2 if production coordinate extraction still depends on e
 
 ## Phase 2: Frobenius Setup and Packing
 
-Status: `[ ] Not started`
+Status: `[x] Done`
 
 ### Objective
 
@@ -318,16 +318,22 @@ Create a compiler setup path and a packing path analogous to ring-switch, but sp
 
 ### Tasks
 
-- `[ ]` Add `FrobeniusPCSSetupInput`
-- `[ ]` Add `FrobeniusPCSParams`
-- `[ ]` Validate:
+- `[x]` Add `FrobeniusPCSSetupInput`
+- `[x]` Add `FrobeniusPCSParams`
+- `[x]` Validate:
   - active `ZZ_p` modulus,
   - active `ZZ_pE` modulus,
   - `r = 2^kappa`,
   - backend message length is `2^(ell-kappa)`,
   - normal basis and dual basis dimensions match `r`
-- `[ ]` Implement packing from `t_table` over `Z_{2^k}` to `t'_table` over `GR(2^k, r)` using `beta`
-- `[ ]` Add commit artifact structs and builder APIs
+- `[x]` Implement packing from `t_table` over `Z_{2^k}` to `t'_table` over `GR(2^k, r)` using `beta`
+- `[x]` Add commit artifact structs and builder APIs
+
+Completed artifacts:
+
+- `include/Compiler/Z2k/FrobeniusPCS.hpp`
+- `src/Compiler/Z2k/FrobeniusPCS.cpp`
+- `tests/test_z2k_frobenius_pcs.cpp`
 
 ### Recommended concrete approach
 
