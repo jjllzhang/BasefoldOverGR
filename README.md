@@ -260,10 +260,15 @@ Language versions:
     API and stored in `RingSwitchPCSParams`,
   - `RingSwitchPCSSetup(...)` now accepts caller-provided basis data, validates
     it in the active context, and derives missing dual bases,
-  - runtime semantics below setup are still intentionally restricted to the
-    current polynomial-basis core until the later general-basis protocol work
-    lands, so provided non-polynomial bases are a setup-level capability at the
-    moment rather than a completed end-to-end protocol path.
+  - runtime semantics now follow the paper split:
+    - `PackZ2kCoeffsToGREvals(...)` packs against `beta_basis`,
+    - `BuildRingSwitchComponentTensor(...)` decomposes
+      `eq(r_suffix; w)` against `alpha_basis`,
+    - the Appendix C.1 partial-evaluation recovery decomposes each `s_u`
+      against `beta_basis` and recombines with `alpha_basis`,
+  - the default behavior remains the current polynomial-basis specialization,
+    but the end-to-end single-point `Commit/ProveEval/VerifyEval` path now also
+    works with caller-provided non-polynomial `alpha/beta` bases.
 - Proof shape is unchanged: outer and composed proofs still carry only
   `s_by_u`, `h_by_level`, `t_star`, and the backend opening proof.
 

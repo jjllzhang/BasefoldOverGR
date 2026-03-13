@@ -1,6 +1,6 @@
 # Ring-Switch General Basis Shared-Layer Plan
 
-Status: WP0-WP2 completed; WP3-WP6 pending
+Status: WP0-WP3 completed; WP4-WP6 pending
 Last updated: 2026-03-14
 Scope: make `RingSwitchPCS` support paper-aligned general `alpha/beta` Galois-ring bases through a clean shared basis layer
 
@@ -22,9 +22,14 @@ Scope: make `RingSwitchPCS` support paper-aligned general `alpha/beta` Galois-ri
 - `RingSwitchPCSSetup(...)` now accepts caller-provided `alpha/beta` basis data,
   derives missing dual bases, and validates genuine bases in the active
   context.
-- Runtime ring-switch packing/prove/verify is still deliberately
-  polynomial-basis-only until `WP3`; setup and params now carry the full
-  general-basis data, but core semantics are not yet generalized.
+- 2026-03-14: `WP3` landed in the working tree.
+- Runtime ring-switch packing/prove/verify now respects independent
+  caller-provided `alpha/beta` basis data:
+  - packing composes `t'(w)` against `beta`,
+  - `A_{u||w}` decomposes `eq(r_suffix; w)` against `alpha`,
+  - `s_u` recovery decomposes against `beta` and recombines with `alpha`.
+- End-to-end single-point `Commit/ProveEval/VerifyEval` now passes under a
+  non-polynomial `alpha != beta` test pair.
 
 ## Goal
 
@@ -47,14 +52,15 @@ The plan intentionally keeps the backend PCS boundary unchanged and does not cha
 
 ## Current Gaps
 
-Current code is still specialized to the active polynomial basis:
+Current remaining gaps after `WP3` are no longer in the protocol core.
+They are mostly follow-up plumbing and coverage:
 
-- public API now carries basis data, but setup still only enables the default
-  polynomial-basis path
-- packing assumes the polynomial block layout
-- `eq(r_suffix; w)` is decomposed using polynomial coefficients
-- `s_u` is decomposed using polynomial coefficients
-- partial-evaluation recovery implicitly relies on `alpha = beta = polynomial basis`
+- serializer/proof-size code should be audited for any remaining assumptions
+  about old basis descriptors
+- bench helpers should expose provided-basis runs instead of only the default
+  polynomial setup
+- test coverage can still be expanded beyond the current non-polynomial
+  `GR(4,2)` witness pair
 
 These assumptions currently live mainly in:
 
