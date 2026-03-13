@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "GaloisRing/HenselLift.hpp"
+#include "GaloisRing/FrobeniusBasis.hpp"
 #include "GaloisRing/PrimitiveElement.hpp"
 #include "GaloisRing/utils.hpp"
 
@@ -61,6 +62,41 @@ vector<long> ToLongVec(const ZZ_pEX &poly, long s) {
   vector<long> out;
   ZZpEXToLongCoeffs(poly, out, s);
   return out;
+}
+
+vector<long> ToLongVec(const vector<ZZ_p> &coords) {
+  vector<long> out(coords.size(), 0);
+  for (long i = 0; i < static_cast<long>(coords.size()); ++i) {
+    out[static_cast<std::size_t>(i)] =
+        conv<long>(rep(coords[static_cast<std::size_t>(i)]));
+  }
+  return out;
+}
+
+ZZ_pX MakeGR42Degree2Modulus() {
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  return F;
+}
+
+ZZ_pX MakeGR42Degree4Modulus() {
+  ZZ_pX F;
+  SetCoeff(F, 4, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  return F;
+}
+
+FrobeniusBasisParams MakeFrobeniusParams(long r) {
+  FrobeniusBasisParams params;
+  params.p = to_ZZ(2);
+  params.k = 2;
+  params.r = r;
+  params.teichmuller_generator_max_trials = 1024;
+  params.affine_search_limit = 4;
+  return params;
 }
 
 void TestUtilsBasics() {
@@ -597,6 +633,69 @@ void TestFindTeichmullerGenerator_Smoke() {
   CHECK(g != one);
 }
 
+void TestFrobeniusBasis_GR42Degree2() {
+  const ZZ p = to_ZZ(2);
+  const long k = 2;
+  const long r = 2;
+  const ZZ mod = power(p, k);
+  testutil::PrintInfo(
+      "Frobenius basis over GR(4,2): build, validate, round-trip, tau^r=id");
+
+  ZZ_pPush mod_push(mod);
+  const ZZ_pX F = MakeGR42Degree2Modulus();
+  ZZ_pEPush e_push(F);
+
+  const FrobeniusBasisData basis_data =
+      BuildFrobeniusBasisOrThrow(MakeFrobeniusParams(r), F);
+  ValidateNormalBasisOrThrow(basis_data.normal_basis);
+
+  const ZZ_pE sample = LongVecToZZpE({1, 2});
+  const vector<ZZ_p> coords =
+      RecoverNormalBasisCoords(basis_data.normal_basis, sample);
+  CHECK_EQ(ComposeFromNormalBasisCoords(basis_data.normal_basis, coords), sample);
+
+  ZZ_pE tau_power = sample;
+  for (long i = 0; i < r; ++i) {
+    tau_power = ApplyFrobeniusTau(basis_data.normal_basis, tau_power);
+  }
+  CHECK_EQ(tau_power, sample);
+  CHECK_EQ(ApplyFrobeniusTau(basis_data.normal_basis, testutil::ConstZZpE(3)),
+           testutil::ConstZZpE(3));
+}
+
+void TestFrobeniusBasis_GR42Degree4() {
+  const ZZ p = to_ZZ(2);
+  const long k = 2;
+  const long r = 4;
+  const ZZ mod = power(p, k);
+  testutil::PrintInfo(
+      "Frobenius basis over GR(4,4): dual rebuild and coordinate rotation");
+
+  ZZ_pPush mod_push(mod);
+  const ZZ_pX F = MakeGR42Degree4Modulus();
+  ZZ_pEPush e_push(F);
+
+  const FrobeniusBasisData basis_data =
+      BuildFrobeniusBasisOrThrow(MakeFrobeniusParams(r), F);
+  const vector<ZZ_pE> alpha_rebuilt =
+      BuildDualBasisOrThrow(basis_data.normal_basis.beta);
+  CHECK_EQ(alpha_rebuilt, basis_data.normal_basis.alpha);
+
+  const ZZ_pE sample = LongVecToZZpE({1, 3, 2, 1});
+  const vector<ZZ_p> coords =
+      RecoverNormalBasisCoords(basis_data.normal_basis, sample);
+  const vector<ZZ_p> tau_coords = RecoverNormalBasisCoords(
+      basis_data.normal_basis,
+      ApplyFrobeniusTau(basis_data.normal_basis, sample));
+  const vector<long> coords_long = ToLongVec(coords);
+  const vector<long> tau_coords_long = ToLongVec(tau_coords);
+
+  CHECK_EQ(ComposeFromNormalBasisCoords(basis_data.normal_basis, coords), sample);
+  CHECK_EQ(tau_coords_long,
+           (vector<long>{coords_long.back(), coords_long[0], coords_long[1],
+                         coords_long[2]}));
+}
+
 } // namespace
 
 int main() {
@@ -612,6 +711,8 @@ int main() {
     RUN_TEST(TestHenselLift_Smoke);
     RUN_TEST(TestPrimitiveElement_Smoke);
     RUN_TEST(TestFindTeichmullerGenerator_Smoke);
+    RUN_TEST(TestFrobeniusBasis_GR42Degree2);
+    RUN_TEST(TestFrobeniusBasis_GR42Degree4);
   } catch (const exception &e) {
     cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;
