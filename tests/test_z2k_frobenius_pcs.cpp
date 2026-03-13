@@ -10,6 +10,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <algorithm>
 #include <vector>
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -23,6 +24,7 @@
 #include "PCS/Common/Transcript.hpp"
 #include "Compiler/Z2k/BaseFoldBackendAdapter.hpp"
 #include "Compiler/Z2k/FrobeniusPCS.hpp"
+#include "Compiler/Z2k/FrobeniusProofSerialize.hpp"
 #include "tests/test_common.hpp"
 
 using NTL::conv;
@@ -138,6 +140,15 @@ ZZ_pE EvalFromBooleanTable(const vec_ZZ_pE &table, long dimension,
            basefold::EqPolynomial(point, BooleanPointFromIndex(idx, dimension));
   }
   return acc;
+}
+
+std::uint64_t FixedFieldElementBytesForCurrentContext() {
+  const ZZ modulus_minus_one = NTL::ZZ_p::modulus() - 1;
+  const long bits = NTL::NumBits(modulus_minus_one);
+  CHECK_MSG(bits > 0,
+            "FixedFieldElementBytesForCurrentContext: invalid modulus bit width");
+  const std::uint64_t coeff_bytes = static_cast<std::uint64_t>((bits + 7) / 8);
+  return coeff_bytes * static_cast<std::uint64_t>(ZZ_pE::degree());
 }
 
 ZZ_pE ApplyTauPower(const basefold::FrobeniusPCSParams &params,
@@ -1053,6 +1064,76 @@ void TestFrobeniusPCSOuterProveVerify_AcceptsHonestProof() {
   CHECK_EQ(outer_proof.t_star, composed_proof.t_star);
 }
 
+void TestFrobeniusProofSerialize_ComposedSizeMatchesBytes() {
+  testutil::PrintInfo("Frobenius Phase 4: serializer bytes match outer and composed proof-size accounting");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::FrobeniusPCSParams params =
+      BuildFrobeniusParams(p, modulus, F, alpha, /*ell=*/3, /*kappa=*/1);
+  const vec_ZZ_pE t_table =
+      BuildBaseRingCoeffVector({3, 1, 0, 2, 1, 2, 3, 0});
+  const vector<ZZ_pE> z = {alpha + testutil::ConstZZpE(1), alpha,
+                           testutil::ConstZZpE(3)};
+  const ZZ_pE claimed_s = EvalFromBooleanTable(t_table, params.ell, z);
+
+  const basefold::FrobeniusPCSCommitArtifacts artifacts =
+      basefold::FrobeniusPCSBuildCommitArtifacts(params, t_table);
+  const basefold::FrobeniusPCSEvalProof proof =
+      basefold::FrobeniusPCSProveEvalFromCommitArtifacts(
+          params, t_table, z, claimed_s, /*num_queries=*/2, artifacts);
+  const basefold::FrobeniusPCSOuterEvalProof outer_proof =
+      basefold::FrobeniusPCSProveOuterEvalFromCommitArtifacts(
+          params, t_table, artifacts.commitment, z, claimed_s,
+          /*num_queries=*/2,
+          basefold::FrobeniusPCSBuildOuterCommitArtifacts(params, t_table));
+
+  const std::uint64_t field_elem_bytes = FixedFieldElementBytesForCurrentContext();
+  const std::uint64_t expected_outer_bytes =
+      1U + 8U +
+      static_cast<std::uint64_t>(outer_proof.s_by_i.size()) * field_elem_bytes +
+      8U + static_cast<std::uint64_t>(outer_proof.h_by_level.size()) * 3U *
+                field_elem_bytes +
+      field_elem_bytes;
+
+  const basefold::Bytes outer_bytes =
+      basefold::SerializeFrobeniusPCSOuterProofFixedBytes(params, outer_proof);
+  const std::uint64_t outer_size =
+      basefold::FrobeniusPCSOuterProofSizeBytes(params, outer_proof);
+  CHECK_EQ(outer_bytes.size(), static_cast<std::size_t>(outer_size));
+  CHECK_EQ(outer_size, expected_outer_bytes);
+
+  const basefold::Bytes backend_bytes =
+      basefold::Z2kPCSBackendSerializeEvalProof(params.backend,
+                                                proof.backend_proof);
+  const std::uint64_t backend_size =
+      basefold::Z2kPCSBackendEvalProofSizeBytes(params.backend,
+                                                proof.backend_proof);
+  CHECK_EQ(backend_bytes.size(), static_cast<std::size_t>(backend_size));
+
+  const basefold::Bytes composed_bytes =
+      basefold::SerializeFrobeniusPCSEvalProofFixedBytes(params, proof);
+  const std::uint64_t composed_size =
+      basefold::FrobeniusPCSEvalProofSizeBytes(params, proof);
+  CHECK_EQ(composed_bytes.size(), static_cast<std::size_t>(composed_size));
+  CHECK_EQ(composed_size, outer_size + 8U + backend_size);
+  CHECK(std::equal(outer_bytes.begin(), outer_bytes.end(),
+                   composed_bytes.begin()));
+}
+
 }  // namespace
 
 int main() {
@@ -1073,6 +1154,7 @@ int main() {
     RUN_TEST(TestFrobeniusPCSVerifyEval_RejectsTampering);
     RUN_TEST(TestFrobeniusPCSVerifyEval_DimensionZeroUsesNoSumcheckRounds);
     RUN_TEST(TestFrobeniusPCSOuterProveVerify_AcceptsHonestProof);
+    RUN_TEST(TestFrobeniusProofSerialize_ComposedSizeMatchesBytes);
   } catch (const exception &e) {
     cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;

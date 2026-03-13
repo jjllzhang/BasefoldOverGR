@@ -80,6 +80,7 @@ add_library(z2k_compiler_core
   src/Compiler/Z2k/PCSBackend.cpp
   src/Compiler/Z2k/BaseFoldBackendAdapter.cpp
   src/Compiler/Z2k/FrobeniusPCS.cpp
+  src/Compiler/Z2k/FrobeniusProofSerialize.cpp
   src/Compiler/Z2k/RingSwitchPCS.cpp
   src/Compiler/Z2k/RingSwitchProofSerialize.cpp
 )
@@ -155,6 +156,12 @@ target_link_libraries(test_z2k_frobenius_pcs PRIVATE z2k_compiler_core)
 target_include_directories(test_z2k_frobenius_pcs PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR})
 
+add_executable(test_z2k_frobenius_bench_cli
+  tests/test_z2k_frobenius_bench_cli.cpp)
+configure_repo_cxx_target(test_z2k_frobenius_bench_cli)
+target_include_directories(test_z2k_frobenius_bench_cli PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_executable(test_path_hygiene tests/test_path_hygiene.cpp)
 configure_repo_cxx_target(test_path_hygiene)
 target_include_directories(test_path_hygiene PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -183,6 +190,16 @@ target_link_libraries(bench_z2k_ring_switch_commit PRIVATE z2k_compiler_core)
 add_executable(bench_z2k_ring_switch_eval bench/bench_z2k_ring_switch_eval.cpp)
 target_link_libraries(bench_z2k_ring_switch_eval PRIVATE z2k_compiler_core)
 
+add_executable(bench_z2k_frobenius_commit bench/bench_z2k_frobenius_commit.cpp)
+target_link_libraries(bench_z2k_frobenius_commit PRIVATE z2k_compiler_core)
+
+add_executable(bench_z2k_frobenius_eval bench/bench_z2k_frobenius_eval.cpp)
+target_link_libraries(bench_z2k_frobenius_eval PRIVATE z2k_compiler_core)
+
+add_dependencies(test_z2k_frobenius_bench_cli
+  bench_z2k_frobenius_commit
+  bench_z2k_frobenius_eval)
+
 add_executable(bench_z2k_ring_switch_outer_commit bench/bench_z2k_ring_switch_outer_commit.cpp)
 target_link_libraries(bench_z2k_ring_switch_outer_commit PRIVATE z2k_compiler_core)
 
@@ -205,4 +222,6 @@ add_test(NAME test_z2k_frobenius_feasibility
   COMMAND $<TARGET_FILE:test_z2k_frobenius_feasibility>)
 add_test(NAME test_z2k_frobenius_pcs
   COMMAND $<TARGET_FILE:test_z2k_frobenius_pcs>)
+add_test(NAME test_z2k_frobenius_bench_cli
+  COMMAND $<TARGET_FILE:test_z2k_frobenius_bench_cli>)
 add_test(NAME test_path_hygiene COMMAND $<TARGET_FILE:test_path_hygiene>)

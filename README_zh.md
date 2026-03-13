@@ -28,12 +28,15 @@
 ├── bench
 │   ├── bench_pcs_commit.cpp
 │   ├── bench_pcs_eval.cpp
+│   ├── bench_z2k_frobenius_commit.cpp
+│   ├── bench_z2k_frobenius_eval.cpp
 │   ├── calc_iopp_params.cpp
 │   └── exp_params_release_c4_lambda128.md
 ├── include
 │   ├── GaloisRing
 │   │   ├── utils.hpp
 │   │   ├── Inverse.hpp
+│   │   ├── FrobeniusBasis.hpp
 │   │   ├── HenselLift.hpp
 │   │   └── PrimitiveElement.hpp
 │   ├── PCS
@@ -53,6 +56,8 @@
 │   └── Compiler
 │       └── Z2k
 │           ├── BaseFoldBackendAdapter.hpp
+│           ├── FrobeniusPCS.hpp
+│           ├── FrobeniusProofSerialize.hpp
 │           ├── PCSBackend.hpp
 │           ├── RingSwitchPCS.hpp
 │           └── RingSwitchProofSerialize.hpp
@@ -63,6 +68,7 @@
 │   ├── GaloisRing
 │   │   ├── utils.cpp
 │   │   ├── Inverse.cpp
+│   │   ├── FrobeniusBasis.cpp
 │   │   ├── HenselLift.cpp
 │   │   └── PrimitiveElement.cpp
 │   ├── PCS
@@ -86,6 +92,8 @@
 │   └── Compiler
 │       └── Z2k
 │           ├── BaseFoldBackendAdapter.cpp
+│           ├── FrobeniusPCS.cpp
+│           ├── FrobeniusProofSerialize.cpp
 │           ├── PCSBackend.cpp
 │           ├── RingSwitchPCS.cpp
 │           └── RingSwitchProofSerialize.cpp
@@ -94,6 +102,9 @@
 │   ├── test_galois_ring_basic.cpp
 │   ├── test_foldable_codes.cpp
 │   ├── test_iopp.cpp
+│   ├── test_z2k_frobenius_feasibility.cpp
+│   ├── test_z2k_frobenius_bench_cli.cpp
+│   ├── test_z2k_frobenius_pcs.cpp
 │   └── test_pcs.cpp
 ├── result
 │   ├── results-*.csv
@@ -224,6 +235,28 @@
 - 面向用户的 proof size 输出来自 `bench_pcs_eval`：同一次 prove/eval bench
   会直接打印 `proof_size_bytes` / `proof_size_kb`。
 
+### `include/Compiler/Z2k/FrobeniusPCS.hpp` / `src/Compiler/Z2k/FrobeniusPCS.cpp`
+
+- 基于 Frobenius map 的 `Z_{2^k} -> GR(2^k, r)` compiler（论文 `Protocol 2`），
+  构建在现有通用 backend 边界之上。
+- 对外接口沿用 ring-switch 那套分层：
+  - setup/packing/commit helper，
+  - 可复用 commit artifacts，
+  - outer-only proof（`FrobeniusPCSOuterEvalProof`），
+  - composed proof（`FrobeniusPCSEvalProof`），
+  - staged prover/verifier wrapper。
+- 当前范围仍然是 correctness-first 的单点评估证明；不包含 multipoint
+  opening、Blaze-Orion 风格 proof composition、或 WHIR。
+
+### `include/Compiler/Z2k/FrobeniusProofSerialize.hpp` / `src/Compiler/Z2k/FrobeniusProofSerialize.cpp`
+
+- 为公开的 Frobenius proof object 提供 fixed-width serializer 和 proof-size helper。
+- serializer 契约：
+  - outer-only size 只统计 `s_by_i`、`h_by_level`、`t_star`，
+  - composed size 在 outer proof 后追加一个显式 8-byte backend proof 长度前缀和 backend proof bytes，
+  - commitment 与 public inputs 不计入 proof-size reporting。
+- proof size 的“精确”含义是：相对于这套 fixed-width serializer 契约精确；size helper 和 Frobenius bench 共用同一条计数路径。
+
 ### `bench/bench_pcs_commit.cpp`
 
 - 顶层 commit 基准：
@@ -233,6 +266,13 @@
 - 有限域与 Galois ring 上下文都可由命令行分别配置。
 - 可选 `--k0 <int>`（默认 `1`）用于测试一般 `k0` 的编码性能。
 - 可选 `--auto-zeta teich` 自动从 `(p,k,F)` 推导 Teichmüller 子群生成元作为 `zeta`（启用后忽略 `--field-zeta/--ring-zeta`）。
+
+### `bench/bench_z2k_frobenius_commit.cpp`
+
+- Frobenius compiler 的 commit benchmark。
+- `packing mean` 统计 `t -> t'` packing 加上 Boolean-table 到 monomial
+  conversion 的时间，具体走 `FrobeniusPCSBuildOuterCommitArtifacts(...)`。
+- `commit mean` 统计完整的 `FrobeniusPCSCommit(...)` 路径。
 
 ### `bench/bench_pcs_eval.cpp`
 
@@ -246,6 +286,18 @@
 - 可加 `--profile` 输出 prover/verifier 内部耗时拆分（profile 会在 `reps` 次迭代上累加，不包含 `warmup`；建议 `--warmup 0 --reps 1` 方便阅读）。
 - 可选 `--k0 <int>`（默认 `1`，要求 2 的幂）；此时多项式点维度为 `d+log2(k0)`，消息长度为 `k_d = k0*2^d`。
 - 可选 `--auto-zeta teich` 自动从 `(p,k,F)` 推导 Teichmüller 子群生成元作为 `zeta`（启用后忽略 `--field-zeta/--ring-zeta`）。
+
+### `bench/bench_z2k_frobenius_eval.cpp`
+
+- Frobenius compiler 的 eval benchmark：测量 outer protocol 加 backend
+  单点评估证明的 prove/verify 开销。
+- 计时 prove 从预先构造好的 `FrobeniusPCSCommitArtifacts` 开始，和当前
+  `bench_pcs_eval` 一样不把顶层 commit 阶段算进 prove-phase。
+- 输出内容包括：
+  - 总 prover/verifier 时间，
+  - 扣掉 backend 子调用后的 outer prover/verifier 时间，
+  - 对公开 `FrobeniusPCSEvalProof` 做 serializer-backed 计数得到的
+    `outer proof size` 与 `proof size`。
 
 ### `scripts/plot_benchmark_results.py`
 
@@ -266,6 +318,9 @@
 - `tests/test_foldable_codes.cpp`：覆盖 foldable code 编码的正确性测试（递归编码结果与显式构造的 `G_d` 乘法结果一致）。
 - `tests/test_iopp.cpp`：覆盖 BaseFold IOPP（有限域与 GR）commit/query 与 Merkle multiproof。
 - `tests/test_pcs.cpp`：覆盖 BaseFold PCS（有限域与 GR）生成 proof 并验证通过（以及篡改后应失败）。
+- `tests/test_z2k_frobenius_feasibility.cpp`：覆盖小参数 Galois ring 上的 Frobenius 代数可行性回归。
+- `tests/test_z2k_frobenius_bench_cli.cpp`：覆盖 Frobenius commit/eval bench CLI 的 `--help`、smoke execution，以及稳定 proof-size 输出字段。
+- `tests/test_z2k_frobenius_pcs.cpp`：覆盖 Frobenius PCS 的 setup/packing/prove/verify，以及 serializer-backed proof-size 检查。
 
 在安装好 NTL/GMP 后，使用 CMake（推荐 out-of-source 构建）：
 
@@ -295,6 +350,8 @@ cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 ```bash
 ./build-release/bench_pcs_commit --help
 ./build-release/bench_pcs_eval --help
+./build-release/bench_z2k_frobenius_commit --help
+./build-release/bench_z2k_frobenius_eval --help
 ./build-release/dump_pcs_eval_artifact --help
 ./build-release/bench_pcs_verify_artifact --help
 ./build-release/calc_iopp_params --help

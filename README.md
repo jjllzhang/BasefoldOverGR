@@ -28,12 +28,15 @@ Language versions:
 |-- bench
 |   |-- bench_pcs_commit.cpp
 |   |-- bench_pcs_eval.cpp
+|   |-- bench_z2k_frobenius_commit.cpp
+|   |-- bench_z2k_frobenius_eval.cpp
 |   |-- calc_iopp_params.cpp
 |   `-- exp_params_release_c4_lambda128.md
 |-- include
 |   |-- GaloisRing
 |   |   |-- utils.hpp
 |   |   |-- Inverse.hpp
+|   |   |-- FrobeniusBasis.hpp
 |   |   |-- HenselLift.hpp
 |   |   `-- PrimitiveElement.hpp
 |   |-- PCS
@@ -53,6 +56,8 @@ Language versions:
 |   `-- Compiler
 |       `-- Z2k
 |           |-- BaseFoldBackendAdapter.hpp
+|           |-- FrobeniusPCS.hpp
+|           |-- FrobeniusProofSerialize.hpp
 |           |-- PCSBackend.hpp
 |           |-- RingSwitchPCS.hpp
 |           `-- RingSwitchProofSerialize.hpp
@@ -63,6 +68,7 @@ Language versions:
 |   |-- GaloisRing
 |   |   |-- utils.cpp
 |   |   |-- Inverse.cpp
+|   |   |-- FrobeniusBasis.cpp
 |   |   |-- HenselLift.cpp
 |   |   `-- PrimitiveElement.cpp
 |   |-- PCS
@@ -86,6 +92,8 @@ Language versions:
 |   `-- Compiler
 |       `-- Z2k
 |           |-- BaseFoldBackendAdapter.cpp
+|           |-- FrobeniusPCS.cpp
+|           |-- FrobeniusProofSerialize.cpp
 |           |-- PCSBackend.cpp
 |           |-- RingSwitchPCS.cpp
 |           `-- RingSwitchProofSerialize.cpp
@@ -94,6 +102,9 @@ Language versions:
 |   |-- test_galois_ring_basic.cpp
 |   |-- test_foldable_codes.cpp
 |   |-- test_iopp.cpp
+|   |-- test_z2k_frobenius_feasibility.cpp
+|   |-- test_z2k_frobenius_bench_cli.cpp
+|   |-- test_z2k_frobenius_pcs.cpp
 |   `-- test_pcs.cpp
 |-- result
 |   |-- results-*.csv
@@ -234,6 +245,31 @@ Language versions:
 - User-facing proof-size reporting is surfaced from `bench_pcs_eval`, which prints
   `proof_size_bytes` / `proof_size_kb` for the proof it just generated.
 
+### `include/Compiler/Z2k/FrobeniusPCS.hpp` / `src/Compiler/Z2k/FrobeniusPCS.cpp`
+
+- Frobenius-map-based `Z_{2^k} -> GR(2^k, r)` compiler (`Protocol 2`) built on
+  the existing generic backend boundary.
+- Public surface mirrors the ring-switch split:
+  - setup/packing/commit helpers,
+  - reusable commit artifacts,
+  - outer-only proof (`FrobeniusPCSOuterEvalProof`),
+  - composed proof (`FrobeniusPCSEvalProof`),
+  - staged prover/verifier wrappers.
+- Current scope is correctness-first single-point opening only; it does not
+  implement multipoint opening, Blaze-Orion style composition, or WHIR.
+
+### `include/Compiler/Z2k/FrobeniusProofSerialize.hpp` / `src/Compiler/Z2k/FrobeniusProofSerialize.cpp`
+
+- Fixed-width serializer and proof-size helpers for the public Frobenius proof
+  objects.
+- Serializer contract:
+  - outer-only size counts only `s_by_i`, `h_by_level`, and `t_star`,
+  - composed size appends an explicit 8-byte backend-proof length prefix plus
+    backend proof bytes,
+  - commitment and public inputs are excluded from proof-size reporting.
+- Proof size is exact relative to this fixed-width serializer contract and is
+  shared by the size helpers and Frobenius benches.
+
 ### `bench/bench_pcs_commit.cpp`
 
 - Top-commit benchmark:
@@ -243,6 +279,13 @@ Language versions:
 - Field and ring contexts can be configured from CLI separately.
 - Optional `--k0 <int>` (default `1`) to benchmark general `k0`.
 - Optional `--auto-zeta teich` derives Teichmuller generator from `(p,k,F)` as `zeta` (overrides `--field-zeta/--ring-zeta`).
+
+### `bench/bench_z2k_frobenius_commit.cpp`
+
+- Frobenius compiler commit benchmark.
+- `packing mean` measures `t -> t'` packing plus Boolean-table to monomial
+  conversion via `FrobeniusPCSBuildOuterCommitArtifacts(...)`.
+- `commit mean` measures the full `FrobeniusPCSCommit(...)` path.
 
 ### `bench/bench_pcs_eval.cpp`
 
@@ -259,6 +302,18 @@ Language versions:
 - `--profile` prints prover/verifier breakdown (accumulated over `reps`, excluding `warmup`; use `--warmup 0 --reps 1` for readable single-run output).
 - Optional `--k0 <int>` (default `1`, must be power of two); polynomial point dimension becomes `d+log2(k0)`, message length is `k_d = k0*2^d`.
 - Optional `--auto-zeta teich` derives Teichmuller generator from `(p,k,F)` as `zeta` (overrides `--field-zeta/--ring-zeta`).
+
+### `bench/bench_z2k_frobenius_eval.cpp`
+
+- Frobenius compiler eval benchmark: measures prove/verify around the outer
+  protocol plus the backend single-point proof.
+- Timed prove starts from prebuilt `FrobeniusPCSCommitArtifacts`, matching the
+  current `bench_pcs_eval` convention that excludes the top commit stage.
+- Reports:
+  - total prover/verifier time,
+  - outer prover/verifier time with backend subcalls removed,
+  - serializer-backed `outer proof size` and `proof size` for the public
+    `FrobeniusPCSEvalProof`.
 
 ### `scripts/plot_benchmark_results.py`
 
@@ -279,6 +334,9 @@ Available tests:
 - `tests/test_foldable_codes.cpp`: foldable-code correctness (recursive encoding matches explicit `G_d` multiplication).
 - `tests/test_iopp.cpp`: BaseFold IOPP (field + GR) commit/query and Merkle multiproofs.
 - `tests/test_pcs.cpp`: BaseFold PCS (field + GR) proof generation and verification (including tampering-failure checks).
+- `tests/test_z2k_frobenius_feasibility.cpp`: algebraic Frobenius feasibility regression on small Galois-ring instances.
+- `tests/test_z2k_frobenius_bench_cli.cpp`: Frobenius commit/eval bench CLI regression for `--help`, smoke execution, and stable proof-size output fields.
+- `tests/test_z2k_frobenius_pcs.cpp`: Frobenius PCS setup/packing/prove/verify plus serializer-backed proof-size checks.
 
 After installing NTL/GMP, build with CMake (out-of-source recommended):
 
@@ -308,6 +366,8 @@ Then:
 ```bash
 ./build-release/bench_pcs_commit --help
 ./build-release/bench_pcs_eval --help
+./build-release/bench_z2k_frobenius_commit --help
+./build-release/bench_z2k_frobenius_eval --help
 ./build-release/dump_pcs_eval_artifact --help
 ./build-release/bench_pcs_verify_artifact --help
 ./build-release/calc_iopp_params --help

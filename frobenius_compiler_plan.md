@@ -440,7 +440,7 @@ Check:
 
 ## Phase 4: Serialization, Proof Size, and Benches
 
-Status: `[ ] Not started`
+Status: `[x] Done`
 
 ### Objective
 
@@ -448,11 +448,22 @@ Bring the Frobenius compiler up to the same repo standard as the ring-switch com
 
 ### Tasks
 
-- `[ ]` Add fixed-width serializer
-- `[ ]` Add proof-size accounting through the serializer path
-- `[ ]` Add outer-only and composed proof-size helpers
-- `[ ]` Add commit/eval benches
-- `[ ]` Document proof-size semantics and bench semantics
+- `[x]` Add fixed-width serializer
+- `[x]` Add proof-size accounting through the serializer path
+- `[x]` Add outer-only and composed proof-size helpers
+- `[x]` Add commit/eval benches
+- `[x]` Document proof-size semantics and bench semantics
+
+Completed artifacts:
+
+- `include/Compiler/Z2k/FrobeniusProofSerialize.hpp`
+- `src/Compiler/Z2k/FrobeniusProofSerialize.cpp`
+- `bench/bench_z2k_frobenius_common.hpp`
+- `bench/bench_z2k_frobenius_commit.cpp`
+- `bench/bench_z2k_frobenius_eval.cpp`
+- `tests/test_z2k_frobenius_pcs.cpp`
+- `README.md`
+- `README_zh.md`
 
 ### Design rule
 
