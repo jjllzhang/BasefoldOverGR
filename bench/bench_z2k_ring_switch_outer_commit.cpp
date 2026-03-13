@@ -75,6 +75,8 @@ BenchResult RunCommitBenchmark(const basefold::RingSwitchPCSParams &params,
 }
 
 void PrintResult(long c, long ell, long kappa, int warmup, int reps,
+                 const RingSwitchBenchCliConfig &config,
+                 const basefold::RingSwitchPCSParams &params,
                  const BenchResult &result) {
   std::cout << "\n[ring-switch outer commit]"
             << " c=" << c << " ell=" << ell << " kappa=" << kappa
@@ -82,6 +84,7 @@ void PrintResult(long c, long ell, long kappa, int warmup, int reps,
             << " reps=" << reps << "\n";
   std::cout << std::fixed << std::setprecision(3);
   std::cout << "  hash backend " << basefold::SelectedHashBackendName() << "\n";
+  PrintBasisModeSummary(std::cout, config, params);
   std::cout << "  packing mean " << result.packing.mean_ms << " ms  (min "
             << result.packing.min_ms << ", max " << result.packing.max_ms
             << ")\n";
@@ -101,11 +104,12 @@ void PrintHelp() {
       << "                                     [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
       << "                                     [--auto-zeta teich]\n"
       << "                                     [--ring-mod <decimal-int>] [--ring-p <decimal-int>]\n"
-      << "                                     [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
-      << "Notes:\n"
+      << "                                     [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n";
+  PrintProvidedBasisFlagHelp(std::cout, "                                     ");
+  std::cout << "\nNotes:\n"
       << "  Headline commit time measures RingSwitchPCSBuildOuterCommitArtifacts only.\n"
       << "  No backend PCS commit is executed inside the timed region.\n";
-  PrintCurrentBasisModeNotes(std::cout, "  ");
+  PrintBasisCliNotes(std::cout, "  ");
 }
 
 }  // namespace
@@ -119,73 +123,72 @@ int main(int argc, char **argv) {
   std::uint64_t seed = 0x5eed1234ULL;
   bool auto_zeta_teich = false;
 
-  ContextSpec spec;
-  spec.scalar_modulus = to_ZZ(4);
-  spec.base_prime = to_ZZ(2);
-  spec.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};
-  spec.zeta_coeffs = {to_ZZ(0), to_ZZ(1)};
+  RingSwitchBenchCliArgs cli;
+  cli.context.scalar_modulus = to_ZZ(4);
+  cli.context.base_prime = to_ZZ(2);
+  cli.context.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};
+  cli.context.zeta_coeffs = {to_ZZ(0), to_ZZ(1)};
 
   for (int i = 1; i < argc; ++i) {
     const std::string arg(argv[i]);
-    const auto need_value = [&](const char *flag) -> const char * {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing value for " << flag << "\n";
-        std::exit(2);
-      }
-      return argv[++i];
-    };
 
     if (arg == "--help" || arg == "-h") {
       PrintHelp();
       return 0;
     } else if (arg == "--c") {
-      if (!ParseLong(need_value("--c"), c)) {
+      if (!ParseLong(NeedValueOrExit(i, argc, argv, "--c"), c)) {
         std::cerr << "Invalid --c\n";
         return 2;
       }
     } else if (arg == "--ell") {
-      if (!ParseLong(need_value("--ell"), ell)) {
+      if (!ParseLong(NeedValueOrExit(i, argc, argv, "--ell"), ell)) {
         std::cerr << "Invalid --ell\n";
         return 2;
       }
     } else if (arg == "--kappa") {
-      if (!ParseLong(need_value("--kappa"), kappa)) {
+      if (!ParseLong(NeedValueOrExit(i, argc, argv, "--kappa"), kappa)) {
         std::cerr << "Invalid --kappa\n";
         return 2;
       }
     } else if (arg == "--warmup") {
-      if (!ParseInt(need_value("--warmup"), warmup)) {
+      if (!ParseInt(NeedValueOrExit(i, argc, argv, "--warmup"), warmup)) {
         std::cerr << "Invalid --warmup\n";
         return 2;
       }
     } else if (arg == "--reps") {
-      if (!ParseInt(need_value("--reps"), reps)) {
+      if (!ParseInt(NeedValueOrExit(i, argc, argv, "--reps"), reps)) {
         std::cerr << "Invalid --reps\n";
         return 2;
       }
     } else if (arg == "--seed") {
-      seed = ParseU64OrDie(need_value("--seed"), "--seed");
+      seed = ParseU64OrDie(NeedValueOrExit(i, argc, argv, "--seed"), "--seed");
     } else if (arg == "--auto-zeta") {
-      const std::string mode = need_value("--auto-zeta");
+      const std::string mode = NeedValueOrExit(i, argc, argv, "--auto-zeta");
       if (mode != "teich") {
         std::cerr << "Unsupported --auto-zeta mode\n";
         return 2;
       }
       auto_zeta_teich = true;
     } else if (arg == "--ring-mod") {
-      if (!ParseZZ(need_value("--ring-mod"), spec.scalar_modulus)) {
+      if (!ParseZZ(NeedValueOrExit(i, argc, argv, "--ring-mod"),
+                   cli.context.scalar_modulus)) {
         std::cerr << "Invalid --ring-mod\n";
         return 2;
       }
     } else if (arg == "--ring-p") {
-      if (!ParseZZ(need_value("--ring-p"), spec.base_prime)) {
+      if (!ParseZZ(NeedValueOrExit(i, argc, argv, "--ring-p"),
+                   cli.context.base_prime)) {
         std::cerr << "Invalid --ring-p\n";
         return 2;
       }
     } else if (arg == "--ring-F") {
-      spec.F_coeffs = ParseCoeffList(need_value("--ring-F"));
+      cli.context.F_coeffs = ParseCoeffList(
+          NeedValueOrExit(i, argc, argv, "--ring-F"));
     } else if (arg == "--ring-zeta") {
-      spec.zeta_coeffs = ParseCoeffList(need_value("--ring-zeta"));
+      cli.context.zeta_coeffs = ParseCoeffList(
+          NeedValueOrExit(i, argc, argv, "--ring-zeta"));
+    } else if (TryParseBasisCliArg(arg, i, argc, argv, cli)) {
+      continue;
     } else {
       std::cerr << "Unknown argument: " << arg << "\n";
       return 2;
@@ -200,29 +203,31 @@ int main(int argc, char **argv) {
       LogicError("main: c must be positive");
     }
 
-    ZZ_pPush mod_push(spec.scalar_modulus);
-    ValidateMonic(spec.F_coeffs, spec.scalar_modulus, "ring F");
-    const ZZ_pX F = BuildZZpX(spec.F_coeffs);
+    ZZ_pPush mod_push(cli.context.scalar_modulus);
+    ValidateMonic(cli.context.F_coeffs, cli.context.scalar_modulus, "ring F");
+    const ZZ_pX F = BuildZZpX(cli.context.F_coeffs);
     ZZ_pEPush ext_push(F);
 
+    const RingSwitchBenchCliConfig config =
+        DecodeRingSwitchBenchCliConfigOrThrow(cli, F);
     ZZ p_base;
     long k_base = 0;
-    DeduceBasePrimeAndExponent(spec, p_base, k_base);
+    DeduceBasePrimeAndExponent(cli.context, p_base, k_base);
     ZZ_pE zeta;
     if (auto_zeta_teich) {
       zeta = FindTeichmullerGenerator(p_base, k_base, NTL::deg(F), F);
     } else {
-      zeta = BuildZZpE(spec.zeta_coeffs);
+      zeta = BuildZZpE(cli.context.zeta_coeffs);
     }
 
     const basefold::RingSwitchPCSParams params =
-        BuildRingSwitchParams(c, ell, kappa, spec, F, zeta);
+        BuildRingSwitchParams(c, ell, kappa, config, F, zeta);
     const vec_ZZ_pE t_table =
         MakeDeterministicBaseRingTable(Pow2Checked(ell), seed);
 
     const BenchResult result =
         RunCommitBenchmark(params, t_table, warmup, reps);
-    PrintResult(c, ell, kappa, warmup, reps, result);
+    PrintResult(c, ell, kappa, warmup, reps, config, params, result);
     return 0;
   } catch (const std::exception &e) {
     std::cerr << "Error: " << e.what() << "\n";

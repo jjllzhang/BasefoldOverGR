@@ -1,6 +1,6 @@
 # Ring-Switch General Basis Optional Extensions Plan
 
-Status: WP0-WP1 completed; WP2-WP6 pending
+Status: WP0-WP2 completed; WP3-WP6 pending
 Last updated: 2026-03-14
 Scope: finish the two follow-on optional extensions after `ring_switch_general_basis_shared_layer_plan.md`
 
@@ -16,7 +16,18 @@ Scope: finish the two follow-on optional extensions after `ring_switch_general_b
   - a shared setup-input builder for default vs provided basis mode,
   - a shared basis-mode help-text fragment.
 - `bench_z2k_ring_switch_commit.cpp` and `bench_z2k_ring_switch_eval.cpp` no longer carry their own private copies of the ring-switch common helper layer.
-- All five ring-switch bench binaries now consume the shared basis-mode note fragment, even though caller-provided basis flags are still intentionally deferred to `WP2`.
+- All five ring-switch bench binaries now consume the shared basis-mode note fragment from the common helper.
+- 2026-03-14: `WP2` landed in the working tree.
+- All five ring-switch bench binaries now accept:
+  - `--basis-mode default|provided`
+  - `--alpha-basis` / `--beta-basis`
+  - optional `--alpha-dual-basis` / `--beta-dual-basis`
+- Basis CLI decoding now happens only after the active `ZZ_p` / `ZZ_pE`
+  contexts are initialized, so provided-basis parsing is aligned with the live
+  ring context instead of the pre-context argument loop.
+- Benchmark output now prints `basis mode ...`; in provided mode it also prints
+  basis dimensions plus whether each dual basis was supplied or derived.
+- README now documents the provided-basis bench surface and a minimal example.
 
 ## Goal
 
@@ -39,11 +50,11 @@ The plan assumes the current library-level protocol semantics are already correc
 
 ## Why This Follow-Up Exists
 
-The current branch already completes the required shared-layer plan, but two useful extensions remain:
+The current branch already completes the required shared-layer plan. This follow-up plan was created to finish two optional extensions:
 
 1. Bench usability gap:
-   the library accepts caller-provided basis data, but the `bench_z2k_ring_switch_*`
-   CLIs still only drive the default polynomial-basis setup path.
+   expose caller-provided basis data directly on the `bench_z2k_ring_switch_*`
+   CLIs so performance comparisons do not require ad hoc code edits.
 
 2. Confidence gap:
    provided-basis correctness is no longer a one-off demo, but most positive end-to-end
@@ -58,7 +69,7 @@ Today the repo has:
 
 - a completed library-level general-basis implementation for ring-switch
 - fixed-width serializer/proof-size support under provided bases
-- bench binaries that still default to polynomial-basis setup only
+- bench binaries that now support both default and caller-provided basis modes
 - provided-basis tests concentrated in `GR(4,2)`
 
 The current optional-extension surface mainly lives in:

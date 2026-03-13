@@ -56,6 +56,20 @@ struct BasisCliData {
   std::vector<ZZ_pE> dual_basis;
 };
 
+struct EncodedBasisCliData {
+  bool has_basis = false;
+  std::string basis_spec;
+  bool has_dual_basis = false;
+  std::string dual_basis_spec;
+};
+
+struct RingSwitchBenchCliArgs {
+  ContextSpec context;
+  BasisMode basis_mode = BasisMode::kDefault;
+  EncodedBasisCliData alpha;
+  EncodedBasisCliData beta;
+};
+
 struct RingSwitchBenchCliConfig {
   ContextSpec context;
   BasisMode basis_mode = BasisMode::kDefault;
@@ -253,17 +267,60 @@ inline const char *BasisModeName(BasisMode mode) {
   return mode == BasisMode::kProvided ? "provided" : "default";
 }
 
-inline void SetBasisCliDataOrThrow(BasisCliData &out, const std::string &encoded,
-                                   bool is_dual_basis, const char *flag) {
-  std::vector<ZZ_pE> parsed = ParseBasisElementList(encoded);
+inline const char *NeedValueOrExit(int &i, int argc, char **argv,
+                                   const char *flag) {
+  if (i + 1 >= argc) {
+    std::cerr << "Missing value for " << flag << "\n";
+    std::exit(2);
+  }
+  return argv[++i];
+}
+
+inline void SetEncodedBasisCliData(EncodedBasisCliData &out,
+                                   const std::string &encoded,
+                                   bool is_dual_basis) {
   if (is_dual_basis) {
     out.has_dual_basis = true;
-    out.dual_basis = std::move(parsed);
+    out.dual_basis_spec = encoded;
   } else {
     out.has_basis = true;
-    out.basis = std::move(parsed);
+    out.basis_spec = encoded;
   }
-  (void)flag;
+}
+
+inline bool TryParseBasisCliArg(const std::string &arg, int &i, int argc,
+                                char **argv, RingSwitchBenchCliArgs &args) {
+  if (arg == "--basis-mode") {
+    if (!ParseBasisMode(NeedValueOrExit(i, argc, argv, "--basis-mode"),
+                        args.basis_mode)) {
+      std::cerr << "Invalid --basis-mode\n";
+      std::exit(2);
+    }
+    return true;
+  }
+  if (arg == "--alpha-basis") {
+    SetEncodedBasisCliData(
+        args.alpha, NeedValueOrExit(i, argc, argv, "--alpha-basis"), false);
+    return true;
+  }
+  if (arg == "--beta-basis") {
+    SetEncodedBasisCliData(
+        args.beta, NeedValueOrExit(i, argc, argv, "--beta-basis"), false);
+    return true;
+  }
+  if (arg == "--alpha-dual-basis") {
+    SetEncodedBasisCliData(args.alpha,
+                           NeedValueOrExit(i, argc, argv, "--alpha-dual-basis"),
+                           true);
+    return true;
+  }
+  if (arg == "--beta-dual-basis") {
+    SetEncodedBasisCliData(args.beta,
+                           NeedValueOrExit(i, argc, argv, "--beta-dual-basis"),
+                           true);
+    return true;
+  }
+  return false;
 }
 
 inline ZZ NormalizeMod(const ZZ &x, const ZZ &mod) {
@@ -447,6 +504,55 @@ inline void ValidateBasisCliDataOrThrow(const BasisCliData &data,
   }
 }
 
+inline BasisCliData DecodeBasisCliDataOrThrow(const EncodedBasisCliData &encoded,
+                                              long expected_dimension,
+                                              const char *label,
+                                              const char *func_name) {
+  BasisCliData out;
+  out.has_basis = encoded.has_basis;
+  out.has_dual_basis = encoded.has_dual_basis;
+  if (encoded.has_basis) {
+    out.basis = ParseBasisElementList(encoded.basis_spec);
+  }
+  if (encoded.has_dual_basis) {
+    out.dual_basis = ParseBasisElementList(encoded.dual_basis_spec);
+  }
+  ValidateBasisCliDataOrThrow(out, expected_dimension, label, func_name);
+  return out;
+}
+
+inline RingSwitchBenchCliConfig DecodeRingSwitchBenchCliConfigOrThrow(
+    const RingSwitchBenchCliArgs &args, const ZZ_pX &F) {
+  RingSwitchBenchCliConfig out;
+  out.context = args.context;
+  out.basis_mode = args.basis_mode;
+
+  const long basis_dimension = NTL::deg(F);
+  if (basis_dimension <= 0) {
+    LogicError(
+        "DecodeRingSwitchBenchCliConfigOrThrow: extension degree must be positive");
+  }
+
+  if (args.basis_mode == BasisMode::kDefault) {
+    if (args.alpha.has_basis || args.alpha.has_dual_basis || args.beta.has_basis ||
+        args.beta.has_dual_basis) {
+      LogicError(
+          "DecodeRingSwitchBenchCliConfigOrThrow: basis flags require --basis-mode provided");
+    }
+    return out;
+  }
+
+  out.alpha = DecodeBasisCliDataOrThrow(args.alpha, basis_dimension, "alpha",
+                                        "DecodeRingSwitchBenchCliConfigOrThrow");
+  out.beta = DecodeBasisCliDataOrThrow(args.beta, basis_dimension, "beta",
+                                       "DecodeRingSwitchBenchCliConfigOrThrow");
+  if (!out.alpha.has_basis || !out.beta.has_basis) {
+    LogicError(
+        "DecodeRingSwitchBenchCliConfigOrThrow: provided basis mode requires both alpha and beta");
+  }
+  return out;
+}
+
 inline basefold::FoldableCodeParams BuildBackendParams(long c, long d,
                                                        const ZZ &p,
                                                        const ZZ_pE &zeta) {
@@ -548,11 +654,30 @@ inline void PrintProvidedBasisFlagHelp(std::ostream &os, const char *indent) {
      << "[--alpha-dual-basis <elem0;elem1;...>] [--beta-dual-basis <elem0;elem1;...>]\n";
 }
 
-inline void PrintCurrentBasisModeNotes(std::ostream &os, const char *indent) {
+inline void PrintBasisCliNotes(std::ostream &os, const char *indent) {
   os << indent
-     << "This bench currently uses the default polynomial alpha/beta setup mode.\n"
+     << "Default mode uses the active polynomial alpha/beta basis.\n"
      << indent
-     << "Caller-provided alpha/beta bases are supported by the library but not exposed on this CLI.\n";
+     << "In provided mode, basis elements are entered in polynomial-basis coordinates.\n"
+     << indent
+     << "If a provided dual basis is omitted, setup derives it automatically.\n";
+}
+
+inline const char *DualBasisSourceName(const BasisCliData &basis) {
+  return basis.has_dual_basis ? "supplied" : "derived";
+}
+
+inline void PrintBasisModeSummary(std::ostream &os,
+                                  const RingSwitchBenchCliConfig &config,
+                                  const basefold::RingSwitchPCSParams &params) {
+  os << "  basis mode " << BasisModeName(config.basis_mode) << "\n";
+  if (config.basis_mode != BasisMode::kProvided) {
+    return;
+  }
+  os << "  alpha basis dim " << params.alpha_basis.basis.size() << " (dual "
+     << DualBasisSourceName(config.alpha) << ")\n";
+  os << "  beta basis dim " << params.beta_basis.basis.size() << " (dual "
+     << DualBasisSourceName(config.beta) << ")\n";
 }
 
 inline std::uint64_t FixedCoeffBytesOrThrow() {

@@ -271,9 +271,25 @@ Language versions:
     works with caller-provided non-polynomial `alpha/beta` bases.
 - Proof shape is unchanged: outer and composed proofs still carry only
   `s_by_u`, `h_by_level`, `t_star`, and the backend opening proof.
-- Current ring-switch bench binaries keep the default polynomial-basis setup.
-  The library API supports caller-provided `alpha/beta` basis data, but the
-  `bench_z2k_ring_switch_*` CLIs do not yet surface custom-basis flags.
+- Ring-switch bench binaries now support both setup modes:
+  - default mode remains the active polynomial basis specialization,
+  - caller-provided mode uses `--basis-mode provided` together with
+    `--alpha-basis` and `--beta-basis`; `--alpha-dual-basis` and
+    `--beta-dual-basis` are optional because setup derives omitted dual bases.
+- Inline bench basis encoding uses polynomial-basis coordinates inside the
+  active `GR(2^k, 2^kappa)` context. Basis elements are written as
+  semicolon-separated vectors, and each element uses the same low-to-high
+  coefficient convention as `--ring-F`.
+
+Minimal ring-switch bench example with caller-provided basis data:
+
+```bash
+./build/bench_z2k_ring_switch_eval \
+  --basis-mode provided \
+  --alpha-basis '1,1;0,1' \
+  --beta-basis '1,0;1,1' \
+  --queries 1 --warmup 0 --reps 1
+```
 
 ### `include/Compiler/Z2k/FrobeniusPCS.hpp` / `src/Compiler/Z2k/FrobeniusPCS.cpp`
 
