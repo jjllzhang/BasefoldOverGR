@@ -356,7 +356,7 @@ Packing formula:
 
 ## Phase 3: Outer Proof, Correctness First
 
-Status: `[ ] Not started`
+Status: `[x] Done`
 
 ### Objective
 
@@ -364,11 +364,17 @@ Implement the outer proof and verifier for the Frobenius compiler before optimiz
 
 ### Tasks
 
-- `[ ]` Implement transcript config and domain separator
-- `[ ]` Implement outer prove path
-- `[ ]` Implement outer verify path
-- `[ ]` Implement composed prove/verify path
-- `[ ]` Add prover/verifier wrappers similar to ring-switch
+- `[x]` Implement transcript config and domain separator
+- `[x]` Implement outer prove path
+- `[x]` Implement outer verify path
+- `[x]` Implement composed prove/verify path
+- `[x]` Add prover/verifier wrappers similar to ring-switch
+
+Completed artifacts:
+
+- `include/Compiler/Z2k/FrobeniusPCS.hpp`
+- `src/Compiler/Z2k/FrobeniusPCS.cpp`
+- `tests/test_z2k_frobenius_pcs.cpp`
 
 ### Protocol mapping
 

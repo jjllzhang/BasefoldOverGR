@@ -8,6 +8,10 @@
 #include <string>
 #include <vector>
 
+#include "PCS/Common/Multilinear.hpp"
+#include "PCS/Common/Profile.hpp"
+#include "PCS/Common/Transcript.hpp"
+
 using NTL::LogicError;
 using NTL::SetCoeff;
 using NTL::ZZ;
@@ -24,6 +28,11 @@ namespace {
 struct PackedCommitInputs {
   NTL::vec_ZZ_pE t_packed_table;
   NTL::vec_ZZ_pE t_packed_monomial_coeffs;
+};
+
+struct OuterProveEvalResult {
+  FrobeniusPCSOuterEvalProof proof;
+  std::vector<FieldElement> rprime_suffix;
 };
 
 long Pow2LongOrThrow(long exponent, const char *what) {
@@ -64,6 +73,10 @@ ZZ_pE BaseRingConstant(const ZZ_p &value) {
   ZZ_pE out;
   NTL::conv(out, poly);
   return out;
+}
+
+ZZ_pE BaseRingConstant(long value) {
+  return BaseRingConstant(NTL::to_ZZ_p(value));
 }
 
 void ValidateBaseRingConstantOrThrow(const ZZ_pE &value, const char *label,
@@ -113,6 +126,489 @@ PackedCommitInputs BuildPackedCommitInputs(const FrobeniusPCSParams &params,
   out.t_packed_monomial_coeffs =
       BooleanHypercubeTableToMonomialCoeffsInternal(out.t_packed_table);
   return out;
+}
+
+std::vector<ZZ_pE> BooleanPointFromIndex(long index, long dimension) {
+  std::vector<ZZ_pE> point(static_cast<std::size_t>(dimension));
+  for (long i = 0; i < dimension; ++i) {
+    point[static_cast<std::size_t>(i)] = BaseRingConstant((index >> i) & 1L);
+  }
+  return point;
+}
+
+HashTranscript MakeFrobeniusTranscript() {
+  HashTranscriptConfig config;
+  config.domain_separator = "FrobeniusPCS/v1";
+  config.byte_order = TranscriptByteOrder::kLittleEndian;
+  config.error_prefix = "FrobeniusHashTranscript";
+  return HashTranscript(config);
+}
+
+void AbsorbPublicInput(HashTranscript &transcript,
+                       const MerkleRoot &commitment,
+                       const std::vector<FieldElement> &z,
+                       const FieldElement &claimed_s) {
+  transcript.AbsorbDigest(commitment);
+  for (const FieldElement &zi : z) {
+    transcript.AbsorbFieldElement(zi);
+  }
+  transcript.AbsorbFieldElement(claimed_s);
+}
+
+void ValidateEvalInputsOrThrow(const FrobeniusPCSParams &params,
+                               const NTL::vec_ZZ_pE &t_table,
+                               const std::vector<FieldElement> &z,
+                               long num_queries, const char *func_name) {
+  ValidateFrobeniusPCSParamsOrThrow(params);
+  const long expected_t_length = Pow2LongOrThrow(
+      params.ell, (std::string(func_name) + ": ell is too large for long").c_str());
+  if (t_table.length() != expected_t_length) {
+    LogicError((std::string(func_name) + ": t_table length must equal 2^ell")
+                   .c_str());
+  }
+  ValidateBaseRingVectorOrThrow(t_table, "t_table", func_name);
+  if (static_cast<long>(z.size()) != params.ell) {
+    LogicError((std::string(func_name) + ": z dimension must equal ell").c_str());
+  }
+  if (num_queries < 0) {
+    LogicError((std::string(func_name) + ": num_queries must be non-negative")
+                   .c_str());
+  }
+}
+
+void ValidateCommitArtifactsOrThrow(const FrobeniusPCSParams &params,
+                                    const FrobeniusPCSCommitArtifacts &artifacts,
+                                    const char *func_name) {
+  ValidateFrobeniusPCSParamsOrThrow(params);
+  const long expected_packed_length = Pow2LongOrThrow(
+      params.ell_prime,
+      (std::string(func_name) + ": ell_prime is too large for long").c_str());
+  if (artifacts.t_packed_table.length() != expected_packed_length) {
+    LogicError((std::string(func_name) +
+                ": t_packed_table length must equal 2^(ell-kappa)")
+                   .c_str());
+  }
+  if (artifacts.t_packed_monomial_coeffs.length() != expected_packed_length) {
+    LogicError((std::string(func_name) +
+                ": t_packed_monomial_coeffs length must equal 2^(ell-kappa)")
+                   .c_str());
+  }
+  if (artifacts.commitment != artifacts.backend_commit_artifacts.commitment) {
+    LogicError((std::string(func_name) +
+                ": commitment must match backend_commit_artifacts.commitment")
+                   .c_str());
+  }
+}
+
+void ValidateOuterCommitArtifactsOrThrow(
+    const FrobeniusPCSParams &params,
+    const FrobeniusPCSOuterCommitArtifacts &artifacts,
+    const char *func_name) {
+  ValidateFrobeniusPCSParamsOrThrow(params);
+  const long expected_packed_length = Pow2LongOrThrow(
+      params.ell_prime,
+      (std::string(func_name) + ": ell_prime is too large for long").c_str());
+  if (artifacts.t_packed_table.length() != expected_packed_length) {
+    LogicError((std::string(func_name) +
+                ": t_packed_table length must equal 2^(ell-kappa)")
+                   .c_str());
+  }
+  if (artifacts.t_packed_monomial_coeffs.length() != expected_packed_length) {
+    LogicError((std::string(func_name) +
+                ": t_packed_monomial_coeffs length must equal 2^(ell-kappa)")
+                   .c_str());
+  }
+}
+
+bool HasExpectedEvalProofShape(const FrobeniusPCSParams &params,
+                               const FrobeniusPCSEvalProof &proof) {
+  const long basis_dimension =
+      static_cast<long>(params.basis_data.normal_basis.beta.size());
+  return static_cast<long>(proof.s_by_i.size()) == basis_dimension &&
+         static_cast<long>(proof.h_by_level.size()) == params.ell_prime;
+}
+
+bool HasExpectedOuterEvalProofShape(const FrobeniusPCSParams &params,
+                                    const FrobeniusPCSOuterEvalProof &proof) {
+  const long basis_dimension =
+      static_cast<long>(params.basis_data.normal_basis.beta.size());
+  return static_cast<long>(proof.s_by_i.size()) == basis_dimension &&
+         static_cast<long>(proof.h_by_level.size()) == params.ell_prime;
+}
+
+bool HasCompatibleBackendEvalSubproof(const FrobeniusPCSParams &params,
+                                      const Z2kPCSBackendEvalProof &proof) {
+  return proof.vtable == params.backend.vtable && proof.payload &&
+         proof.params_owner &&
+         proof.params_owner.get() == params.backend.params.get();
+}
+
+std::vector<FieldElement> SlicePoint(const std::vector<FieldElement> &z,
+                                     long begin, long count) {
+  return std::vector<FieldElement>(z.begin() + begin, z.begin() + begin + count);
+}
+
+FieldElement ApplyTauPower(const FrobeniusPCSParams &params,
+                           const FieldElement &element, long exp) {
+  FieldElement out = element;
+  for (long i = 0; i < exp; ++i) {
+    out = ::ApplyFrobeniusTau(params.basis_data.normal_basis, out);
+  }
+  return out;
+}
+
+std::vector<FieldElement> ApplySigmaPowerToPoint(const FrobeniusPCSParams &params,
+                                                 const std::vector<FieldElement> &point,
+                                                 long exp) {
+  std::vector<FieldElement> out = point;
+  for (FieldElement &value : out) {
+    for (long i = 0; i < exp; ++i) {
+      value = ::ApplyFrobeniusSigma(params.basis_data.normal_basis, value);
+    }
+  }
+  return out;
+}
+
+NTL::vec_ZZ_pE BuildEqualityTable(const std::vector<FieldElement> &point) {
+  const long dimension = static_cast<long>(point.size());
+  const long length = Pow2LongOrThrow(
+      dimension, "BuildEqualityTable: dimension is too large for long");
+  NTL::vec_ZZ_pE table;
+  table.SetLength(length);
+  for (long idx = 0; idx < length; ++idx) {
+    table[idx] = EqPolynomial(point, BooleanPointFromIndex(idx, dimension));
+  }
+  return table;
+}
+
+std::vector<FieldElement> RecoverPartialEvaluationsFromSByI(
+    const FrobeniusPCSParams &params,
+    const std::vector<FieldElement> &s_by_i) {
+  const std::vector<FieldElement> &alpha = params.basis_data.normal_basis.alpha;
+  const long basis_dimension = static_cast<long>(alpha.size());
+  if (static_cast<long>(s_by_i.size()) != basis_dimension) {
+    LogicError(
+        "RecoverPartialEvaluationsFromSByI: s_by_i size must equal basis dimension");
+  }
+
+  std::vector<FieldElement> partials(static_cast<std::size_t>(basis_dimension),
+                                     FieldElement(0));
+  for (long u = 0; u < basis_dimension; ++u) {
+    FieldElement acc = FieldElement(0);
+    for (long i = 0; i < basis_dimension; ++i) {
+      acc += ApplyTauPower(params,
+                           alpha[static_cast<std::size_t>(u)] *
+                               s_by_i[static_cast<std::size_t>(i)],
+                           i);
+    }
+    partials[static_cast<std::size_t>(u)] = acc;
+  }
+  return partials;
+}
+
+std::vector<FieldElement> ComputeDirectPartialEvaluations(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const std::vector<FieldElement> &z_suffix) {
+  const long basis_dimension =
+      static_cast<long>(params.basis_data.normal_basis.beta.size());
+  const long num_w = Pow2LongOrThrow(
+      params.ell_prime,
+      "ComputeDirectPartialEvaluations: ell_prime is too large for long");
+  std::vector<FieldElement> partials(static_cast<std::size_t>(basis_dimension),
+                                     FieldElement(0));
+  for (long u = 0; u < basis_dimension; ++u) {
+    NTL::vec_ZZ_pE slice;
+    slice.SetLength(num_w);
+    for (long w = 0; w < num_w; ++w) {
+      slice[w] = t_table[u + w * basis_dimension];
+    }
+    const NTL::vec_ZZ_pE slice_monomial =
+        BooleanHypercubeTableToMonomialCoeffsInternal(slice);
+    partials[static_cast<std::size_t>(u)] =
+        EvalMultilinearMonomialCoeffs(slice_monomial, z_suffix);
+  }
+  return partials;
+}
+
+FieldElement RecombineClaimFromPartials(const std::vector<FieldElement> &partials,
+                                        const std::vector<FieldElement> &z_prefix) {
+  FieldElement acc = FieldElement(0);
+  for (long u = 0; u < static_cast<long>(partials.size()); ++u) {
+    acc += partials[static_cast<std::size_t>(u)] *
+           EqPolynomial(z_prefix, BooleanPointFromIndex(u,
+                                                        static_cast<long>(z_prefix.size())));
+  }
+  return acc;
+}
+
+std::vector<FieldElement> ComputeSByI(
+    const FrobeniusPCSParams &params,
+    const NTL::vec_ZZ_pE &t_packed_monomial_coeffs,
+    const std::vector<FieldElement> &r_suffix) {
+  const long basis_dimension =
+      static_cast<long>(params.basis_data.normal_basis.beta.size());
+  std::vector<FieldElement> s_by_i(static_cast<std::size_t>(basis_dimension),
+                                   FieldElement(0));
+  for (long i = 0; i < basis_dimension; ++i) {
+    const std::vector<FieldElement> sigma_point =
+        ApplySigmaPowerToPoint(params, r_suffix, i);
+    s_by_i[static_cast<std::size_t>(i)] =
+        EvalMultilinearMonomialCoeffs(t_packed_monomial_coeffs, sigma_point);
+  }
+  return s_by_i;
+}
+
+NTL::vec_ZZ_pE BuildBatchedGTable(const FrobeniusPCSParams &params,
+                                  const std::vector<FieldElement> &r_suffix,
+                                  const std::vector<FieldElement> &rprime_prefix) {
+  const NTL::vec_ZZ_pE lambda_by_i = BuildEqualityTable(rprime_prefix);
+  const long basis_dimension =
+      static_cast<long>(params.basis_data.normal_basis.beta.size());
+  if (lambda_by_i.length() != basis_dimension) {
+    LogicError("BuildBatchedGTable: prefix equality table length mismatch");
+  }
+
+  const long num_w = Pow2LongOrThrow(
+      params.ell_prime, "BuildBatchedGTable: ell_prime is too large for long");
+  NTL::vec_ZZ_pE out;
+  out.SetLength(num_w);
+  for (long w = 0; w < num_w; ++w) {
+    const std::vector<FieldElement> bool_point =
+        BooleanPointFromIndex(w, params.ell_prime);
+    FieldElement acc = FieldElement(0);
+    for (long i = 0; i < basis_dimension; ++i) {
+      const std::vector<FieldElement> sigma_point =
+          ApplySigmaPowerToPoint(params, r_suffix, i);
+      acc += lambda_by_i[i] * EqPolynomial(sigma_point, bool_point);
+    }
+    out[w] = acc;
+  }
+  return out;
+}
+
+FieldElement ComputeInitialBatchedClaim(const std::vector<FieldElement> &s_by_i,
+                                        const std::vector<FieldElement> &rprime_prefix) {
+  const NTL::vec_ZZ_pE lambda_by_i = BuildEqualityTable(rprime_prefix);
+  if (lambda_by_i.length() != static_cast<long>(s_by_i.size())) {
+    LogicError(
+        "ComputeInitialBatchedClaim: prefix equality table length mismatch");
+  }
+  FieldElement acc = FieldElement(0);
+  for (long i = 0; i < static_cast<long>(s_by_i.size()); ++i) {
+    acc += s_by_i[static_cast<std::size_t>(i)] * lambda_by_i[i];
+  }
+  return acc;
+}
+
+FieldElement ComputeFinalGStar(const FrobeniusPCSParams &params,
+                               const std::vector<FieldElement> &r_suffix,
+                               const std::vector<FieldElement> &rprime_prefix,
+                               const std::vector<FieldElement> &rprime_suffix) {
+  const NTL::vec_ZZ_pE lambda_by_i = BuildEqualityTable(rprime_prefix);
+  const long basis_dimension =
+      static_cast<long>(params.basis_data.normal_basis.beta.size());
+  if (lambda_by_i.length() != basis_dimension) {
+    LogicError("ComputeFinalGStar: prefix equality table length mismatch");
+  }
+
+  FieldElement g_star = FieldElement(0);
+  for (long i = 0; i < basis_dimension; ++i) {
+    const std::vector<FieldElement> sigma_point =
+        ApplySigmaPowerToPoint(params, r_suffix, i);
+    g_star += lambda_by_i[i] * EqPolynomial(rprime_suffix, sigma_point);
+  }
+  return g_star;
+}
+
+FieldElement ComputeOriginalEvaluation(const NTL::vec_ZZ_pE &t_table,
+                                       const std::vector<FieldElement> &z) {
+  const NTL::vec_ZZ_pE t_monomial =
+      BooleanHypercubeTableToMonomialCoeffsInternal(t_table);
+  return EvalMultilinearMonomialCoeffs(t_monomial, z);
+}
+
+OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const MerkleRoot &commitment, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_s, long num_queries,
+    const FrobeniusPCSOuterCommitArtifacts &commit_artifacts,
+    const char *func_name) {
+  ValidateEvalInputsOrThrow(params, t_table, z, num_queries, func_name);
+  ValidateOuterCommitArtifactsOrThrow(params, commit_artifacts, func_name);
+
+  const FieldElement direct_eval = ComputeOriginalEvaluation(t_table, z);
+  if (direct_eval != claimed_s) {
+    LogicError((std::string(func_name) + ": claimed_s must equal t(z)").c_str());
+  }
+
+  const std::vector<FieldElement> z_prefix = SlicePoint(z, 0, params.kappa);
+  const std::vector<FieldElement> r_suffix =
+      SlicePoint(z, params.kappa, params.ell_prime);
+
+  OuterProveEvalResult out;
+  out.proof.s_by_i = ComputeSByI(params, commit_artifacts.t_packed_monomial_coeffs,
+                                 r_suffix);
+  out.proof.h_by_level.resize(static_cast<std::size_t>(params.ell_prime));
+
+  const std::vector<FieldElement> recovered_partials =
+      RecoverPartialEvaluationsFromSByI(params, out.proof.s_by_i);
+  const std::vector<FieldElement> direct_partials =
+      ComputeDirectPartialEvaluations(params, t_table, r_suffix);
+  if (recovered_partials != direct_partials) {
+    LogicError((std::string(func_name) +
+                ": recovered partial evaluations do not match Protocol 2 reconstruction")
+                   .c_str());
+  }
+  if (RecombineClaimFromPartials(recovered_partials, z_prefix) != claimed_s) {
+    LogicError((std::string(func_name) +
+                ": Equality Check 1 failed on honest witness")
+                   .c_str());
+  }
+
+  HashTranscript transcript = MakeFrobeniusTranscript();
+  AbsorbPublicInput(transcript, commitment, z, claimed_s);
+  for (const FieldElement &s_i : out.proof.s_by_i) {
+    transcript.AbsorbFieldElement(s_i);
+  }
+
+  std::vector<FieldElement> rprime_prefix(
+      static_cast<std::size_t>(params.kappa));
+  for (long i = 0; i < params.kappa; ++i) {
+    rprime_prefix[static_cast<std::size_t>(i)] =
+        transcript.ChallengeFieldElement("rprime/prefix/" + std::to_string(i));
+  }
+
+  const FieldElement initial_claim =
+      ComputeInitialBatchedClaim(out.proof.s_by_i, rprime_prefix);
+  const NTL::vec_ZZ_pE g_table =
+      BuildBatchedGTable(params, r_suffix, rprime_prefix);
+
+  out.rprime_suffix.resize(static_cast<std::size_t>(params.ell_prime));
+  if (params.ell_prime > 0) {
+    ProductSumcheckProver sumcheck(commit_artifacts.t_packed_table, g_table);
+    out.proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)] =
+        sumcheck.CurrentPolynomial();
+    AbsorbQuadraticPoly(
+        transcript,
+        out.proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)]);
+
+    for (long i = params.ell_prime; i-- > 0;) {
+      const FieldElement r_i = transcript.ChallengeFieldElement(
+          "rprime/suffix/" + std::to_string(i));
+      out.rprime_suffix[static_cast<std::size_t>(i)] = r_i;
+      sumcheck.ReceiveChallenge(r_i);
+      if (i > 0) {
+        out.proof.h_by_level[static_cast<std::size_t>(i - 1)] =
+            sumcheck.CurrentPolynomial();
+        AbsorbQuadraticPoly(
+            transcript,
+            out.proof.h_by_level[static_cast<std::size_t>(i - 1)]);
+      }
+    }
+
+    if (!CheckProductSumcheckChain(initial_claim, out.proof.h_by_level,
+                                   out.rprime_suffix)) {
+      LogicError((std::string(func_name) +
+                  ": honest product sumcheck chain is inconsistent")
+                     .c_str());
+    }
+  }
+
+  out.proof.t_star = EvalMultilinearMonomialCoeffs(
+      commit_artifacts.t_packed_monomial_coeffs, out.rprime_suffix);
+  const FieldElement g_star =
+      ComputeFinalGStar(params, r_suffix, rprime_prefix, out.rprime_suffix);
+  const FieldElement final_sumcheck_claim =
+      (params.ell_prime == 0)
+          ? initial_claim
+          : out.proof.h_by_level[0].Eval(out.rprime_suffix[0]);
+  if (final_sumcheck_claim != out.proof.t_star * g_star) {
+    LogicError((std::string(func_name) +
+                ": honest Equality Check 3 failed")
+                   .c_str());
+  }
+
+  return out;
+}
+
+bool VerifyOuterEvalAndMaybeRecoverSuffix(
+    const FrobeniusPCSParams &params, const MerkleRoot &commitment,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const FrobeniusPCSOuterEvalProof &proof,
+    std::vector<FieldElement> *rprime_suffix_out) {
+  ValidateFrobeniusPCSParamsOrThrow(params);
+  if (static_cast<long>(z.size()) != params.ell) {
+    return false;
+  }
+  if (num_queries < 0) {
+    return false;
+  }
+  if (!HasExpectedOuterEvalProofShape(params, proof)) {
+    return false;
+  }
+
+  const std::vector<FieldElement> z_prefix = SlicePoint(z, 0, params.kappa);
+  const std::vector<FieldElement> r_suffix =
+      SlicePoint(z, params.kappa, params.ell_prime);
+
+  const std::vector<FieldElement> recovered_partials =
+      RecoverPartialEvaluationsFromSByI(params, proof.s_by_i);
+  if (RecombineClaimFromPartials(recovered_partials, z_prefix) != claimed_s) {
+    return false;
+  }
+
+  HashTranscript transcript = MakeFrobeniusTranscript();
+  AbsorbPublicInput(transcript, commitment, z, claimed_s);
+  for (const FieldElement &s_i : proof.s_by_i) {
+    transcript.AbsorbFieldElement(s_i);
+  }
+
+  std::vector<FieldElement> rprime_prefix(
+      static_cast<std::size_t>(params.kappa));
+  for (long i = 0; i < params.kappa; ++i) {
+    rprime_prefix[static_cast<std::size_t>(i)] =
+        transcript.ChallengeFieldElement("rprime/prefix/" + std::to_string(i));
+  }
+
+  const FieldElement initial_claim =
+      ComputeInitialBatchedClaim(proof.s_by_i, rprime_prefix);
+
+  std::vector<FieldElement> rprime_suffix(
+      static_cast<std::size_t>(params.ell_prime));
+  if (params.ell_prime > 0) {
+    AbsorbQuadraticPoly(
+        transcript,
+        proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)]);
+    for (long i = params.ell_prime; i-- > 0;) {
+      rprime_suffix[static_cast<std::size_t>(i)] = transcript.ChallengeFieldElement(
+          "rprime/suffix/" + std::to_string(i));
+      if (i > 0) {
+        AbsorbQuadraticPoly(
+            transcript,
+            proof.h_by_level[static_cast<std::size_t>(i - 1)]);
+      }
+    }
+  }
+
+  if (!CheckProductSumcheckChain(initial_claim, proof.h_by_level,
+                                 rprime_suffix)) {
+    return false;
+  }
+
+  const FieldElement g_star =
+      ComputeFinalGStar(params, r_suffix, rprime_prefix, rprime_suffix);
+  const FieldElement final_sumcheck_claim =
+      (params.ell_prime == 0)
+          ? initial_claim
+          : proof.h_by_level[0].Eval(rprime_suffix[0]);
+  if (final_sumcheck_claim != proof.t_star * g_star) {
+    return false;
+  }
+
+  if (rprime_suffix_out != nullptr) {
+    *rprime_suffix_out = std::move(rprime_suffix);
+  }
+  return true;
 }
 
 }  // namespace
@@ -338,6 +834,110 @@ FrobeniusPCSCommitArtifacts FrobeniusPCSBuildCommitArtifacts(
       params.backend, out.t_packed_monomial_coeffs);
   out.commitment = out.backend_commit_artifacts.commitment;
   return out;
+}
+
+FrobeniusPCSOuterEvalProof FrobeniusPCSProveOuterEval(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const MerkleRoot &commitment, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_s, long num_queries) {
+  const FrobeniusPCSOuterCommitArtifacts commit_artifacts =
+      FrobeniusPCSBuildOuterCommitArtifacts(params, t_table);
+  return FrobeniusPCSProveOuterEvalFromCommitArtifacts(
+      params, t_table, commitment, z, claimed_s, num_queries, commit_artifacts);
+}
+
+FrobeniusPCSOuterEvalProof FrobeniusPCSProveOuterEvalFromCommitArtifacts(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const MerkleRoot &commitment, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_s, long num_queries,
+    const FrobeniusPCSOuterCommitArtifacts &commit_artifacts) {
+  return ProveOuterEvalFromCommitArtifactsInternal(
+             params, t_table, commitment, z, claimed_s, num_queries,
+             commit_artifacts, "FrobeniusPCSProveOuterEvalFromCommitArtifacts")
+      .proof;
+}
+
+FrobeniusPCSEvalProof FrobeniusPCSProveEval(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries) {
+  const FrobeniusPCSCommitArtifacts commit_artifacts =
+      FrobeniusPCSBuildCommitArtifacts(params, t_table);
+  return FrobeniusPCSProveEvalFromCommitArtifacts(
+      params, t_table, z, claimed_s, num_queries, commit_artifacts);
+}
+
+FrobeniusPCSEvalProof FrobeniusPCSProveEvalFromCommitArtifacts(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const FrobeniusPCSCommitArtifacts &commit_artifacts) {
+  ValidateCommitArtifactsOrThrow(params, commit_artifacts,
+                                 "FrobeniusPCSProveEvalFromCommitArtifacts");
+  FrobeniusPCSOuterCommitArtifacts outer_commit_artifacts;
+  outer_commit_artifacts.t_packed_table = commit_artifacts.t_packed_table;
+  outer_commit_artifacts.t_packed_monomial_coeffs =
+      commit_artifacts.t_packed_monomial_coeffs;
+  OuterProveEvalResult outer = ProveOuterEvalFromCommitArtifactsInternal(
+      params, t_table, commit_artifacts.commitment, z, claimed_s, num_queries,
+      outer_commit_artifacts, "FrobeniusPCSProveEvalFromCommitArtifacts");
+
+  FrobeniusPCSEvalProof proof;
+  proof.s_by_i = outer.proof.s_by_i;
+  proof.h_by_level = outer.proof.h_by_level;
+  proof.t_star = outer.proof.t_star;
+
+  {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->z2k_backend_prove_ns : nullptr,
+                      prof ? &prof->z2k_backend_prove_calls : nullptr);
+    proof.backend_proof = Z2kPCSBackendProveEval(
+        params.backend, commit_artifacts.t_packed_monomial_coeffs,
+        outer.rprime_suffix, proof.t_star, num_queries,
+        &commit_artifacts.backend_commit_artifacts);
+  }
+  return proof;
+}
+
+bool FrobeniusPCSVerifyEval(const FrobeniusPCSParams &params,
+                            const MerkleRoot &commitment,
+                            const std::vector<FieldElement> &z,
+                            const FieldElement &claimed_s, long num_queries,
+                            const FrobeniusPCSEvalProof &proof) {
+  if (!HasExpectedEvalProofShape(params, proof) ||
+      !HasCompatibleBackendEvalSubproof(params, proof.backend_proof)) {
+    return false;
+  }
+
+  FrobeniusPCSOuterEvalProof outer_proof;
+  outer_proof.s_by_i = proof.s_by_i;
+  outer_proof.h_by_level = proof.h_by_level;
+  outer_proof.t_star = proof.t_star;
+
+  std::vector<FieldElement> rprime_suffix;
+  if (!VerifyOuterEvalAndMaybeRecoverSuffix(params, commitment, z, claimed_s,
+                                            num_queries, outer_proof,
+                                            &rprime_suffix)) {
+    return false;
+  }
+
+  {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->z2k_backend_verify_ns : nullptr,
+                      prof ? &prof->z2k_backend_verify_calls : nullptr);
+    return Z2kPCSBackendVerifyEval(params.backend, commitment, rprime_suffix,
+                                   proof.t_star, num_queries,
+                                   proof.backend_proof);
+  }
+}
+
+bool FrobeniusPCSVerifyOuterEval(const FrobeniusPCSParams &params,
+                                 const MerkleRoot &commitment,
+                                 const std::vector<FieldElement> &z,
+                                 const FieldElement &claimed_s,
+                                 long num_queries,
+                                 const FrobeniusPCSOuterEvalProof &proof) {
+  return VerifyOuterEvalAndMaybeRecoverSuffix(params, commitment, z, claimed_s,
+                                              num_queries, proof, nullptr);
 }
 
 }  // namespace basefold
