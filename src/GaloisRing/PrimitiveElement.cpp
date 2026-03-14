@@ -1,5 +1,6 @@
 #include "GaloisRing/PrimitiveElement.hpp"
 
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -33,21 +34,6 @@ void ValidateExtensionPolynomial(const ZZ_pX &F, long s,
   }
 }
 
-long PositiveZZToLongChecked(const ZZ &z, const std::string &label,
-                             const std::string &fn_name) {
-  if (z <= 0) {
-    const std::string msg = fn_name + ": " + label + " must be > 0";
-    NTL::LogicError(msg.c_str());
-  }
-
-  const long max_long_bits = static_cast<long>(8 * sizeof(long) - 1);
-  if (NumBits(z) > max_long_bits) {
-    const std::string msg = fn_name + ": " + label + " too large for long";
-    NTL::LogicError(msg.c_str());
-  }
-  return to_long(z);
-}
-
 bool IsUnitByReductionModP(const ZZ_pE &a, const ZZ &p) {
   if (a == 0) return false;
 
@@ -62,27 +48,47 @@ bool IsUnitByReductionModP(const ZZ_pE &a, const ZZ &p) {
   return false;
 }
 
-std::vector<long> UniquePrimeFactors(long n) {
-  std::vector<long> factors;
+unsigned long long PositiveZZToU64Checked(const ZZ &z,
+                                          const std::string &label,
+                                          const std::string &fn_name) {
+  if (z <= 0) {
+    const std::string msg = fn_name + ": " + label + " must be > 0";
+    NTL::LogicError(msg.c_str());
+  }
+  if (NumBits(z) > 64) {
+    const std::string msg = fn_name + ": " + label + " too large for u64";
+    NTL::LogicError(msg.c_str());
+  }
+  std::ostringstream os;
+  os << z;
+  return std::stoull(os.str());
+}
+
+std::vector<ZZ> UniquePrimeFactorsU64(unsigned long long n) {
+  std::vector<ZZ> factors;
   if (n <= 1) return factors;
 
-  for (long d = 2; d <= n / d; ++d) {
+  for (unsigned long long d = 2; d <= n / d; ++d) {
     if (n % d != 0) continue;
-    factors.push_back(d);
+    factors.push_back(NTL::to_ZZ(static_cast<long>(d)));
     while (n % d == 0) n /= d;
   }
-  if (n > 1) factors.push_back(n);
+  if (n > 1) {
+    std::ostringstream os;
+    os << n;
+    factors.push_back(NTL::to_ZZ(os.str().c_str()));
+  }
   return factors;
 }
 
-bool HasExactOrder(const ZZ_pE &a, long order,
-                   const std::vector<long> &prime_factors) {
+bool HasExactOrder(const ZZ_pE &a, const ZZ &order,
+                   const std::vector<ZZ> &prime_factors) {
   if (a == 0 || order <= 0) return false;
   ZZ_pE one;
   set(one);
 
   if (power(a, order) != one) return false;
-  for (long q : prime_factors) {
+  for (const ZZ &q : prime_factors) {
     if (power(a, order / q) == one) return false;
   }
   return true;
@@ -148,12 +154,10 @@ ZZ_pE FindTeichmullerGenerator(ZZ p, long k, long s, const ZZ_pX &F,
   const ZZ projection_exp_zz = power(p, k - 1);
   const ZZ subgroup_order_zz = power(p, s) - ZZ(1);
 
-  const long projection_exp = PositiveZZToLongChecked(
-      projection_exp_zz, "p^(k-1)", "FindTeichmullerGenerator");
-  const long subgroup_order = PositiveZZToLongChecked(
+  const unsigned long long subgroup_order_u64 = PositiveZZToU64Checked(
       subgroup_order_zz, "p^s-1", "FindTeichmullerGenerator");
-  const std::vector<long> subgroup_order_factors =
-      UniquePrimeFactors(subgroup_order);
+  const std::vector<ZZ> subgroup_order_factors =
+      UniquePrimeFactorsU64(subgroup_order_u64);
 
   ZZ_p::init(q3);
   ValidateExtensionPolynomial(F, s, "FindTeichmullerGenerator");
@@ -164,8 +168,8 @@ ZZ_pE FindTeichmullerGenerator(ZZ p, long k, long s, const ZZ_pX &F,
   ZZ_pE x;
   conv(x, H);
 
-  const ZZ_pE deterministic = power(x, projection_exp);
-  if (HasExactOrder(deterministic, subgroup_order, subgroup_order_factors)) {
+  const ZZ_pE deterministic = power(x, projection_exp_zz);
+  if (HasExactOrder(deterministic, subgroup_order_zz, subgroup_order_factors)) {
     return deterministic;
   }
 
@@ -174,8 +178,8 @@ ZZ_pE FindTeichmullerGenerator(ZZ p, long k, long s, const ZZ_pX &F,
     random(unit_candidate);
     if (!IsUnitByReductionModP(unit_candidate, p)) continue;
 
-    const ZZ_pE projected = power(unit_candidate, projection_exp);
-    if (HasExactOrder(projected, subgroup_order, subgroup_order_factors)) {
+    const ZZ_pE projected = power(unit_candidate, projection_exp_zz);
+    if (HasExactOrder(projected, subgroup_order_zz, subgroup_order_factors)) {
       return projected;
     }
   }

@@ -3,6 +3,7 @@
 #include <NTL/ZZ_pXFactoring.h>
 
 #include <algorithm>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -103,30 +104,45 @@ ZZ_pE BaseRingConstant(long value) {
   return BaseRingConstant(NTL::to_ZZ_p(value));
 }
 
-vector<long> UniquePrimeFactors(long n) {
-  vector<long> factors;
+unsigned long long PositiveZZToU64Checked(const ZZ &z, const char *label,
+                                          const char *func_name) {
+  if (z <= 0) {
+    LogicError((string(func_name) + ": " + label + " must be > 0").c_str());
+  }
+  if (NTL::NumBits(z) > 64) {
+    LogicError((string(func_name) + ": " + label + " too large for u64")
+                   .c_str());
+  }
+  std::ostringstream os;
+  os << z;
+  return std::stoull(os.str());
+}
+
+vector<ZZ> UniquePrimeFactorsU64(unsigned long long n) {
+  vector<ZZ> factors;
   if (n <= 1) {
     return factors;
   }
 
-  for (long d = 2; d <= n / d; ++d) {
+  for (unsigned long long d = 2; d <= n / d; ++d) {
     if (n % d != 0) {
       continue;
     }
-    factors.push_back(d);
+    factors.push_back(to_ZZ(static_cast<long>(d)));
     while (n % d == 0) {
       n /= d;
     }
   }
   if (n > 1) {
-    factors.push_back(n);
+    std::ostringstream os;
+    os << n;
+    factors.push_back(to_ZZ(os.str().c_str()));
   }
   return factors;
 }
 
-
-bool HasExactOrder(const ZZ_pE &element, long order,
-                   const vector<long> &prime_factors) {
+bool HasExactOrder(const ZZ_pE &element, const ZZ &order,
+                   const vector<ZZ> &prime_factors) {
   if (element == 0 || order <= 0) {
     return false;
   }
@@ -135,7 +151,7 @@ bool HasExactOrder(const ZZ_pE &element, long order,
   if (power(element, order) != one) {
     return false;
   }
-  for (long q : prime_factors) {
+  for (const ZZ &q : prime_factors) {
     if (power(element, order / q) == one) {
       return false;
     }
@@ -228,11 +244,11 @@ void ValidateTeichmullerGeneratorOrThrow(const FrobeniusBasisParams &params,
                                          const ZZ_pE &teichmuller_generator,
                                          const char *func_name) {
   const ZZ subgroup_order_zz = power(params.p, params.r) - ZZ(1);
-  const long subgroup_order = PositiveZZToLongChecked(
+  const unsigned long long subgroup_order_u64 = PositiveZZToU64Checked(
       subgroup_order_zz, "p^r-1", func_name);
-  const vector<long> subgroup_order_factors =
-      UniquePrimeFactors(subgroup_order);
-  if (!HasExactOrder(teichmuller_generator, subgroup_order,
+  const vector<ZZ> subgroup_order_factors =
+      UniquePrimeFactorsU64(subgroup_order_u64);
+  if (!HasExactOrder(teichmuller_generator, subgroup_order_zz,
                      subgroup_order_factors)) {
     LogicError((string(func_name) +
                 ": teichmuller_generator must have multiplicative order p^r-1")
