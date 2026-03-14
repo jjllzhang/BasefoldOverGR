@@ -296,7 +296,8 @@ int main(int argc, char **argv) {
     ZZ_pEPush ext_push(F);
 
     const RingSwitchBenchCliConfig config =
-        DecodeRingSwitchBenchCliConfigOrThrow(cli, F);
+        DecodeRingSwitchBenchCliConfigOrThrow(
+            cli, F, BenchDefaultBasisPreset::kEvalLike);
     ZZ p_base;
     long k_base = 0;
     DeduceBasePrimeAndExponent(cli.context, p_base, k_base);
