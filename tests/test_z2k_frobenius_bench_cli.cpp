@@ -180,6 +180,42 @@ void TestFrobeniusBenchEval_HelpTextIsStable() {
       "TestFrobeniusBenchEval_HelpTextIsStable");
 }
 
+void TestFrobeniusBenchOuterCommit_HelpTextIsStable() {
+  testutil::PrintInfo(
+      "Frobenius bench CLI: outer commit --help prints stable usage anchors");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_frobenius_outer_commit";
+  ExpectCommandSuccessContains(
+      exe, {"--help"},
+      {"bench_z2k_frobenius_outer_commit", "--auto-zeta teich",
+       "No backend PCS commit"},
+      "TestFrobeniusBenchOuterCommit_HelpTextIsStable");
+}
+
+void TestFrobeniusBenchOuterProve_HelpTextIsStable() {
+  testutil::PrintInfo(
+      "Frobenius bench CLI: outer prove --help prints stable usage anchors");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_frobenius_outer_prove";
+  ExpectCommandSuccessContains(
+      exe, {"--help"},
+      {"bench_z2k_frobenius_outer_prove", "--queries <int>",
+       "outer proof generation"},
+      "TestFrobeniusBenchOuterProve_HelpTextIsStable");
+}
+
+void TestFrobeniusBenchOuterVerify_HelpTextIsStable() {
+  testutil::PrintInfo(
+      "Frobenius bench CLI: outer verify --help prints stable usage anchors");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_frobenius_outer_verify";
+  ExpectCommandSuccessContains(
+      exe, {"--help"},
+      {"bench_z2k_frobenius_outer_verify", "--queries <int>",
+       "outer verification"},
+      "TestFrobeniusBenchOuterVerify_HelpTextIsStable");
+}
+
 void TestFrobeniusBenchCommit_SmokeRunPrintsStableFields() {
   testutil::PrintInfo("Frobenius bench CLI: commit smoke run prints stable result fields");
 
@@ -189,6 +225,18 @@ void TestFrobeniusBenchCommit_SmokeRunPrintsStableFields() {
       {"[frobenius commit]", "hash backend", "packing mean", "commit  mean",
        "anti-opt checksum"},
       "TestFrobeniusBenchCommit_SmokeRunPrintsStableFields");
+}
+
+void TestFrobeniusBenchOuterCommit_SmokeRunPrintsStableFields() {
+  testutil::PrintInfo(
+      "Frobenius bench CLI: outer commit smoke run prints stable result fields");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_frobenius_outer_commit";
+  ExpectCommandSuccessContains(
+      exe, {"--warmup", "0", "--reps", "1", "--seed", "13"},
+      {"[frobenius outer commit]", "hash backend", "packing mean",
+       "commit  mean", "backend input size", "anti-opt checksum"},
+      "TestFrobeniusBenchOuterCommit_SmokeRunPrintsStableFields");
 }
 
 void TestFrobeniusBenchEval_SmokeRunPrintsStableFieldsAndSizes() {
@@ -232,6 +280,84 @@ void TestFrobeniusBenchEval_SmokeRunPrintsStableFieldsAndSizes() {
 #endif
 }
 
+void TestFrobeniusBenchOuterProve_SmokeRunPrintsStableFieldsAndSizes() {
+  testutil::PrintInfo(
+      "Frobenius bench CLI: outer prove smoke run prints stable fields and sane proof sizes");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_frobenius_outer_prove";
+#if defined(__unix__) || defined(__APPLE__)
+  const CommandResult result =
+      RunCommandCapture(exe, {"--warmup", "0", "--reps", "1", "--queries", "2",
+                              "--seed", "17"});
+  CHECK_MSG(result.exited && result.exit_code == 0,
+            "TestFrobeniusBenchOuterProve_SmokeRunPrintsStableFieldsAndSizes: command failed with output:\n" +
+                result.output);
+  if (g_test_failure_count != 0) {
+    return;
+  }
+
+  const std::vector<std::string> needles = {"[frobenius outer prove]",
+                                            "hash backend",
+                                            "prove-phase mean",
+                                            "proof size",
+                                            "anti-opt checksum"};
+  for (const std::string &needle : needles) {
+    CHECK_MSG(result.output.find(needle) != std::string::npos,
+              "TestFrobeniusBenchOuterProve_SmokeRunPrintsStableFieldsAndSizes: missing output needle '" +
+                  needle + "' in:\n" + result.output);
+  }
+  if (g_test_failure_count != 0) {
+    return;
+  }
+
+  const std::uint64_t proof_bytes =
+      ExtractByteCountFromOutput(result.output, "proof size");
+  CHECK_GT(proof_bytes, 0U);
+#else
+  testutil::PrintInfo(
+      "TestFrobeniusBenchOuterProve_SmokeRunPrintsStableFieldsAndSizes: skipped subprocess assertion on this platform");
+#endif
+}
+
+void TestFrobeniusBenchOuterVerify_SmokeRunPrintsStableFieldsAndSizes() {
+  testutil::PrintInfo(
+      "Frobenius bench CLI: outer verify smoke run prints stable fields and sane proof sizes");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_frobenius_outer_verify";
+#if defined(__unix__) || defined(__APPLE__)
+  const CommandResult result =
+      RunCommandCapture(exe, {"--warmup", "0", "--reps", "1", "--queries", "2",
+                              "--seed", "19"});
+  CHECK_MSG(result.exited && result.exit_code == 0,
+            "TestFrobeniusBenchOuterVerify_SmokeRunPrintsStableFieldsAndSizes: command failed with output:\n" +
+                result.output);
+  if (g_test_failure_count != 0) {
+    return;
+  }
+
+  const std::vector<std::string> needles = {"[frobenius outer verify]",
+                                            "hash backend",
+                                            "verifier mean",
+                                            "input proof size",
+                                            "anti-opt checksum"};
+  for (const std::string &needle : needles) {
+    CHECK_MSG(result.output.find(needle) != std::string::npos,
+              "TestFrobeniusBenchOuterVerify_SmokeRunPrintsStableFieldsAndSizes: missing output needle '" +
+                  needle + "' in:\n" + result.output);
+  }
+  if (g_test_failure_count != 0) {
+    return;
+  }
+
+  const std::uint64_t proof_bytes =
+      ExtractByteCountFromOutput(result.output, "input proof size");
+  CHECK_GT(proof_bytes, 0U);
+#else
+  testutil::PrintInfo(
+      "TestFrobeniusBenchOuterVerify_SmokeRunPrintsStableFieldsAndSizes: skipped subprocess assertion on this platform");
+#endif
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -239,8 +365,14 @@ int main(int argc, char **argv) {
 
   RUN_TEST(TestFrobeniusBenchCommit_HelpTextIsStable);
   RUN_TEST(TestFrobeniusBenchEval_HelpTextIsStable);
+  RUN_TEST(TestFrobeniusBenchOuterCommit_HelpTextIsStable);
+  RUN_TEST(TestFrobeniusBenchOuterProve_HelpTextIsStable);
+  RUN_TEST(TestFrobeniusBenchOuterVerify_HelpTextIsStable);
   RUN_TEST(TestFrobeniusBenchCommit_SmokeRunPrintsStableFields);
+  RUN_TEST(TestFrobeniusBenchOuterCommit_SmokeRunPrintsStableFields);
   RUN_TEST(TestFrobeniusBenchEval_SmokeRunPrintsStableFieldsAndSizes);
+  RUN_TEST(TestFrobeniusBenchOuterProve_SmokeRunPrintsStableFieldsAndSizes);
+  RUN_TEST(TestFrobeniusBenchOuterVerify_SmokeRunPrintsStableFieldsAndSizes);
 
   if (g_test_failure_count != 0) {
     std::cerr << "\n" << g_test_failure_count << " test assertion(s) failed.\n";

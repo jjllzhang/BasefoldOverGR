@@ -197,9 +197,21 @@ target_link_libraries(bench_z2k_frobenius_commit PRIVATE z2k_compiler_core)
 add_executable(bench_z2k_frobenius_eval bench/bench_z2k_frobenius_eval.cpp)
 target_link_libraries(bench_z2k_frobenius_eval PRIVATE z2k_compiler_core)
 
+add_executable(bench_z2k_frobenius_outer_commit bench/bench_z2k_frobenius_outer_commit.cpp)
+target_link_libraries(bench_z2k_frobenius_outer_commit PRIVATE z2k_compiler_core)
+
+add_executable(bench_z2k_frobenius_outer_prove bench/bench_z2k_frobenius_outer_prove.cpp)
+target_link_libraries(bench_z2k_frobenius_outer_prove PRIVATE z2k_compiler_core)
+
+add_executable(bench_z2k_frobenius_outer_verify bench/bench_z2k_frobenius_outer_verify.cpp)
+target_link_libraries(bench_z2k_frobenius_outer_verify PRIVATE z2k_compiler_core)
+
 add_dependencies(test_z2k_frobenius_bench_cli
   bench_z2k_frobenius_commit
-  bench_z2k_frobenius_eval)
+  bench_z2k_frobenius_eval
+  bench_z2k_frobenius_outer_commit
+  bench_z2k_frobenius_outer_prove
+  bench_z2k_frobenius_outer_verify)
 
 add_executable(bench_z2k_ring_switch_outer_commit bench/bench_z2k_ring_switch_outer_commit.cpp)
 target_link_libraries(bench_z2k_ring_switch_outer_commit PRIVATE z2k_compiler_core)
