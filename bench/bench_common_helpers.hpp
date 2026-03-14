@@ -373,6 +373,9 @@ inline ZZ_pE MakeDeterministicElement(std::uint64_t seed) {
     LogicError("MakeDeterministicElement: invalid extension degree");
   }
   const ZZ modulus = NTL::ZZ_p::modulus();
+  if (modulus <= 1) {
+    LogicError("MakeDeterministicElement: invalid modulus");
+  }
   ZZ_pX poly;
   NTL::clear(poly);
   std::uint64_t x = SplitMix64(seed);
@@ -385,6 +388,16 @@ inline ZZ_pE MakeDeterministicElement(std::uint64_t seed) {
   ZZ_pE out;
   conv(out, poly);
   return out;
+}
+
+inline vec_ZZ_pE MakeDeterministicCoefficients(long coeff_count,
+                                               std::uint64_t seed) {
+  vec_ZZ_pE coeffs;
+  coeffs.SetLength(coeff_count);
+  for (long i = 0; i < coeff_count; ++i) {
+    coeffs[i] = MakeDeterministicElement(seed ^ static_cast<std::uint64_t>(i));
+  }
+  return coeffs;
 }
 
 inline std::vector<ZZ_pE> MakeDeterministicPoint(long dimension,
@@ -400,6 +413,31 @@ inline std::vector<ZZ_pE> MakeDeterministicPoint(long dimension,
                                      0x9e3779b9ULL);
   }
   return out;
+}
+
+inline NTL::mat_ZZ_pE BuildSystematicG0(long c, long k0) {
+  if (c <= 0) {
+    LogicError("BuildSystematicG0: c must be positive");
+  }
+  if (k0 <= 0) {
+    LogicError("BuildSystematicG0: k0 must be positive");
+  }
+  if (c > std::numeric_limits<long>::max() / k0) {
+    LogicError("BuildSystematicG0: overflow in n0");
+  }
+  const long n0 = c * k0;
+
+  NTL::mat_ZZ_pE G0;
+  G0.SetDims(k0, n0);
+
+  const ZZ_pE one = ZZ_pE(1);
+  for (long block = 0; block < c; ++block) {
+    const long base = block * k0;
+    for (long r = 0; r < k0; ++r) {
+      G0[r][base + r] = one;
+    }
+  }
+  return G0;
 }
 
 inline basefold::FoldableCodeParams BuildFoldableParamsK0Eq1(
@@ -427,7 +465,55 @@ inline basefold::FoldableCodeParams BuildFoldableParamsK0Eq1(
 
   params.diag_T.resize(static_cast<std::size_t>(d));
   for (long level = 0; level < d; ++level) {
-    const long ni = c * Pow2Checked(level);
+    const long pow2 = Pow2Checked(level);
+    if (c > std::numeric_limits<long>::max() / pow2) {
+      LogicError((std::string(func_name) + ": overflow in n_i").c_str());
+    }
+    const long ni = c * pow2;
+    params.diag_T[static_cast<std::size_t>(level)].SetLength(ni);
+    for (long i = 0; i < ni; ++i) {
+      params.diag_T[static_cast<std::size_t>(level)][i] = ZZ_pE(1);
+    }
+  }
+  return params;
+}
+
+inline basefold::FoldableCodeParams BuildFoldableParamsK0Pow2(
+    long c, long k0, long d, const ZZ &prime_p, const ZZ_pE &zeta,
+    const char *func_name) {
+  if (c <= 0) {
+    LogicError((std::string(func_name) + ": c must be positive").c_str());
+  }
+  if (k0 <= 0) {
+    LogicError((std::string(func_name) + ": k0 must be positive").c_str());
+  }
+  if (!IsPowerOfTwoLong(k0)) {
+    LogicError(
+        (std::string(func_name) + ": k0 must be a power of two").c_str());
+  }
+  if (d < 0) {
+    LogicError((std::string(func_name) + ": d must be non-negative").c_str());
+  }
+  if (c > std::numeric_limits<long>::max() / k0) {
+    LogicError((std::string(func_name) + ": overflow in n0").c_str());
+  }
+  const long n0 = c * k0;
+
+  basefold::FoldableCodeParams params;
+  params.c = c;
+  params.k0 = k0;
+  params.d = d;
+  params.p = prime_p;
+  params.zeta = zeta;
+  params.G0 = BuildSystematicG0(c, k0);
+
+  params.diag_T.resize(static_cast<std::size_t>(d));
+  for (long level = 0; level < d; ++level) {
+    const long pow2 = Pow2Checked(level);
+    if (n0 > std::numeric_limits<long>::max() / pow2) {
+      LogicError((std::string(func_name) + ": overflow in n_i").c_str());
+    }
+    const long ni = n0 * pow2;
     params.diag_T[static_cast<std::size_t>(level)].SetLength(ni);
     for (long i = 0; i < ni; ++i) {
       params.diag_T[static_cast<std::size_t>(level)][i] = ZZ_pE(1);
