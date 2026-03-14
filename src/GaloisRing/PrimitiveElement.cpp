@@ -4,13 +4,6 @@
 #include <string>
 #include <vector>
 
-using NTL::SetCoeff;
-using NTL::ZZ;
-using NTL::ZZ_p;
-using NTL::ZZ_pBak;
-using NTL::ZZ_pE;
-using NTL::ZZ_pEBak;
-using NTL::ZZ_pX;
 using NTL::coeff;
 using NTL::conv;
 using NTL::NumBits;
@@ -18,7 +11,13 @@ using NTL::power;
 using NTL::random;
 using NTL::rep;
 using NTL::set;
-using NTL::to_long;
+using NTL::SetCoeff;
+using NTL::ZZ;
+using NTL::ZZ_p;
+using NTL::ZZ_pBak;
+using NTL::ZZ_pE;
+using NTL::ZZ_pEBak;
+using NTL::ZZ_pX;
 
 namespace {
 
@@ -35,21 +34,23 @@ void ValidateExtensionPolynomial(const ZZ_pX &F, long s,
 }
 
 bool IsUnitByReductionModP(const ZZ_pE &a, const ZZ &p) {
-  if (a == 0) return false;
+  if (a == 0)
+    return false;
 
   const ZZ_pX poly = rep(a);
   const long r = ZZ_pE::degree();
   for (long i = 0; i < r; ++i) {
     ZZ c = rep(coeff(poly, i));
     c %= p;
-    if (c < 0) c += p;
-    if (c != 0) return true;
+    if (c < 0)
+      c += p;
+    if (c != 0)
+      return true;
   }
   return false;
 }
 
-unsigned long long PositiveZZToU64Checked(const ZZ &z,
-                                          const std::string &label,
+unsigned long long PositiveZZToU64Checked(const ZZ &z, const std::string &label,
                                           const std::string &fn_name) {
   if (z <= 0) {
     const std::string msg = fn_name + ": " + label + " must be > 0";
@@ -66,12 +67,15 @@ unsigned long long PositiveZZToU64Checked(const ZZ &z,
 
 std::vector<ZZ> UniquePrimeFactorsU64(unsigned long long n) {
   std::vector<ZZ> factors;
-  if (n <= 1) return factors;
+  if (n <= 1)
+    return factors;
 
   for (unsigned long long d = 2; d <= n / d; ++d) {
-    if (n % d != 0) continue;
+    if (n % d != 0)
+      continue;
     factors.push_back(NTL::to_ZZ(static_cast<long>(d)));
-    while (n % d == 0) n /= d;
+    while (n % d == 0)
+      n /= d;
   }
   if (n > 1) {
     std::ostringstream os;
@@ -83,18 +87,21 @@ std::vector<ZZ> UniquePrimeFactorsU64(unsigned long long n) {
 
 bool HasExactOrder(const ZZ_pE &a, const ZZ &order,
                    const std::vector<ZZ> &prime_factors) {
-  if (a == 0 || order <= 0) return false;
+  if (a == 0 || order <= 0)
+    return false;
   ZZ_pE one;
   set(one);
 
-  if (power(a, order) != one) return false;
+  if (power(a, order) != one)
+    return false;
   for (const ZZ &q : prime_factors) {
-    if (power(a, order / q) == one) return false;
+    if (power(a, order / q) == one)
+      return false;
   }
   return true;
 }
 
-}  // namespace
+} // namespace
 
 /*
     Returns a candidate "primitive element" over the Galois ring GR(p^k, s)
@@ -110,9 +117,12 @@ bool HasExactOrder(const ZZ_pE &a, const ZZ &order,
     Usage: ZZ_pE alpha = FindPrimitiveElement(p, k, s, F);
 */
 ZZ_pE FindPrimitiveElement(ZZ p, long k, long s, const ZZ_pX &F) {
-  if (p <= 1) NTL::LogicError("FindPrimitiveElement: p must be > 1");
-  if (k <= 0) NTL::LogicError("FindPrimitiveElement: k must be > 0");
-  if (s <= 0) NTL::LogicError("FindPrimitiveElement: s must be > 0");
+  if (p <= 1)
+    NTL::LogicError("FindPrimitiveElement: p must be > 1");
+  if (k <= 0)
+    NTL::LogicError("FindPrimitiveElement: k must be > 0");
+  if (s <= 0)
+    NTL::LogicError("FindPrimitiveElement: s must be > 0");
 
   ZZ_pBak modulus_bak;
   modulus_bak.save();
@@ -139,9 +149,12 @@ ZZ_pE FindPrimitiveElement(ZZ p, long k, long s, const ZZ_pX &F) {
 
 ZZ_pE FindTeichmullerGenerator(ZZ p, long k, long s, const ZZ_pX &F,
                                long max_trials) {
-  if (p <= 1) NTL::LogicError("FindTeichmullerGenerator: p must be > 1");
-  if (k <= 0) NTL::LogicError("FindTeichmullerGenerator: k must be > 0");
-  if (s <= 0) NTL::LogicError("FindTeichmullerGenerator: s must be > 0");
+  if (p <= 1)
+    NTL::LogicError("FindTeichmullerGenerator: p must be > 1");
+  if (k <= 0)
+    NTL::LogicError("FindTeichmullerGenerator: k must be > 0");
+  if (s <= 0)
+    NTL::LogicError("FindTeichmullerGenerator: s must be > 0");
   if (max_trials <= 0)
     NTL::LogicError("FindTeichmullerGenerator: max_trials must be > 0");
 
@@ -176,7 +189,8 @@ ZZ_pE FindTeichmullerGenerator(ZZ p, long k, long s, const ZZ_pX &F,
   for (long iter = 0; iter < max_trials; ++iter) {
     ZZ_pE unit_candidate;
     random(unit_candidate);
-    if (!IsUnitByReductionModP(unit_candidate, p)) continue;
+    if (!IsUnitByReductionModP(unit_candidate, p))
+      continue;
 
     const ZZ_pE projected = power(unit_candidate, projection_exp_zz);
     if (HasExactOrder(projected, subgroup_order_zz, subgroup_order_factors)) {

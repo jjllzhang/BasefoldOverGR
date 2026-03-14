@@ -9,20 +9,19 @@
 
 #include "GaloisRing/PrimitiveElement.hpp"
 
+using NTL::coeff;
+using NTL::conv;
+using NTL::deg;
 using NTL::IsOne;
 using NTL::LogicError;
+using NTL::power;
+using NTL::set;
 using NTL::SetCoeff;
-using NTL::Vec;
+using NTL::to_ZZ;
 using NTL::ZZ;
 using NTL::ZZ_p;
 using NTL::ZZ_pE;
 using NTL::ZZ_pX;
-using NTL::coeff;
-using NTL::conv;
-using NTL::deg;
-using NTL::power;
-using NTL::set;
-using NTL::to_ZZ;
 using std::size_t;
 using std::string;
 using std::vector;
@@ -50,8 +49,8 @@ long PositiveZZToLongChecked(const ZZ &z, const char *label,
 
   const long max_long_bits = static_cast<long>(8 * sizeof(long) - 1);
   if (NTL::NumBits(z) > max_long_bits) {
-    LogicError((string(func_name) + ": " + label + " too large for long")
-                   .c_str());
+    LogicError(
+        (string(func_name) + ": " + label + " too large for long").c_str());
   }
   return NTL::to_long(z);
 }
@@ -59,8 +58,8 @@ long PositiveZZToLongChecked(const ZZ &z, const char *label,
 void ValidateExtensionPolynomialOrThrow(const ZZ_pX &extension_modulus, long r,
                                         const char *func_name) {
   if (deg(extension_modulus) != r) {
-    LogicError((string(func_name) + ": deg(extension_modulus) must equal r")
-                   .c_str());
+    LogicError(
+        (string(func_name) + ": deg(extension_modulus) must equal r").c_str());
   }
   if (!IsOne(coeff(extension_modulus, r))) {
     LogicError(
@@ -80,13 +79,13 @@ void ValidatePositiveParamsOrThrow(const FrobeniusBasisParams &params,
     LogicError((string(func_name) + ": r must be > 0").c_str());
   }
   if (params.teichmuller_generator_max_trials <= 0) {
-    LogicError((string(func_name) +
-                ": teichmuller_generator_max_trials must be > 0")
-                   .c_str());
+    LogicError(
+        (string(func_name) + ": teichmuller_generator_max_trials must be > 0")
+            .c_str());
   }
   if (params.affine_search_limit < 0) {
-    LogicError((string(func_name) + ": affine_search_limit must be >= 0")
-                   .c_str());
+    LogicError(
+        (string(func_name) + ": affine_search_limit must be >= 0").c_str());
   }
 }
 
@@ -110,8 +109,8 @@ unsigned long long PositiveZZToU64Checked(const ZZ &z, const char *label,
     LogicError((string(func_name) + ": " + label + " must be > 0").c_str());
   }
   if (NTL::NumBits(z) > 64) {
-    LogicError((string(func_name) + ": " + label + " too large for u64")
-                   .c_str());
+    LogicError(
+        (string(func_name) + ": " + label + " too large for u64").c_str());
   }
   std::ostringstream os;
   os << z;
@@ -170,9 +169,10 @@ vector<ZZ_pE> BuildTeichmullerPowerBasis(const ZZ_pE &teichmuller_generator,
   return basis;
 }
 
-PowerBasisFrobeniusContext BuildPowerBasisFrobeniusContext(
-    const FrobeniusBasisParams &params, const ZZ_pE &teichmuller_generator,
-    const char *func_name) {
+PowerBasisFrobeniusContext
+BuildPowerBasisFrobeniusContext(const FrobeniusBasisParams &params,
+                                const ZZ_pE &teichmuller_generator,
+                                const char *func_name) {
   PowerBasisFrobeniusContext context;
   context.p = params.p;
   context.p_long = PositiveZZToLongChecked(params.p, "p", func_name);
@@ -199,8 +199,8 @@ ZZ_pE ApplyPowerBasisTau(const PowerBasisFrobeniusContext &context,
   GaloisRingBasisData power_basis_data;
   power_basis_data.basis = context.power_basis.basis;
   power_basis_data.dual_basis = context.power_basis.dual;
-  const vector<ZZ_p> coords =
-      RecoverBasisCoordsOrThrow(power_basis_data, element, "ApplyPowerBasisTau");
+  const vector<ZZ_p> coords = RecoverBasisCoordsOrThrow(
+      power_basis_data, element, "ApplyPowerBasisTau");
   return ComposeFromBasisCoordsOrThrow(context.tau_images, coords,
                                        "ApplyPowerBasisTau");
 }
@@ -244,8 +244,8 @@ void ValidateTeichmullerGeneratorOrThrow(const FrobeniusBasisParams &params,
                                          const ZZ_pE &teichmuller_generator,
                                          const char *func_name) {
   const ZZ subgroup_order_zz = power(params.p, params.r) - ZZ(1);
-  const unsigned long long subgroup_order_u64 = PositiveZZToU64Checked(
-      subgroup_order_zz, "p^r-1", func_name);
+  const unsigned long long subgroup_order_u64 =
+      PositiveZZToU64Checked(subgroup_order_zz, "p^r-1", func_name);
   const vector<ZZ> subgroup_order_factors =
       UniquePrimeFactorsU64(subgroup_order_u64);
   if (!HasExactOrder(teichmuller_generator, subgroup_order_zz,
@@ -282,10 +282,10 @@ void ValidateNormalBasisAgainstTeichmullerOrThrow(
   }
 }
 
-}  // namespace
+} // namespace
 
-void ValidateFrobeniusBasisContextsOrThrow(
-    const FrobeniusBasisParams &params, const ZZ_pX &extension_modulus) {
+void ValidateFrobeniusBasisContextsOrThrow(const FrobeniusBasisParams &params,
+                                           const ZZ_pX &extension_modulus) {
   const char *const func_name = "ValidateFrobeniusBasisContextsOrThrow";
   ValidatePositiveParamsOrThrow(params, func_name);
   ValidateExtensionPolynomialOrThrow(extension_modulus, params.r, func_name);
@@ -309,8 +309,9 @@ void ValidateFrobeniusBasisContextsOrThrow(
   }
 }
 
-FrobeniusBasisData BuildFrobeniusBasisOrThrow(
-    const FrobeniusBasisParams &params, const ZZ_pX &extension_modulus) {
+FrobeniusBasisData
+BuildFrobeniusBasisOrThrow(const FrobeniusBasisParams &params,
+                           const ZZ_pX &extension_modulus) {
   ValidateFrobeniusBasisContextsOrThrow(params, extension_modulus);
 
   FrobeniusBasisData out;
@@ -343,18 +344,17 @@ FrobeniusBasisData BuildFrobeniusBasisFromProvidedNormalBasisOrThrow(
   if (has_teichmuller_generator) {
     out.teichmuller_generator = teichmuller_generator;
   } else {
-    out.teichmuller_generator =
-        FindTeichmullerGenerator(params.p, params.k, params.r, extension_modulus,
-                                 params.teichmuller_generator_max_trials);
+    out.teichmuller_generator = FindTeichmullerGenerator(
+        params.p, params.k, params.r, extension_modulus,
+        params.teichmuller_generator_max_trials);
   }
   ValidateNormalBasisAgainstTeichmullerOrThrow(
       params, out.normal_basis, out.teichmuller_generator, func_name);
   return out;
 }
 
-NormalBasisData FindNormalBasisOrThrow(
-    const FrobeniusBasisParams &params,
-    const ZZ_pE &teichmuller_generator) {
+NormalBasisData FindNormalBasisOrThrow(const FrobeniusBasisParams &params,
+                                       const ZZ_pE &teichmuller_generator) {
   const char *const func_name = "FindNormalBasisOrThrow";
   ValidatePositiveParamsOrThrow(params, func_name);
   if (ZZ_pE::degree() != params.r) {
@@ -410,8 +410,8 @@ void ValidateNormalBasisOrThrow(const NormalBasisData &normal_basis) {
   ValidateBasisDataOrThrow(basis_data, "normal_basis", func_name);
 }
 
-std::vector<ZZ_p> RecoverNormalBasisCoords(
-    const NormalBasisData &normal_basis, const ZZ_pE &element) {
+std::vector<ZZ_p> RecoverNormalBasisCoords(const NormalBasisData &normal_basis,
+                                           const ZZ_pE &element) {
   GaloisRingBasisData basis_data;
   basis_data.basis = normal_basis.beta;
   basis_data.dual_basis = normal_basis.alpha;
@@ -427,8 +427,7 @@ ZZ_pE ComposeFromNormalBasisCoords(const NormalBasisData &normal_basis,
 
 ZZ_pE ApplyFrobeniusTau(const NormalBasisData &normal_basis,
                         const ZZ_pE &element) {
-  const vector<ZZ_p> coords =
-      RecoverNormalBasisCoords(normal_basis, element);
+  const vector<ZZ_p> coords = RecoverNormalBasisCoords(normal_basis, element);
   vector<ZZ_p> rotated(coords.size(), ZZ_p(0));
   if (!coords.empty()) {
     rotated[0] = coords.back();
@@ -441,8 +440,7 @@ ZZ_pE ApplyFrobeniusTau(const NormalBasisData &normal_basis,
 
 ZZ_pE ApplyFrobeniusSigma(const NormalBasisData &normal_basis,
                           const ZZ_pE &element) {
-  const vector<ZZ_p> coords =
-      RecoverNormalBasisCoords(normal_basis, element);
+  const vector<ZZ_p> coords = RecoverNormalBasisCoords(normal_basis, element);
   vector<ZZ_p> rotated(coords.size(), ZZ_p(0));
   if (!coords.empty()) {
     for (long i = 0; i + 1 < static_cast<long>(coords.size()); ++i) {
