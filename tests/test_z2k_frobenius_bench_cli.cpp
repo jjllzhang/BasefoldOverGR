@@ -17,6 +17,9 @@ namespace {
 namespace fs = std::filesystem;
 
 fs::path g_executable_dir;
+constexpr const char *kRingF64 =
+    "1,1,1,0,0,1,1,1,0,1,1,1,1,0,1,1,0,0,1,0,1,0,0,0,1,0,1,0,0,0,0,0,"
+    "1,1,0,1,0,0,0,0,0,0,0,1,0,0,1,1,1,0,1,0,1,0,0,1,1,0,0,0,0,0,1,0,1";
 
 struct CommandResult {
   int exit_code = -1;
@@ -222,9 +225,27 @@ void TestFrobeniusBenchCommit_SmokeRunPrintsStableFields() {
   const fs::path exe = g_executable_dir / "bench_z2k_frobenius_commit";
   ExpectCommandSuccessContains(
       exe, {"--warmup", "0", "--reps", "1", "--seed", "7"},
-      {"[frobenius commit]", "hash backend", "packing mean", "commit  mean",
-       "anti-opt checksum"},
+      {"[frobenius commit]", "hash backend",
+       "basis mode bench-fixed preferred-normal",
+       "basis search distinct candidates", "basis score", "packing mean",
+       "commit  mean", "anti-opt checksum"},
       "TestFrobeniusBenchCommit_SmokeRunPrintsStableFields");
+}
+
+void TestFrobeniusBenchCommit_HardcodedPresetForGR2P16_64() {
+  testutil::PrintInfo(
+      "Frobenius bench CLI: commit GR(2^16,64) hits the hardcoded commit-like preset");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_frobenius_commit";
+  ExpectCommandSuccessContains(
+      exe,
+      {"--ell", "7", "--kappa", "6", "--warmup", "0", "--reps", "1",
+       "--seed", "23", "--ring-mod", "65536", "--ring-p", "2", "--ring-F",
+       kRingF64, "--ring-zeta", "0,1"},
+      {"[frobenius commit]", "basis mode bench-hardcoded preferred-normal",
+       "basis preset commit-like (a0=1, a1=1, exponent=14)",
+       "anti-opt checksum"},
+      "TestFrobeniusBenchCommit_HardcodedPresetForGR2P16_64");
 }
 
 void TestFrobeniusBenchOuterCommit_SmokeRunPrintsStableFields() {
@@ -234,7 +255,9 @@ void TestFrobeniusBenchOuterCommit_SmokeRunPrintsStableFields() {
   const fs::path exe = g_executable_dir / "bench_z2k_frobenius_outer_commit";
   ExpectCommandSuccessContains(
       exe, {"--warmup", "0", "--reps", "1", "--seed", "13"},
-      {"[frobenius outer commit]", "hash backend", "packing mean",
+      {"[frobenius outer commit]", "hash backend",
+       "basis mode bench-fixed preferred-normal",
+       "basis search distinct candidates", "basis score", "packing mean",
        "commit  mean", "backend input size", "anti-opt checksum"},
       "TestFrobeniusBenchOuterCommit_SmokeRunPrintsStableFields");
 }
@@ -255,7 +278,9 @@ void TestFrobeniusBenchEval_SmokeRunPrintsStableFieldsAndSizes() {
   }
 
   const std::vector<std::string> needles = {
-      "[frobenius eval]", "hash backend", "prove-phase mean",
+      "[frobenius eval]", "hash backend",
+      "basis mode bench-fixed preferred-normal",
+      "basis search distinct candidates", "basis score", "prove-phase mean",
       "outer prover mean", "backend prover mean", "verifier mean",
       "outer verifier mean", "backend verifier mean", "outer proof size",
       "proof size", "anti-opt checksum"};
@@ -280,6 +305,40 @@ void TestFrobeniusBenchEval_SmokeRunPrintsStableFieldsAndSizes() {
 #endif
 }
 
+void TestFrobeniusBenchEval_HardcodedPresetForGR2P32_64() {
+  testutil::PrintInfo(
+      "Frobenius bench CLI: eval GR(2^32,64) hits the hardcoded eval-like preset");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_frobenius_eval";
+#if defined(__unix__) || defined(__APPLE__)
+  const CommandResult result =
+      RunCommandCapture(exe, {"--ell", "7", "--kappa", "6", "--warmup", "0",
+                              "--reps", "1", "--queries", "2", "--seed",
+                              "29", "--ring-mod", "4294967296", "--ring-p",
+                              "2", "--ring-F", kRingF64, "--ring-zeta",
+                              "0,1"});
+  CHECK_MSG(result.exited && result.exit_code == 0,
+            "TestFrobeniusBenchEval_HardcodedPresetForGR2P32_64: command failed with output:\n" +
+                result.output);
+  if (g_test_failure_count != 0) {
+    return;
+  }
+
+  const std::vector<std::string> needles = {
+      "[frobenius eval]", "basis mode bench-hardcoded preferred-normal",
+      "basis preset eval-like (a0=1, a1=1, exponent=8)", "proof size",
+      "anti-opt checksum"};
+  for (const std::string &needle : needles) {
+    CHECK_MSG(result.output.find(needle) != std::string::npos,
+              "TestFrobeniusBenchEval_HardcodedPresetForGR2P32_64: missing output needle '" +
+                  needle + "' in:\n" + result.output);
+  }
+#else
+  testutil::PrintInfo(
+      "TestFrobeniusBenchEval_HardcodedPresetForGR2P32_64: skipped subprocess assertion on this platform");
+#endif
+}
+
 void TestFrobeniusBenchOuterProve_SmokeRunPrintsStableFieldsAndSizes() {
   testutil::PrintInfo(
       "Frobenius bench CLI: outer prove smoke run prints stable fields and sane proof sizes");
@@ -296,11 +355,11 @@ void TestFrobeniusBenchOuterProve_SmokeRunPrintsStableFieldsAndSizes() {
     return;
   }
 
-  const std::vector<std::string> needles = {"[frobenius outer prove]",
-                                            "hash backend",
-                                            "prove-phase mean",
-                                            "proof size",
-                                            "anti-opt checksum"};
+  const std::vector<std::string> needles = {
+      "[frobenius outer prove]", "hash backend",
+      "basis mode bench-fixed preferred-normal",
+      "basis search distinct candidates", "basis score", "prove-phase mean",
+      "proof size", "anti-opt checksum"};
   for (const std::string &needle : needles) {
     CHECK_MSG(result.output.find(needle) != std::string::npos,
               "TestFrobeniusBenchOuterProve_SmokeRunPrintsStableFieldsAndSizes: missing output needle '" +
@@ -335,11 +394,11 @@ void TestFrobeniusBenchOuterVerify_SmokeRunPrintsStableFieldsAndSizes() {
     return;
   }
 
-  const std::vector<std::string> needles = {"[frobenius outer verify]",
-                                            "hash backend",
-                                            "verifier mean",
-                                            "input proof size",
-                                            "anti-opt checksum"};
+  const std::vector<std::string> needles = {
+      "[frobenius outer verify]", "hash backend",
+      "basis mode bench-fixed preferred-normal",
+      "basis search distinct candidates", "basis score", "verifier mean",
+      "input proof size", "anti-opt checksum"};
   for (const std::string &needle : needles) {
     CHECK_MSG(result.output.find(needle) != std::string::npos,
               "TestFrobeniusBenchOuterVerify_SmokeRunPrintsStableFieldsAndSizes: missing output needle '" +
@@ -369,8 +428,10 @@ int main(int argc, char **argv) {
   RUN_TEST(TestFrobeniusBenchOuterProve_HelpTextIsStable);
   RUN_TEST(TestFrobeniusBenchOuterVerify_HelpTextIsStable);
   RUN_TEST(TestFrobeniusBenchCommit_SmokeRunPrintsStableFields);
+  RUN_TEST(TestFrobeniusBenchCommit_HardcodedPresetForGR2P16_64);
   RUN_TEST(TestFrobeniusBenchOuterCommit_SmokeRunPrintsStableFields);
   RUN_TEST(TestFrobeniusBenchEval_SmokeRunPrintsStableFieldsAndSizes);
+  RUN_TEST(TestFrobeniusBenchEval_HardcodedPresetForGR2P32_64);
   RUN_TEST(TestFrobeniusBenchOuterProve_SmokeRunPrintsStableFieldsAndSizes);
   RUN_TEST(TestFrobeniusBenchOuterVerify_SmokeRunPrintsStableFieldsAndSizes);
 

@@ -23,11 +23,12 @@ using NTL::vec_ZZ_pE;
 
 namespace {
 
-using basefold_bench_z2k_frobenius_common::BuildFrobeniusParams;
+using basefold_bench_z2k_frobenius_common::BuildFrobeniusBenchSetupResult;
 using basefold_bench_z2k_frobenius_common::BuildZZpE;
 using basefold_bench_z2k_frobenius_common::BuildZZpX;
 using basefold_bench_z2k_frobenius_common::ComputeStats;
 using basefold_bench_z2k_frobenius_common::ContextSpec;
+using basefold_bench_z2k_frobenius_common::FrobeniusBenchCalibrationMode;
 using basefold_bench_z2k_frobenius_common::MakeDeterministicBaseRingTable;
 using basefold_bench_z2k_frobenius_common::MsSince;
 using basefold_bench_z2k_frobenius_common::ParseCoeffList;
@@ -35,6 +36,7 @@ using basefold_bench_z2k_frobenius_common::ParseInt;
 using basefold_bench_z2k_frobenius_common::ParseLong;
 using basefold_bench_z2k_frobenius_common::ParseU64OrDie;
 using basefold_bench_z2k_frobenius_common::ParseZZ;
+using basefold_bench_z2k_frobenius_common::PrintFrobeniusBasisSummary;
 using basefold_bench_z2k_frobenius_common::Stats;
 using basefold_bench_z2k_frobenius_common::ValidateMonic;
 
@@ -100,6 +102,8 @@ BenchResult RunCommitBenchmark(const basefold::FrobeniusPCSParams &params,
 }
 
 void PrintResult(long c, long ell, long kappa, int warmup, int reps,
+                 const basefold_bench_z2k_frobenius_common::FrobeniusBenchBasisSummary
+                     &basis_summary,
                  const BenchResult &result) {
   std::cout << "\n[frobenius commit]"
             << " c=" << c << " ell=" << ell << " kappa=" << kappa
@@ -107,6 +111,7 @@ void PrintResult(long c, long ell, long kappa, int warmup, int reps,
             << " reps=" << reps << "\n";
   std::cout << std::fixed << std::setprecision(3);
   std::cout << "  hash backend " << basefold::SelectedHashBackendName() << "\n";
+  PrintFrobeniusBasisSummary(std::cout, basis_summary);
   std::cout << "  packing mean " << result.packing.mean_ms << " ms  (min "
             << result.packing.min_ms << ", max " << result.packing.max_ms
             << ")\n";
@@ -241,13 +246,15 @@ int main(int argc, char **argv) {
       zeta = BuildZZpE(spec.zeta_coeffs);
     }
 
-    const basefold::FrobeniusPCSParams params =
-        BuildFrobeniusParams(c, ell, kappa, spec, F, zeta);
+    const auto setup = BuildFrobeniusBenchSetupResult(
+        FrobeniusBenchCalibrationMode::kCommit, c, ell, kappa, spec, F,
+        zeta);
+    const basefold::FrobeniusPCSParams &params = setup.params;
     const vec_ZZ_pE t_table =
         MakeDeterministicBaseRingTable(1L << ell, seed);
     const BenchResult result =
         RunCommitBenchmark(params, t_table, warmup, reps);
-    PrintResult(c, ell, kappa, warmup, reps, result);
+    PrintResult(c, ell, kappa, warmup, reps, setup.basis_summary, result);
   } catch (const std::exception &e) {
     std::cerr << "Error: " << e.what() << "\n";
     return 1;

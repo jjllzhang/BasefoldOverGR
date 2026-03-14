@@ -26,12 +26,13 @@ using NTL::vec_ZZ_pE;
 
 namespace {
 
-using basefold_bench_z2k_frobenius_common::BuildFrobeniusParams;
+using basefold_bench_z2k_frobenius_common::BuildFrobeniusBenchSetupResult;
 using basefold_bench_z2k_frobenius_common::BuildZZpE;
 using basefold_bench_z2k_frobenius_common::BuildZZpX;
 using basefold_bench_z2k_frobenius_common::ComputeStats;
 using basefold_bench_z2k_frobenius_common::ContextSpec;
 using basefold_bench_z2k_frobenius_common::EvalFromBooleanTable;
+using basefold_bench_z2k_frobenius_common::FrobeniusBenchCalibrationMode;
 using basefold_bench_z2k_frobenius_common::MakeDeterministicBaseRingTable;
 using basefold_bench_z2k_frobenius_common::MakeDeterministicPoint;
 using basefold_bench_z2k_frobenius_common::MsSince;
@@ -40,6 +41,7 @@ using basefold_bench_z2k_frobenius_common::ParseInt;
 using basefold_bench_z2k_frobenius_common::ParseLong;
 using basefold_bench_z2k_frobenius_common::ParseU64OrDie;
 using basefold_bench_z2k_frobenius_common::ParseZZ;
+using basefold_bench_z2k_frobenius_common::PrintFrobeniusBasisSummary;
 using basefold_bench_z2k_frobenius_common::Stats;
 using basefold_bench_z2k_frobenius_common::ValidateMonic;
 
@@ -166,13 +168,17 @@ BenchResult RunEvalBenchmark(const basefold::FrobeniusPCSParams &params,
 }
 
 void PrintResult(long c, long ell, long kappa, long queries, int warmup,
-                 int reps, const BenchResult &result) {
+                 int reps,
+                 const basefold_bench_z2k_frobenius_common::FrobeniusBenchBasisSummary
+                     &basis_summary,
+                 const BenchResult &result) {
   std::cout << "\n[frobenius eval]"
             << " c=" << c << " ell=" << ell << " kappa=" << kappa
             << " ell'=" << (ell - kappa) << " queries=" << queries
             << " warmup=" << warmup << " reps=" << reps << "\n";
   std::cout << std::fixed << std::setprecision(3);
   std::cout << "  hash backend " << basefold::SelectedHashBackendName() << "\n";
+  PrintFrobeniusBasisSummary(std::cout, basis_summary);
   std::cout << "  prove-phase mean " << result.prove_total.mean_ms << " ms  (min "
             << result.prove_total.min_ms << ", max "
             << result.prove_total.max_ms << ")\n";
@@ -330,8 +336,9 @@ int main(int argc, char **argv) {
       zeta = BuildZZpE(spec.zeta_coeffs);
     }
 
-    const basefold::FrobeniusPCSParams params =
-        BuildFrobeniusParams(c, ell, kappa, spec, F, zeta);
+    const auto setup = BuildFrobeniusBenchSetupResult(
+        FrobeniusBenchCalibrationMode::kEval, c, ell, kappa, spec, F, zeta);
+    const basefold::FrobeniusPCSParams &params = setup.params;
     const vec_ZZ_pE t_table =
         MakeDeterministicBaseRingTable(1L << ell, seed);
     const std::vector<ZZ_pE> z =
@@ -340,7 +347,8 @@ int main(int argc, char **argv) {
 
     const BenchResult result =
         RunEvalBenchmark(params, t_table, z, claimed_s, queries, warmup, reps);
-    PrintResult(c, ell, kappa, queries, warmup, reps, result);
+    PrintResult(c, ell, kappa, queries, warmup, reps, setup.basis_summary,
+                result);
   } catch (const std::exception &e) {
     std::cerr << "Error: " << e.what() << "\n";
     return 1;
