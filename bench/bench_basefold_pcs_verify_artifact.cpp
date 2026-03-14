@@ -2,7 +2,7 @@
 #include <iostream>
 #include <string>
 
-#include "bench_pcs_artifact_common.hpp"
+#include "bench_basefold_pcs_artifact_common.hpp"
 
 using namespace basefold_bench_pcs_artifact;
 namespace fs = std::filesystem;
@@ -11,9 +11,9 @@ namespace {
 
 void PrintHelp() {
   std::cout
-      << "bench_pcs_verify_artifact (PCS verify benchmark from one dumped artifact case)\n\n"
+      << "bench_basefold_pcs_verify_artifact (PCS verify benchmark from one dumped artifact case)\n\n"
       << "Usage:\n"
-      << "  bench_pcs_verify_artifact --artifact-root <dir> --artifact-id <id>\n"
+      << "  bench_basefold_pcs_verify_artifact --artifact-root <dir> --artifact-id <id>\n"
       << "                            [--warmup <int>] [--reps <int>] [--profile]\n"
       << "                            [--verifier-query-per-thread <int>]\n"
       << "                            [--verifier-query-threshold <int>]\n"

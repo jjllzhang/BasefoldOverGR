@@ -1,7 +1,7 @@
 #include <iostream>
 #include <string>
 
-#include "bench_pcs_artifact_common.hpp"
+#include "bench_basefold_pcs_artifact_common.hpp"
 
 using namespace basefold_bench_pcs_common;
 using namespace basefold_bench_pcs_artifact;
@@ -11,9 +11,9 @@ namespace {
 
 void PrintHelp() {
   std::cout
-      << "dump_pcs_eval_artifact (persist one BaseFold eval-proof artifact case)\n\n"
+      << "dump_basefold_pcs_eval_artifact (persist one BaseFold eval-proof artifact case)\n\n"
       << "Usage:\n"
-      << "  dump_pcs_eval_artifact --artifact-root <dir> [--artifact-id <id>]\n"
+      << "  dump_basefold_pcs_eval_artifact --artifact-root <dir> [--artifact-id <id>]\n"
       << "                         [--context-id <id>] [--context-label <label>]\n"
       << "                         [--lambda <text>] [--gamma <text>]\n"
       << "                         --mode field|ring\n"

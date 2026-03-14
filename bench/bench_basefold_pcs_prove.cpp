@@ -1,145 +1,53 @@
-#include <NTL/ZZ.h>
-#include <NTL/ZZ_p.h>
-#include <NTL/ZZ_pE.h>
-#include <NTL/ZZ_pEX.h>
-#include <NTL/ZZ_pX.h>
-
-#include <algorithm>
-#include <cctype>
-#include <chrono>
-#include <cstdint>
-#include <cstdlib>
-#include <functional>
 #include <iomanip>
 #include <iostream>
-#include <limits>
 #include <string>
-#include <vector>
 
-#include "bench_common_helpers.hpp"
-#include "GaloisRing/PrimitiveElement.hpp"
-#include "PCS/BaseFold/BaseFoldPCS.hpp"
-#include "PCS/BaseFold/ProofSize.hpp"
-#include "PCS/Common/Hash.hpp"
-#include "PCS/Common/Multilinear.hpp"
-#include "PCS/Common/Profile.hpp"
-
-using NTL::conv;
-using NTL::LogicError;
-using NTL::SetCoeff;
-using NTL::to_ZZ;
-using NTL::vec_ZZ_pE;
-using NTL::ZZ;
-using NTL::ZZ_p;
-using NTL::ZZ_pE;
-using NTL::ZZ_pEX;
-using NTL::ZZ_pEPush;
-using NTL::ZZ_pPush;
-using NTL::ZZ_pX;
+#include "bench_basefold_pcs_common.hpp"
 
 namespace {
 
-using basefold_bench_common::BuildZZpE;
-using basefold_bench_common::BuildZZpEX;
-using basefold_bench_common::BuildZZpX;
-using basefold_bench_common::ComputeStats;
-using basefold_bench_common::DeduceBasePrimeAndExponent;
-using basefold_bench_common::IsPowerOfTwoLong;
-using basefold_bench_common::Log2ExactPowerOfTwoLong;
-using basefold_bench_common::MakeDeterministicCoefficients;
-using basefold_bench_common::MakeDeterministicPoint;
-using basefold_bench_common::MsSince;
-using basefold_bench_common::NormalizeMod;
-using basefold_bench_common::ParseCoeffList;
-using basefold_bench_common::ParseInt;
-using basefold_bench_common::ParseLong;
-using basefold_bench_common::ParseNestedCoeffList;
-using basefold_bench_common::ParseU64OrDie;
-using basefold_bench_common::ParseZZ;
-using basefold_bench_common::Pow2Checked;
-using basefold_bench_common::Stats;
-using basefold_bench_common::ValidateMonic;
-
-struct ContextSpec {
-  std::string label;
-  ZZ scalar_modulus = ZZ(0);  // ZZ_p modulus (p for fields, p^s for rings)
-  ZZ base_prime = ZZ(0);      // optional: the prime p (only used by unit checks)
-  std::vector<ZZ> F_coeffs;     // extension modulus polynomial coefficients
-  std::vector<ZZ> zeta_coeffs;  // ζ element coefficients
-  // Coefficients for challenge extension modulus E(U), represented as
-  // "a0;a1;...;ad", where each ai is a ZZ_pE element written "c0,c1,...".
-  // Empty means "use default E(U) = U^2 + U + zeta".
-  std::vector<std::vector<ZZ>> challenge_ext_coeffs;
-};
-
-basefold::FoldableCodeParams BuildParams_k0_1(long c, long d, const ZZ &prime_p,
-                                             const ZZ_pE &zeta) {
-  return basefold_bench_common::BuildFoldableParamsK0Eq1(
-      c, d, prime_p, zeta, "BuildParams_k0_1");
-}
-
-basefold::FoldableCodeParams BuildParams_k0_pow2(long c, long k0, long d,
-                                                 const ZZ &prime_p,
-                                                 const ZZ_pE &zeta) {
-  return basefold_bench_common::BuildFoldableParamsK0Pow2(
-      c, k0, d, prime_p, zeta, "BuildParams_k0_pow2");
-}
+using namespace basefold_bench_pcs_common;
 
 struct BenchResult {
   Stats prove_phase;
-  Stats verifier;
   std::uint64_t anti_opt_checksum = 0;
   std::uint64_t proof_size_bytes = 0;
   double proof_size_kb = 0.0;
   basefold::Profile prover_profile;
-  basefold::Profile verifier_profile;
   bool has_profile = false;
 };
 
-std::uint64_t ComputeProofSizeBytes(
-    const basefold::BaseFoldPCSEvalProof &proof,
-    bool use_extension_challenges, long challenge_ext_degree) {
-  basefold::BaseFoldProofSizeOptions options;
-  options.include_version_byte = true;
-  if (use_extension_challenges || proof.extension.has_extension_payload) {
-    options.challenge_ext_degree = challenge_ext_degree;
+BenchResult RunProveBenchmark(
+    const vec_ZZ_pE &f_coeffs, const std::vector<ZZ_pE> &z, const ZZ_pE &y,
+    long num_queries, const basefold::FoldableCodeParams &params,
+    const basefold::BaseFoldPCSChallengeConfig *challenge_cfg,
+    long challenge_ext_degree, bool use_checked_prover_path,
+    bool enable_profile, int warmup, int reps) {
+  if (warmup < 0) {
+    LogicError("RunProveBenchmark: warmup must be >= 0");
   }
-  return basefold::BaseFoldPCSEvalProofSizeBytes(proof, options);
-}
+  if (reps <= 0) {
+    LogicError("RunProveBenchmark: reps must be > 0");
+  }
+  if (num_queries < 0) {
+    LogicError("RunProveBenchmark: num_queries must be >= 0");
+  }
 
-BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
-                             const std::vector<ZZ_pE> &z,
-                             const ZZ_pE &y,
-                             long num_queries,
-                             const basefold::FoldableCodeParams &params,
-                             const basefold::BaseFoldPCSChallengeConfig *challenge_cfg,
-                             long challenge_ext_degree,
-                             bool use_checked_prover_path,
-                             bool enable_profile,
-                             int warmup, int reps) {
-  if (warmup < 0) LogicError("RunEvalBenchmark: warmup must be >= 0");
-  if (reps <= 0) LogicError("RunEvalBenchmark: reps must be > 0");
-  if (num_queries < 0) LogicError("RunEvalBenchmark: num_queries must be >= 0");
+  const basefold::BaseFoldPCSCommitArtifacts commit_artifacts =
+      basefold::BaseFoldPCSBuildCommitArtifactsUnchecked(f_coeffs, params);
+  const basefold::MerkleRoot &commitment_root = commit_artifacts.root_d;
 
   std::vector<double> prove_phase_ms;
-  std::vector<double> verifier_ms;
   prove_phase_ms.reserve(static_cast<std::size_t>(reps));
-  verifier_ms.reserve(static_cast<std::size_t>(reps));
 
   basefold::Profile prover_prof;
-  basefold::Profile verifier_prof;
   basefold::ResetProfile(prover_prof);
-  basefold::ResetProfile(verifier_prof);
 
   std::uint64_t anti_opt_checksum = 0;
   std::uint64_t proof_size_bytes_last = 0;
   double proof_size_kb_last = 0.0;
 
   for (int iter = -warmup; iter < reps; ++iter) {
-    const basefold::BaseFoldPCSCommitArtifacts commit_artifacts =
-        basefold::BaseFoldPCSBuildCommitArtifactsUnchecked(f_coeffs, params);
-    const basefold::MerkleRoot &commitment_root = commit_artifacts.root_d;
-
     const auto t0 = std::chrono::steady_clock::now();
     const basefold::BaseFoldPCSEvalProof proof = [&] {
       if (enable_profile && iter >= 0) {
@@ -183,38 +91,13 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
     const double proof_size_kb =
         static_cast<double>(proof_size_bytes) / 1024.0;
 
-    const auto t2 = std::chrono::steady_clock::now();
-    bool ok = false;
-    if (enable_profile && iter >= 0) {
-      basefold::ProfileGuard guard(&verifier_prof);
-      ok = (challenge_cfg != nullptr)
-               ? basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
-                     commitment_root, z, y, num_queries, proof, params,
-                     *challenge_cfg)
-               : basefold::BaseFoldPCSVerifyEval(commitment_root, z, y,
-                                                 num_queries, proof, params);
-    } else {
-      ok = (challenge_cfg != nullptr)
-               ? basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
-                     commitment_root, z, y, num_queries, proof, params,
-                     *challenge_cfg)
-               : basefold::BaseFoldPCSVerifyEval(commitment_root, z, y,
-                                                 num_queries, proof, params);
-    }
-    const auto t3 = std::chrono::steady_clock::now();
-
-    if (!ok) {
-      LogicError("RunEvalBenchmark: verification failed");
-    }
-
-    // Prevent over-optimization: fold in a few bytes.
-    if (!commitment_root.empty())
+    if (!commitment_root.empty()) {
       anti_opt_checksum ^= static_cast<std::uint64_t>(commitment_root[0]);
-    anti_opt_checksum ^= static_cast<std::uint64_t>(ok);
+    }
+    anti_opt_checksum ^= proof_size_bytes;
 
     if (iter >= 0) {
       prove_phase_ms.push_back(MsSince(t0, t1));
-      verifier_ms.push_back(MsSince(t2, t3));
       proof_size_bytes_last = proof_size_bytes;
       proof_size_kb_last = proof_size_kb;
     }
@@ -222,12 +105,10 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
 
   BenchResult out;
   out.prove_phase = ComputeStats(prove_phase_ms);
-  out.verifier = ComputeStats(verifier_ms);
   out.anti_opt_checksum = anti_opt_checksum;
   out.proof_size_bytes = proof_size_bytes_last;
   out.proof_size_kb = proof_size_kb_last;
   out.prover_profile = prover_prof;
-  out.verifier_profile = verifier_prof;
   out.has_profile = enable_profile;
   return out;
 }
@@ -246,11 +127,11 @@ void PrintResult(const std::string &label, const ZZ &scalar_modulus, long c,
   }
   const long n_d = c * k_d;
 
-  std::cout << "\n[" << label << "] c=" << c << " k0=" << k0 << " d=" << d
+  std::cout << "\n[" << label << " prove]"
+            << " c=" << c << " k0=" << k0 << " d=" << d
             << "  mod=" << scalar_modulus << "  k_d=" << k_d
-            << "  n_d=" << n_d
-            << "  queries=" << num_queries << "  warmup=" << warmup
-            << " reps=" << reps;
+            << "  n_d=" << n_d << "  queries=" << num_queries
+            << "  warmup=" << warmup << " reps=" << reps;
   if (use_extension_challenges) {
     std::cout << "  ext_challenges=on"
               << "  ext_deg=" << challenge_ext_degree;
@@ -263,77 +144,46 @@ void PrintResult(const std::string &label, const ZZ &scalar_modulus, long c,
   std::cout << "  prove-phase mean " << r.prove_phase.mean_ms << " ms  (min "
             << r.prove_phase.min_ms << ", max " << r.prove_phase.max_ms
             << ")\n";
-  std::cout << "  verifier mean " << r.verifier.mean_ms << " ms  (min "
-            << r.verifier.min_ms << ", max " << r.verifier.max_ms << ")\n";
   std::cout << "  proof size  " << r.proof_size_kb << " KB  ("
             << r.proof_size_bytes << " B)\n";
-
   std::cout << "  anti-opt checksum " << r.anti_opt_checksum << "\n";
   if (r.has_profile) {
     basefold::PrintProfile(std::cout, r.prover_profile);
-    basefold::PrintProfile(std::cout, r.verifier_profile);
   }
 }
 
 void PrintHelp() {
   std::cout
-      << "bench_pcs_eval (PCS prove+verify; prover excludes top encode+commit)\n\n"
+      << "bench_basefold_pcs_prove (PCS prove only; commit artifacts prebuilt outside timing)\n\n"
       << "Usage:\n"
-      << "  bench_pcs_eval [--mode field|ring|both] [--c <int>] [--k0 <int>] [--d <int>]\n"
-      << "               [--queries <int>] [--checked] [--profile] [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
-      << "               [--merkle-leaves-per-thread <int>] [--merkle-level-threshold <int>] [--merkle-max-threads <int>]\n"
-      << "               [--verifier-query-per-thread <int>] [--verifier-query-threshold <int>] [--verifier-query-max-threads <int>]\n"
-      << "               [--use-extension-challenges]\n"
-      << "               [--field-challenge-ext <a0;a1;...>] [--ring-challenge-ext <a0;a1;...>]\n"
-      << "               [--auto-zeta teich]\n"
-      << "               [--field-mod <decimal-int>] [--field-F <a0,a1,...>] [--field-zeta <b0,b1,...>]\n"
-      << "               [--ring-mod <decimal-int>]  [--ring-p <decimal-int>] [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
+      << "  bench_basefold_pcs_prove [--mode field|ring|both] [--c <int>] [--k0 <int>] [--d <int>]\n"
+      << "                  [--queries <int>] [--checked] [--profile] [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
+      << "                  [--merkle-leaves-per-thread <int>] [--merkle-level-threshold <int>] [--merkle-max-threads <int>]\n"
+      << "                  [--verifier-query-per-thread <int>] [--verifier-query-threshold <int>] [--verifier-query-max-threads <int>]\n"
+      << "                  [--use-extension-challenges]\n"
+      << "                  [--field-challenge-ext <a0;a1;...>] [--ring-challenge-ext <a0;a1;...>]\n"
+      << "                  [--auto-zeta teich]\n"
+      << "                  [--field-mod <decimal-int>] [--field-F <a0,a1,...>] [--field-zeta <b0,b1,...>]\n"
+      << "                  [--ring-mod <decimal-int>]  [--ring-p <decimal-int>] [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
       << "Notes:\n"
-      << "  By default, prover uses BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked\n"
-      << "  (skips validation and claimed_y check), so headline prover time excludes\n"
-      << "  the top-level EncodeFoldable + Merkle commit stage.\n\n"
-      << "  With --auto-zeta teich, zeta is derived as a Teichmuller generator from (p,k,F);\n"
-      << "  then --field-zeta/--ring-zeta are ignored.\n\n"
-      << "  With --use-extension-challenges, prove/verify uses the extension-challenge\n"
-      << "  path in BaseFoldPCSChallengeConfig.\n"
-      << "  --field-challenge-ext / --ring-challenge-ext use ';' to separate ZZ_pE\n"
-      << "  coefficients and ',' for each ZZ_pE coefficient polynomial.\n"
-      << "  Example: '0,1;1;1' means E(U)=x + U + U^2.\n\n"
-      << "  Exact fixed-width proof payload size is computed from the generated proof\n"
-      << "  with transcript-recoverable indices/challenges omitted, and printed\n"
-      << "  together with prover/verifier timing.\n\n"
-      << "  If --*-challenge-ext is omitted, default is E(U)=zeta + U + U^2.\n\n"
-      << "  Merkle build parallel tuning can be configured by env vars:\n"
-      << "    BASEFOLD_MERKLE_LEAVES_PER_THREAD\n"
-      << "    BASEFOLD_MERKLE_PARALLEL_LEVEL_THRESHOLD\n"
-      << "    BASEFOLD_MERKLE_MAX_THREADS\n"
-      << "  Verifier query parallel tuning can be configured by env vars:\n"
-      << "    BASEFOLD_VERIFY_QUERY_QUERIES_PER_THREAD\n"
-      << "    BASEFOLD_VERIFY_QUERY_PARALLEL_THRESHOLD\n"
-      << "    BASEFOLD_VERIFY_QUERY_MAX_THREADS\n"
-      << "  and overridden by the CLI flags above.\n\n"
-      << "  PCS Eval supports k0 = 2^κ. The multilinear point dimension is (d + κ).\n\n"
-      << "Examples:\n"
-      << "  # GF(2^2) with F(x)=x^2+x+1 and zeta=x\n"
-      << "  bench_pcs_eval --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --d 16 --queries 4\n"
-      << "  # GR(4,2) with the same extension polynomial and zeta=x\n"
-      << "  bench_pcs_eval --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16 --queries 4\n"
-      << "  # Auto zeta from Teichmuller subgroup generator\n"
-      << "  bench_pcs_eval --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --auto-zeta teich --d 16 --queries 4\n"
-      << "  # Extension-challenge path (quote ';' argument)\n"
-      << "  bench_pcs_eval --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --use-extension-challenges --field-challenge-ext '0,1;1;1' --d 16 --queries 4\n"
-      << "  bench_pcs_eval --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --use-extension-challenges --ring-challenge-ext '0,1;1;1' --d 16 --queries 4\n";
+      << "  Commit/artifact construction happens before timed prove.\n"
+      << "  By default, prover uses BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked.\n"
+      << "  Exact fixed-width proof payload size is computed from the generated proof.\n";
 }
 
 void RunOneContext(const ContextSpec &spec, long c, long k0, long d,
-                   long num_queries,
-                   bool use_extension_challenges,
+                   long num_queries, bool use_extension_challenges,
                    bool use_checked_prover_path, bool enable_profile, int warmup,
-                   int reps, bool auto_zeta_teich,
-                   std::uint64_t seed) {
-  if (spec.scalar_modulus <= 1) LogicError("RunOneContext: modulus must be > 1");
-  if (k0 <= 0) LogicError("RunOneContext: k0 must be positive");
-  if (!IsPowerOfTwoLong(k0)) LogicError("RunOneContext: k0 must be a power of two");
+                   int reps, bool auto_zeta_teich, std::uint64_t seed) {
+  if (spec.scalar_modulus <= 1) {
+    LogicError("RunOneContext: modulus must be > 1");
+  }
+  if (k0 <= 0) {
+    LogicError("RunOneContext: k0 must be positive");
+  }
+  if (!IsPowerOfTwoLong(k0)) {
+    LogicError("RunOneContext: k0 must be a power of two");
+  }
 
   const ZZ modulus = spec.scalar_modulus;
   ZZ_pPush mod_push(modulus);
@@ -354,19 +204,16 @@ void RunOneContext(const ContextSpec &spec, long c, long k0, long d,
     conv(zeta, zpoly);
   }
 
-  const basefold::FoldableCodeParams params = (k0 == 1)
-                                                  ? BuildParams_k0_1(
-                                                        c, d,
-                                                        (spec.base_prime > 1)
-                                                            ? spec.base_prime
-                                                            : spec.scalar_modulus,
-                                                        zeta)
-                                                  : BuildParams_k0_pow2(
-                                                        c, k0, d,
-                                                        (spec.base_prime > 1)
-                                                            ? spec.base_prime
-                                                            : spec.scalar_modulus,
-                                                        zeta);
+  const basefold::FoldableCodeParams params =
+      (k0 == 1)
+          ? BuildParams_k0_1(
+                c, d, (spec.base_prime > 1) ? spec.base_prime
+                                            : spec.scalar_modulus,
+                zeta)
+          : BuildParams_k0_pow2(
+                c, k0, d, (spec.base_prime > 1) ? spec.base_prime
+                                                : spec.scalar_modulus,
+                zeta);
 
   const long pow2_d = Pow2Checked(d);
   if (k0 > std::numeric_limits<long>::max() / pow2_d) {
@@ -398,10 +245,10 @@ void RunOneContext(const ContextSpec &spec, long c, long k0, long d,
     challenge_cfg_ptr = &challenge_cfg;
   }
 
-  const BenchResult r = RunEvalBenchmark(f_coeffs, z, y, num_queries, params,
-                                         challenge_cfg_ptr, challenge_ext_degree,
-                                         use_checked_prover_path,
-                                         enable_profile, warmup, reps);
+  const BenchResult r = RunProveBenchmark(
+      f_coeffs, z, y, num_queries, params, challenge_cfg_ptr,
+      challenge_ext_degree, use_checked_prover_path, enable_profile, warmup,
+      reps);
   PrintResult(spec.label, spec.scalar_modulus, c, d, k0, num_queries, warmup,
               reps, r, use_extension_challenges, challenge_ext_degree);
 }
@@ -434,15 +281,15 @@ int main(int argc, char **argv) {
   field.label = "Field";
   field.scalar_modulus = to_ZZ(2);
   field.base_prime = ZZ(0);
-  field.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};   // x^2 + x + 1
-  field.zeta_coeffs = {to_ZZ(0), to_ZZ(1)};   // x
+  field.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};
+  field.zeta_coeffs = {to_ZZ(0), to_ZZ(1)};
 
   ContextSpec ring;
   ring.label = "Ring";
   ring.scalar_modulus = to_ZZ(4);
   ring.base_prime = to_ZZ(2);
-  ring.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};    // x^2 + x + 1
-  ring.zeta_coeffs = {to_ZZ(0), to_ZZ(1)};    // x
+  ring.F_coeffs = {to_ZZ(1), to_ZZ(1), to_ZZ(1)};
+  ring.zeta_coeffs = {to_ZZ(0), to_ZZ(1)};
 
   for (int i = 1; i < argc; ++i) {
     const std::string arg(argv[i]);
@@ -559,8 +406,7 @@ int main(int argc, char **argv) {
         return 2;
       }
     } else if (arg == "--field-mod") {
-      if (!ParseZZ(RequireNextArgValue("--field-mod"),
-                   field.scalar_modulus) ||
+      if (!ParseZZ(RequireNextArgValue("--field-mod"), field.scalar_modulus) ||
           field.scalar_modulus <= 1) {
         std::cerr << "Invalid --field-mod\n";
         return 2;
@@ -573,8 +419,7 @@ int main(int argc, char **argv) {
       field.challenge_ext_coeffs =
           ParseNestedCoeffList(RequireNextArgValue("--field-challenge-ext"));
     } else if (arg == "--ring-mod") {
-      if (!ParseZZ(RequireNextArgValue("--ring-mod"),
-                   ring.scalar_modulus) ||
+      if (!ParseZZ(RequireNextArgValue("--ring-mod"), ring.scalar_modulus) ||
           ring.scalar_modulus <= 1) {
         std::cerr << "Invalid --ring-mod\n";
         return 2;
@@ -596,7 +441,8 @@ int main(int argc, char **argv) {
       PrintHelp();
       return 0;
     } else {
-      std::cerr << "Unknown arg: " << arg << "\n";
+      std::cerr << "Unknown argument: " << arg << "\n";
+      PrintHelp();
       return 2;
     }
   }
@@ -604,23 +450,18 @@ int main(int argc, char **argv) {
   try {
     basefold::SetMerkleBuildParallelConfig(merkle_cfg);
     basefold::SetVerifierQueryParallelConfig(verifier_query_cfg);
-    if (!do_field && !do_ring) {
-      std::cerr << "Nothing to do: --mode disabled both field and ring\n";
-      return 2;
-    }
-    if (do_field)
+    if (do_field) {
       RunOneContext(field, c, k0, d, num_queries, use_extension_challenges,
-                    use_checked_prover_path, enable_profile,
-                    warmup, reps, auto_zeta_teich, seed);
-    if (do_ring)
+                    use_checked_prover_path, enable_profile, warmup, reps,
+                    auto_zeta_teich, seed);
+    }
+    if (do_ring) {
       RunOneContext(ring, c, k0, d, num_queries, use_extension_challenges,
-                    use_checked_prover_path, enable_profile,
-                    warmup, reps, auto_zeta_teich, seed);
+                    use_checked_prover_path, enable_profile, warmup, reps,
+                    auto_zeta_teich, seed ^ 0x31415926ULL);
+    }
   } catch (const std::exception &e) {
-    std::cerr << "Unhandled std::exception: " << e.what() << "\n";
-    return 2;
-  } catch (...) {
-    std::cerr << "Unhandled non-std exception\n";
+    std::cerr << "Error: " << e.what() << "\n";
     return 2;
   }
 

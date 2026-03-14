@@ -401,7 +401,7 @@ mkdir -p "$OUT_DIR/logs"
 RESULT_CSV="$OUT_DIR/results.csv"
 RESULT_MD="$OUT_DIR/RESULTS.md"
 RUN_AT_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-PROOF_SIZE_SOURCE="bench_pcs_eval fixed-width payload count"
+PROOF_SIZE_SOURCE="bench_basefold_pcs_eval fixed-width payload count"
 
 cat > "$RESULT_CSV" <<CSV
 context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_ms,prove_phase_mean_ms,verifier_mean_ms,proof_size_kb,proof_size_bytes,status,error
@@ -618,7 +618,7 @@ run_one_context_d() {
   fi
 
   if ! run_and_log "$commit_log" \
-      "$BUILD_DIR/bench_pcs_commit" \
+      "$BUILD_DIR/bench_basefold_pcs_commit" \
       --mode "$mode" \
       "${bench_args[@]}" \
       --c "$C" --k0 "$K0" --d "$d" \
@@ -637,7 +637,7 @@ run_one_context_d() {
 
   if [[ "$status" == "ok" ]]; then
     if ! run_and_log "$eval_log" \
-        "$BUILD_DIR/bench_pcs_eval" \
+        "$BUILD_DIR/bench_basefold_pcs_eval" \
         --mode "$mode" \
         "${eval_extra_args[@]}" \
         "${bench_args[@]}" \
@@ -660,7 +660,7 @@ run_one_context_d() {
       proof_bytes="$(awk '/proof size/{gsub(/[^0-9]/, "", $5); print $5; exit}' "$eval_log")"
       if [[ -z "$proof_kb" || -z "$proof_bytes" ]]; then
         status="proof_parse_failed"
-        error="missing proof size line in bench_pcs_eval output"
+        error="missing proof size line in bench_basefold_pcs_eval output"
       fi
     fi
   fi
@@ -682,11 +682,11 @@ fi
 echo "[2/4] Build required benchmarks/tools"
 if [[ -n "$EFFECTIVE_CPU_SET" && "$PIN_BUILD" == "1" ]]; then
   taskset -c "$EFFECTIVE_CPU_SET" cmake --build "$BUILD_DIR" \
-    --target bench_pcs_commit bench_pcs_eval calc_iopp_params \
+    --target bench_basefold_pcs_commit bench_basefold_pcs_eval calc_iopp_params \
     --parallel
 else
   cmake --build "$BUILD_DIR" \
-    --target bench_pcs_commit bench_pcs_eval calc_iopp_params \
+    --target bench_basefold_pcs_commit bench_basefold_pcs_eval calc_iopp_params \
     --parallel
 fi
 

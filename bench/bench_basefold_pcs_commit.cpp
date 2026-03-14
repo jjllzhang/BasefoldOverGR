@@ -200,9 +200,9 @@ void PrintResult(const std::string &label, const ZZ &scalar_modulus, long c,
 
 void PrintHelp() {
   std::cout
-      << "bench_pcs_commit (top commit benchmark, unchecked)\n\n"
+      << "bench_basefold_pcs_commit (top commit benchmark, unchecked)\n\n"
       << "Usage:\n"
-      << "  bench_pcs_commit [--mode field|ring|both] [--c <int>] [--k0 <int>] [--d <int>]\n"
+      << "  bench_basefold_pcs_commit [--mode field|ring|both] [--c <int>] [--k0 <int>] [--d <int>]\n"
       << "                 [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
       << "                 [--auto-zeta teich]\n"
       << "                 [--field-mod <decimal-int>] [--field-F <a0,a1,...>] [--field-zeta <b0,b1,...>]\n"
@@ -214,13 +214,13 @@ void PrintHelp() {
       << "  then --field-zeta/--ring-zeta are ignored.\n\n"
       << "Examples:\n"
       << "  # GF(2^2) with F(x)=x^2+x+1 and zeta=x\n"
-      << "  bench_pcs_commit --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --d 16\n"
+      << "  bench_basefold_pcs_commit --mode field --field-mod 2 --field-F 1,1,1 --field-zeta 0,1 --d 16\n"
       << "  # GR(4,2) with the same extension polynomial and zeta=x\n"
-      << "  bench_pcs_commit --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16\n"
+      << "  bench_basefold_pcs_commit --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 16\n"
       << "  # k0>1 (exercise the general-k0 encoder path)\n"
-      << "  bench_pcs_commit --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --k0 2 --d 16\n"
+      << "  bench_basefold_pcs_commit --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --k0 2 --d 16\n"
       << "  # Auto zeta from Teichmuller subgroup generator\n"
-      << "  bench_pcs_commit --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --auto-zeta teich --d 16\n";
+      << "  bench_basefold_pcs_commit --mode ring  --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --auto-zeta teich --d 16\n";
 }
 
 void RunOneContext(const ContextSpec &spec, long c, long k0, long d, int warmup,

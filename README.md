@@ -26,8 +26,8 @@ Language versions:
 |-- FRI_Ligero-based_results.md
 |-- LICENSE
 |-- bench
-|   |-- bench_pcs_commit.cpp
-|   |-- bench_pcs_eval.cpp
+|   |-- bench_basefold_pcs_commit.cpp
+|   |-- bench_basefold_pcs_eval.cpp
 |   |-- bench_z2k_frobenius_commit.cpp
 |   |-- bench_z2k_frobenius_eval.cpp
 |   |-- calc_iopp_params.cpp
@@ -242,7 +242,7 @@ Language versions:
 - Exact BaseFold PCS proof-size counting through the fixed-width proof serializer:
   - `basefold::BaseFoldPCSEvalProofSizeBytes(proof)`
   - `basefold::BaseFoldPCSEvalProofSizeKB(proof)` (KiB, 1024 bytes)
-- User-facing proof-size reporting is surfaced from `bench_pcs_eval`, which prints
+- User-facing proof-size reporting is surfaced from `bench_basefold_pcs_eval`, which prints
   `proof_size_bytes` / `proof_size_kb` for the proof it just generated.
 
 ### `include/Compiler/Z2k/RingSwitchPCS.hpp` / `src/Compiler/Z2k/RingSwitchPCS.cpp`
@@ -272,7 +272,9 @@ Language versions:
 - Proof shape is unchanged: outer and composed proofs still carry only
   `s_by_u`, `h_by_level`, `t_star`, and the backend opening proof.
 - Ring-switch bench binaries now support both setup modes:
-  - default mode remains the active polynomial basis specialization,
+  - default mode now fixes bench setup to the polynomial `alpha/beta` basis,
+    i.e. the fastest basis family we observed among the current
+    polynomial/unitriangular/dense candidates,
   - caller-provided mode uses `--basis-mode provided` together with
     `--alpha-basis` and `--beta-basis`; `--alpha-dual-basis` and
     `--beta-dual-basis` are optional because setup derives omitted dual bases.
@@ -350,7 +352,7 @@ If you already have a checked Teichmuller generator, set
 - Proof size is exact relative to this fixed-width serializer contract and is
   shared by the size helpers and Frobenius benches.
 
-### `bench/bench_pcs_commit.cpp`
+### `bench/bench_basefold_pcs_commit.cpp`
 
 - Top-commit benchmark:
   - `encode-only mean`: raw top-level encode time without validation (`EncodeFoldableUnchecked`)
@@ -363,11 +365,15 @@ If you already have a checked Teichmuller generator, set
 ### `bench/bench_z2k_frobenius_commit.cpp`
 
 - Frobenius compiler commit benchmark.
+- Before timed work, bench setup runs a bounded deterministic search over
+  normal-basis candidates and fixes the benchmark to the selected preferred
+  basis; that search is reported in the output and excluded from headline
+  timing.
 - `packing mean` measures `t -> t'` packing plus Boolean-table to monomial
   conversion via `FrobeniusPCSBuildOuterCommitArtifacts(...)`.
 - `commit mean` measures the full `FrobeniusPCSCommit(...)` path.
 
-### `bench/bench_pcs_eval.cpp`
+### `bench/bench_basefold_pcs_eval.cpp`
 
 - PCS eval-proof benchmark: measures prover and verifier time (Merkle + Fiat-Shamir below the top commit).
 - Prover defaults to `BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked`; use
@@ -387,8 +393,11 @@ If you already have a checked Teichmuller generator, set
 
 - Frobenius compiler eval benchmark: measures prove/verify around the outer
   protocol plus the backend single-point proof.
+- Like the other Frobenius bench binaries, it pins the run to the preferred
+  normal basis chosen by the bounded deterministic pre-search outside the timed
+  region.
 - Timed prove starts from prebuilt `FrobeniusPCSCommitArtifacts`, matching the
-  current `bench_pcs_eval` convention that excludes the top commit stage.
+  current `bench_basefold_pcs_eval` convention that excludes the top commit stage.
 - Reports:
   - total prover/verifier time,
   - outer prover/verifier time with backend subcalls removed,
@@ -444,12 +453,12 @@ cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 Then:
 
 ```bash
-./build-release/bench_pcs_commit --help
-./build-release/bench_pcs_eval --help
+./build-release/bench_basefold_pcs_commit --help
+./build-release/bench_basefold_pcs_eval --help
 ./build-release/bench_z2k_frobenius_commit --help
 ./build-release/bench_z2k_frobenius_eval --help
-./build-release/dump_pcs_eval_artifact --help
-./build-release/bench_pcs_verify_artifact --help
+./build-release/dump_basefold_pcs_eval_artifact --help
+./build-release/bench_basefold_pcs_verify_artifact --help
 ./build-release/calc_iopp_params --help
 ```
 
@@ -457,26 +466,26 @@ Then:
 
 There are now two verifier-only benchmark surfaces:
 
-- `bench_pcs_verify`: self-contained verifier benchmark. It deterministically
+- `bench_basefold_pcs_verify`: self-contained verifier benchmark. It deterministically
   generates the proof in-process, then measures repeated verify calls on that
   proof.
-- `bench_pcs_verify_artifact`: artifact-driven verifier benchmark. It loads one
+- `bench_basefold_pcs_verify_artifact`: artifact-driven verifier benchmark. It loads one
   pre-dumped proof case from disk, deserializes outside the timed region, then
   measures repeated verify calls on the loaded proof.
 
-Use `bench_pcs_verify` when you want a single binary that reconstructs the whole
-logical case in one run. Use `bench_pcs_verify_artifact` when you want verifier
+Use `bench_basefold_pcs_verify` when you want a single binary that reconstructs the whole
+logical case in one run. Use `bench_basefold_pcs_verify_artifact` when you want verifier
 timing to exclude file IO and proof/public-input deserialization.
 
 ### Artifact Workflow
 
 Artifact benchmarking is additive; it does not replace the existing
-`bench_pcs_*` binaries.
+`bench_basefold_pcs_*` binaries.
 
-`dump_pcs_eval_artifact` persists one BaseFold eval-proof case per invocation:
+`dump_basefold_pcs_eval_artifact` persists one BaseFold eval-proof case per invocation:
 
 ```bash
-./build-release/dump_pcs_eval_artifact \
+./build-release/dump_basefold_pcs_eval_artifact \
   --artifact-root /tmp/basefold-artifacts \
   --artifact-id field_d10_q2 \
   --mode field --d 10 --queries 2 --seed 5
@@ -509,7 +518,7 @@ Important artifact semantics:
 Then benchmark pure verify from that artifact:
 
 ```bash
-./build-release/bench_pcs_verify_artifact \
+./build-release/bench_basefold_pcs_verify_artifact \
   --artifact-root /tmp/basefold-artifacts \
   --artifact-id field_d10_q2 \
   --warmup 0 --reps 3
@@ -520,7 +529,7 @@ Artifact-driven verifier timing semantics:
 - `artifact load wall time` and `artifact deserialize wall time` are printed as
   diagnostics and are excluded from headline `verifier mean`.
 - `input proof size` is the exact fixed-width size of the loaded proof, using
-  the same serializer contract as `bench_pcs_eval`.
+  the same serializer contract as `bench_basefold_pcs_eval`.
 - Only `--verifier-query-*` affects the timed verify loop.
 - `--merkle-*` flags are intentionally unsupported here because artifact verify
   does not build Merkle trees inside the measured path.
@@ -529,7 +538,7 @@ To compare against the self-contained verifier benchmark under the same logical
 case:
 
 ```bash
-./build-release/bench_pcs_verify \
+./build-release/bench_basefold_pcs_verify \
   --mode field --d 10 --queries 2 --warmup 0 --reps 3 --seed 5
 ```
 
@@ -550,7 +559,7 @@ Default output directory contains:
 
 - `results.csv`: structured aggregate rows for each `(context, d)`.
 - `RESULTS.md`: markdown table for quick inspection.
-- `logs/*.log`: raw logs from `calc_iopp_params`, `bench_pcs_commit`, and `bench_pcs_eval`.
+- `logs/*.log`: raw logs from `calc_iopp_params`, `bench_basefold_pcs_commit`, and `bench_basefold_pcs_eval`.
 
 Current `results.csv` header:
 
@@ -565,7 +574,7 @@ Common columns:
 - `gamma`: slack parameter selected by `calc_iopp_params --auto-gamma`.
 - `queries`: recommended query count (`l_min_for_PCS`).
 - `proof_size_kb/proof_size_bytes`: exact fixed-width proof payload size
-  reported by `bench_pcs_eval`, omitting transcript-recoverable
+  reported by `bench_basefold_pcs_eval`, omitting transcript-recoverable
   indices/challenges (KiB / bytes).
 - Current release sweeps do not populate these columns from a separate
   formula-only benchmark binary.
@@ -644,23 +653,23 @@ RING_F=1,1,1
 RING_ZETA=0,1
 
 # ---------- Field profile (GF(p^2), p is 128-bit; direct runnable commands) ----------
-./build-release/bench_pcs_commit --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --reps 3 --warmup 1
-./build-release/bench_pcs_eval --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --queries 2 --reps 2 --warmup 1
+./build-release/bench_basefold_pcs_commit --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --reps 3 --warmup 1
+./build-release/bench_basefold_pcs_eval --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --queries 2 --reps 2 --warmup 1
 
 # ---------- Ring profile (GR(p^2,2), p is 64-bit and p^2 is 128-bit; direct runnable commands) ----------
-./build-release/bench_pcs_commit --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --reps 3 --warmup 1
-./build-release/bench_pcs_eval --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --queries 2 --reps 2 --warmup 1
+./build-release/bench_basefold_pcs_commit --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --reps 3 --warmup 1
+./build-release/bench_basefold_pcs_eval --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --queries 2 --reps 2 --warmup 1
 
 # ---------- Extension-challenge path ----------
 # Note: challenge polynomial args contain ';', so quote them.
 # E(U) = (0 + 3*x) + U + U^2  => '0,3;1;1'
-./build-release/bench_pcs_eval --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --use-extension-challenges --field-challenge-ext '0,3;1;1' --d 10 --queries 2 --reps 1 --warmup 0
-./build-release/bench_pcs_eval --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --use-extension-challenges --ring-challenge-ext '0,3;1;1' --d 10 --queries 2 --reps 1 --warmup 0
+./build-release/bench_basefold_pcs_eval --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --use-extension-challenges --field-challenge-ext '0,3;1;1' --d 10 --queries 2 --reps 1 --warmup 0
+./build-release/bench_basefold_pcs_eval --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --use-extension-challenges --ring-challenge-ext '0,3;1;1' --d 10 --queries 2 --reps 1 --warmup 0
 ```
 
 ### Merkle Build Parallel Threshold Tuning
 
-`MerkleTree::Build` parallel strategy can be tuned by environment variables or `bench_pcs_eval` CLI:
+`MerkleTree::Build` parallel strategy can be tuned by environment variables or `bench_basefold_pcs_eval` CLI:
 
 ```bash
 # Environment variables (effective for all benches)
@@ -668,8 +677,8 @@ export BASEFOLD_MERKLE_LEAVES_PER_THREAD=32768
 export BASEFOLD_MERKLE_PARALLEL_LEVEL_THRESHOLD=4096
 export BASEFOLD_MERKLE_MAX_THREADS=8
 
-# CLI (bench_pcs_eval only, higher priority than env vars)
-./build-release/bench_pcs_eval ... --merkle-leaves-per-thread 32768 --merkle-level-threshold 4096 --merkle-max-threads 8
+# CLI (bench_basefold_pcs_eval only, higher priority than env vars)
+./build-release/bench_basefold_pcs_eval ... --merkle-leaves-per-thread 32768 --merkle-level-threshold 4096 --merkle-max-threads 8
 ```
 
 Auto-sweep example:
@@ -678,7 +687,7 @@ Auto-sweep example:
 csv=/tmp/merkle_threshold_sweep.csv
 echo "threshold,prove_phase_mean_ms,merkle_build_total_ms" > "$csv"
 for t in 256 512 1024 2048 4096 8192 16384 32768 65536; do
-  out=$(./build-release/bench_pcs_eval --mode field \
+  out=$(./build-release/bench_basefold_pcs_eval --mode field \
     --field-mod 326594724262804054738278293730872375507 \
     --field-F 1,0,1 --field-zeta 0,1 \
     --d 14 --queries 4 --warmup 1 --reps 2 --profile \
@@ -692,16 +701,16 @@ cat "$csv"
 
 ### Verifier Query Parallelism Tuning
 
-Query-level parallelism in `BaseFoldPCSVerifyEval` is configurable via env vars or `bench_pcs_eval` CLI:
+Query-level parallelism in `BaseFoldPCSVerifyEval` is configurable via env vars or `bench_basefold_pcs_eval` CLI:
 
 ```bash
-# Environment variables (effective for bench_pcs_eval)
+# Environment variables (effective for bench_basefold_pcs_eval)
 export BASEFOLD_VERIFY_QUERY_QUERIES_PER_THREAD=1
 export BASEFOLD_VERIFY_QUERY_PARALLEL_THRESHOLD=2
 export BASEFOLD_VERIFY_QUERY_MAX_THREADS=8
 
 # CLI (higher priority than env vars)
-./build-release/bench_pcs_eval ... \
+./build-release/bench_basefold_pcs_eval ... \
   --verifier-query-per-thread 1 \
   --verifier-query-threshold 2 \
   --verifier-query-max-threads 8
@@ -713,7 +722,7 @@ Auto-sweep for best thread count:
 csv=/tmp/verifier_query_threads_sweep.csv
 echo "max_threads,verifier_mean_ms,prove_phase_mean_ms" > "$csv"
 for t in 1 2 4 8 12 16 24 32; do
-  out=$(./build-release/bench_pcs_eval --mode field \
+  out=$(./build-release/bench_basefold_pcs_eval --mode field \
     --field-mod 326594724262804054738278293730872375507 \
     --field-F 1,0,0,0,1 --field-zeta 3 \
     --d 14 --queries 64 --warmup 1 --reps 3 \
@@ -729,7 +738,7 @@ cat "$csv"
 
 ### Profiling (`--profile`)
 
-`bench_pcs_eval --profile` prints prover/verifier breakdown (numbers omitted as `...`):
+`bench_basefold_pcs_eval --profile` prints prover/verifier breakdown (numbers omitted as `...`):
 
 ```text
 [Ring] ...  queries=4  warmup=0 reps=1
@@ -749,7 +758,7 @@ cat "$csv"
 - `BaseFoldPCSProveEval total`: total prover time measured in benchmark,
   excluding the top-level encode + commit stage.
 - `BaseFoldPCSVerifyEval total`: total verifier time.
-- Use `bench_pcs_commit` to measure the excluded top-level encode/commit stage.
+- Use `bench_basefold_pcs_commit` to measure the excluded top-level encode/commit stage.
 - Entries like `MerkleTree::Build` (prover) and `MerkleVerifyMultiproof`
   (verifier) identify Merkle costs; `EvalLineAt` / `TryInvertUnit` identify
   folding-consistency and ring-arithmetic costs.
@@ -767,11 +776,11 @@ This repo exposes exact proof-size counting through the fixed-width proof serial
 - `basefold::BaseFoldPCSEvalProofSizeBytes(proof)` (bytes)
 - `basefold::BaseFoldPCSEvalProofSizeKB(proof)` (KiB)
 
-For end users, the intended CLI surface is `bench_pcs_eval`: it generates a real
+For end users, the intended CLI surface is `bench_basefold_pcs_eval`: it generates a real
 proof, then prints the exact fixed-width payload `proof_size_bytes` /
 `proof_size_kb` for that proof in the same run.
 
-For verifier-only benchmarking, `bench_pcs_verify_artifact` reports the same
+For verifier-only benchmarking, `bench_basefold_pcs_verify_artifact` reports the same
 exact fixed-width `input proof size` for the proof loaded from disk, while still
 excluding file IO and deserialization from headline verifier timing.
 

@@ -26,8 +26,8 @@
 ├── FRI_Ligero-based_results.md
 ├── LICENSE
 ├── bench
-│   ├── bench_pcs_commit.cpp
-│   ├── bench_pcs_eval.cpp
+│   ├── bench_basefold_pcs_commit.cpp
+│   ├── bench_basefold_pcs_eval.cpp
 │   ├── bench_z2k_frobenius_commit.cpp
 │   ├── bench_z2k_frobenius_eval.cpp
 │   ├── calc_iopp_params.cpp
@@ -232,7 +232,7 @@
   - `basefold::BaseFoldPCSEvalProofSizeKB(proof)`（KiB, 1024 bytes）
 - 计数时会省略 verifier 可从 transcript 重建的 query indices / 显式扩环
   challenge（例如 `extension.r_by_level`）。
-- 面向用户的 proof size 输出来自 `bench_pcs_eval`：同一次 prove/eval bench
+- 面向用户的 proof size 输出来自 `bench_basefold_pcs_eval`：同一次 prove/eval bench
   会直接打印 `proof_size_bytes` / `proof_size_kb`。
 
 ### `include/Compiler/Z2k/FrobeniusPCS.hpp` / `src/Compiler/Z2k/FrobeniusPCS.cpp`
@@ -284,7 +284,7 @@ const basefold::FrobeniusPCSParams params = basefold::FrobeniusPCSSetup(input);
   - commitment 与 public inputs 不计入 proof-size reporting。
 - proof size 的“精确”含义是：相对于这套 fixed-width serializer 契约精确；size helper 和 Frobenius bench 共用同一条计数路径。
 
-### `bench/bench_pcs_commit.cpp`
+### `bench/bench_basefold_pcs_commit.cpp`
 
 - 顶层 commit 基准：
   - `encode-only mean`：顶层原始编码时间（`EncodeFoldableUnchecked`，不含校验）
@@ -297,11 +297,14 @@ const basefold::FrobeniusPCSParams params = basefold::FrobeniusPCSSetup(input);
 ### `bench/bench_z2k_frobenius_commit.cpp`
 
 - Frobenius compiler 的 commit benchmark。
+- 在进入 timed region 之前，bench setup 会先做一次有界、确定性的
+  normal-basis 候选搜索，并把这次运行固定到选中的 preferred basis；
+  搜索结果会打印到输出里，但不计入 headline timing。
 - `packing mean` 统计 `t -> t'` packing 加上 Boolean-table 到 monomial
   conversion 的时间，具体走 `FrobeniusPCSBuildOuterCommitArtifacts(...)`。
 - `commit mean` 统计完整的 `FrobeniusPCSCommit(...)` 路径。
 
-### `bench/bench_pcs_eval.cpp`
+### `bench/bench_basefold_pcs_eval.cpp`
 
 - PCS eval proof 性能基准：测量 prove-phase time 与 verifier time；其中 prove-phase 从预先构造好的顶层 commitment artifacts 开始，不包含顶层 encode + commit。
 - 默认 prover 走 `BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked`；如需把校验也算进 prove-phase time，可加 `--checked`。
@@ -318,8 +321,10 @@ const basefold::FrobeniusPCSParams params = basefold::FrobeniusPCSSetup(input);
 
 - Frobenius compiler 的 eval benchmark：测量 outer protocol 加 backend
   单点评估证明的 prove/verify 开销。
+- 和其他 Frobenius bench 二进制一样，它会在 timed region 外先固定到
+  这次预搜索选出的 preferred normal basis。
 - 计时 prove 从预先构造好的 `FrobeniusPCSCommitArtifacts` 开始，和当前
-  `bench_pcs_eval` 一样不把顶层 commit 阶段算进 prove-phase。
+  `bench_basefold_pcs_eval` 一样不把顶层 commit 阶段算进 prove-phase。
 - 输出内容包括：
   - 总 prover/verifier 时间，
   - 扣掉 backend 子调用后的 outer prover/verifier 时间，
@@ -375,12 +380,12 @@ cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 构建后可运行：
 
 ```bash
-./build-release/bench_pcs_commit --help
-./build-release/bench_pcs_eval --help
+./build-release/bench_basefold_pcs_commit --help
+./build-release/bench_basefold_pcs_eval --help
 ./build-release/bench_z2k_frobenius_commit --help
 ./build-release/bench_z2k_frobenius_eval --help
-./build-release/dump_pcs_eval_artifact --help
-./build-release/bench_pcs_verify_artifact --help
+./build-release/dump_basefold_pcs_eval_artifact --help
+./build-release/bench_basefold_pcs_verify_artifact --help
 ./build-release/calc_iopp_params --help
 ```
 
@@ -388,24 +393,24 @@ cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 
 现在有两条 verifier-only benchmark 路径：
 
-- `bench_pcs_verify`：自包含 verifier benchmark。命令本身会在进程内按
+- `bench_basefold_pcs_verify`：自包含 verifier benchmark。命令本身会在进程内按
   确定性逻辑生成 proof，然后对该 proof 重复做 verify 并计时。
-- `bench_pcs_verify_artifact`：artifact 驱动的 verifier benchmark。命令先从
+- `bench_basefold_pcs_verify_artifact`：artifact 驱动的 verifier benchmark。命令先从
   磁盘加载一个已落盘的 proof case，在 timed region 外完成反序列化，再只对
   已加载的 proof 重复做 verify 并计时。
 
-如果你想一次命令里复现完整 logical case，用 `bench_pcs_verify`；如果你想把
+如果你想一次命令里复现完整 logical case，用 `bench_basefold_pcs_verify`；如果你想把
 文件 IO 和 proof/public-input 反序列化排除在 verifier mean 之外，用
-`bench_pcs_verify_artifact`。
+`bench_basefold_pcs_verify_artifact`。
 
 ### Artifact 工作流
 
-artifact benchmarking 是增量能力，不会替代现有 `bench_pcs_*` 二进制。
+artifact benchmarking 是增量能力，不会替代现有 `bench_basefold_pcs_*` 二进制。
 
-`dump_pcs_eval_artifact` 每次调用只落一个 BaseFold eval-proof case：
+`dump_basefold_pcs_eval_artifact` 每次调用只落一个 BaseFold eval-proof case：
 
 ```bash
-./build-release/dump_pcs_eval_artifact \
+./build-release/dump_basefold_pcs_eval_artifact \
   --artifact-root /tmp/basefold-artifacts \
   --artifact-id field_d10_q2 \
   --mode field --d 10 --queries 2 --seed 5
@@ -438,7 +443,7 @@ artifact 语义要点：
 然后用 artifact 路径只测 pure verify：
 
 ```bash
-./build-release/bench_pcs_verify_artifact \
+./build-release/bench_basefold_pcs_verify_artifact \
   --artifact-root /tmp/basefold-artifacts \
   --artifact-id field_d10_q2 \
   --warmup 0 --reps 3
@@ -449,7 +454,7 @@ artifact-driven verifier timing 的语义是：
 - `artifact load wall time` 与 `artifact deserialize wall time` 会作为诊断信息打印，
   但不计入 headline `verifier mean`。
 - `input proof size` 是从磁盘载入的 proof 的精确 fixed-width 大小，使用和
-  `bench_pcs_eval` 相同的 serializer contract。
+  `bench_basefold_pcs_eval` 相同的 serializer contract。
 - 只有 `--verifier-query-*` 会影响 timed verify loop。
 - `--merkle-*` 在这里被明确禁止，因为 artifact verify 路径不会在计时段内
   构建 Merkle tree。
@@ -457,7 +462,7 @@ artifact-driven verifier timing 的语义是：
 如需和自包含 verifier benchmark 对比同一 logical case，可运行：
 
 ```bash
-./build-release/bench_pcs_verify \
+./build-release/bench_basefold_pcs_verify \
   --mode field --d 10 --queries 2 --warmup 0 --reps 3 --seed 5
 ```
 
@@ -478,7 +483,7 @@ CONTEXTS=field-prime128-ext D_MIN=10 D_MAX=20 scripts/run_release_c4_lambda128.s
 
 - `results.csv`：每个 `(context, d)` 的结构化结果汇总。
 - `RESULTS.md`：便于快速浏览的 markdown 表格。
-- `logs/*.log`：`calc_iopp_params`、`bench_pcs_commit`、`bench_pcs_eval` 的原始日志。
+- `logs/*.log`：`calc_iopp_params`、`bench_basefold_pcs_commit`、`bench_basefold_pcs_eval` 的原始日志。
 
 `results.csv` 当前表头为：
 
@@ -491,7 +496,7 @@ context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_m
 - `poly_dim`：消息/真值表长度 `k_d = k0*2^d`（默认 `k0=1` 时就是 `2^d`）。
 - `gamma`：`calc_iopp_params --auto-gamma` 选出的 slack 参数。
 - `queries`：推荐查询次数（即 `l_min_for_PCS`）。
-- `proof_size_kb/proof_size_bytes`：来自 `bench_pcs_eval` 的精确 payload 大小
+- `proof_size_kb/proof_size_bytes`：来自 `bench_basefold_pcs_eval` 的精确 payload 大小
   （fixed-width counting 路径，省略 verifier 可从 transcript 重建的
   indices/challenges，KiB / bytes）。
 - 当前 release sweep 不会再从单独的 formula-only benchmark 二进制填这两列。
@@ -570,23 +575,23 @@ RING_F=1,1,1
 RING_ZETA=0,1
 
 # ---------- Field profile (GF(p^2), p 为 128-bit；无变量版本，直接可运行) ----------
-./build-release/bench_pcs_commit --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --reps 3 --warmup 1
-./build-release/bench_pcs_eval --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --queries 2 --reps 2 --warmup 1
+./build-release/bench_basefold_pcs_commit --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --reps 3 --warmup 1
+./build-release/bench_basefold_pcs_eval --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --d 10 --queries 2 --reps 2 --warmup 1
 
 # ---------- Ring profile (GR(p^2,2), p 为 64-bit, p^2 为 128-bit；无变量版本，直接可运行) ----------
-./build-release/bench_pcs_commit --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --reps 3 --warmup 1
-./build-release/bench_pcs_eval --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --queries 2 --reps 2 --warmup 1
+./build-release/bench_basefold_pcs_commit --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --reps 3 --warmup 1
+./build-release/bench_basefold_pcs_eval --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --d 10 --queries 2 --reps 2 --warmup 1
 
 # ---------- extension-challenge 路径 ----------
 # 注意：challenge 多项式参数含 ';'，请使用引号
 # E(U) = (0 + 3*x) + U + U^2  => '0,3;1;1'
-./build-release/bench_pcs_eval --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --use-extension-challenges --field-challenge-ext '0,3;1;1' --d 10 --queries 2 --reps 1 --warmup 0
-./build-release/bench_pcs_eval --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --use-extension-challenges --ring-challenge-ext '0,3;1;1' --d 10 --queries 2 --reps 1 --warmup 0
+./build-release/bench_basefold_pcs_eval --mode field --field-mod 326594724262804054738278293730872375507 --field-F 1,0,1 --field-zeta 0,1 --use-extension-challenges --field-challenge-ext '0,3;1;1' --d 10 --queries 2 --reps 1 --warmup 0
+./build-release/bench_basefold_pcs_eval --mode ring --ring-mod 340282366920938461286658806734041124249 --ring-p 18446744073709551557 --ring-F 1,1,1 --ring-zeta 0,1 --use-extension-challenges --ring-challenge-ext '0,3;1;1' --d 10 --queries 2 --reps 1 --warmup 0
 ```
 
 ### Merkle Build 并行阈值调优
 
-`MerkleTree::Build` 支持通过环境变量或 `bench_pcs_eval` CLI 调整并行策略：
+`MerkleTree::Build` 支持通过环境变量或 `bench_basefold_pcs_eval` CLI 调整并行策略：
 
 ```bash
 # 环境变量（对所有 bench 生效）
@@ -594,8 +599,8 @@ export BASEFOLD_MERKLE_LEAVES_PER_THREAD=32768
 export BASEFOLD_MERKLE_PARALLEL_LEVEL_THRESHOLD=4096
 export BASEFOLD_MERKLE_MAX_THREADS=8
 
-# CLI（仅 bench_pcs_eval，优先级高于环境变量）
-./build-release/bench_pcs_eval ... --merkle-leaves-per-thread 32768 --merkle-level-threshold 4096 --merkle-max-threads 8
+# CLI（仅 bench_basefold_pcs_eval，优先级高于环境变量）
+./build-release/bench_basefold_pcs_eval ... --merkle-leaves-per-thread 32768 --merkle-level-threshold 4096 --merkle-max-threads 8
 ```
 
 自动 sweep（示例）：
@@ -604,7 +609,7 @@ export BASEFOLD_MERKLE_MAX_THREADS=8
 csv=/tmp/merkle_threshold_sweep.csv
 echo "threshold,prove_phase_mean_ms,merkle_build_total_ms" > "$csv"
 for t in 256 512 1024 2048 4096 8192 16384 32768 65536; do
-  out=$(./build-release/bench_pcs_eval --mode field \
+  out=$(./build-release/bench_basefold_pcs_eval --mode field \
     --field-mod 326594724262804054738278293730872375507 \
     --field-F 1,0,1 --field-zeta 0,1 \
     --d 14 --queries 4 --warmup 1 --reps 2 --profile \
@@ -618,16 +623,16 @@ cat "$csv"
 
 ### Verifier Query 并行线程调优
 
-`BaseFoldPCSVerifyEval` 的 query-level 并行支持环境变量或 `bench_pcs_eval` CLI：
+`BaseFoldPCSVerifyEval` 的 query-level 并行支持环境变量或 `bench_basefold_pcs_eval` CLI：
 
 ```bash
-# 环境变量（对 bench_pcs_eval 生效）
+# 环境变量（对 bench_basefold_pcs_eval 生效）
 export BASEFOLD_VERIFY_QUERY_QUERIES_PER_THREAD=1
 export BASEFOLD_VERIFY_QUERY_PARALLEL_THRESHOLD=2
 export BASEFOLD_VERIFY_QUERY_MAX_THREADS=8
 
 # CLI（优先级高于环境变量）
-./build-release/bench_pcs_eval ... \
+./build-release/bench_basefold_pcs_eval ... \
   --verifier-query-per-thread 1 \
   --verifier-query-threshold 2 \
   --verifier-query-max-threads 8
@@ -639,7 +644,7 @@ export BASEFOLD_VERIFY_QUERY_MAX_THREADS=8
 csv=/tmp/verifier_query_threads_sweep.csv
 echo "max_threads,verifier_mean_ms,prove_phase_mean_ms" > "$csv"
 for t in 1 2 4 8 12 16 24 32; do
-  out=$(./build-release/bench_pcs_eval --mode field \
+  out=$(./build-release/bench_basefold_pcs_eval --mode field \
     --field-mod 326594724262804054738278293730872375507 \
     --field-F 1,0,0,0,1 --field-zeta 3 \
     --d 14 --queries 64 --warmup 1 --reps 3 \
@@ -655,7 +660,7 @@ cat "$csv"
 
 ### Profiling（`--profile`）
 
-`bench_pcs_eval --profile` 会打印 prover/verifier 的 breakdown（数值用 `...` 省略）：
+`bench_basefold_pcs_eval --profile` 会打印 prover/verifier 的 breakdown（数值用 `...` 省略）：
 
 ```text
 [Ring] ...  queries=4  warmup=0 reps=1
@@ -689,10 +694,10 @@ cat "$csv"
 - `basefold::BaseFoldPCSEvalProofSizeBytes(proof)`（bytes）
 - `basefold::BaseFoldPCSEvalProofSizeKB(proof)`（KiB）
 
-对终端用户而言，推荐直接看 `bench_pcs_eval`：它在生成真实 proof 后，会在同一次运行里输出
+对终端用户而言，推荐直接看 `bench_basefold_pcs_eval`：它在生成真实 proof 后，会在同一次运行里输出
 `proof_size_bytes` / `proof_size_kb`。
 
-如果走 verifier-only artifact benchmark，则 `bench_pcs_verify_artifact`
+如果走 verifier-only artifact benchmark，则 `bench_basefold_pcs_verify_artifact`
 会对磁盘中载入的 proof 输出同样精确的 `input proof size`，同时仍把文件 IO 与
 反序列化排除在 headline verifier timing 之外。
 

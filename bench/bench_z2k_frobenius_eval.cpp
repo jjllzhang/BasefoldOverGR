@@ -214,7 +214,7 @@ void PrintHelp() {
       << "                           [--ring-mod <decimal-int>] [--ring-p <decimal-int>]\n"
       << "                           [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
       << "Notes:\n"
-      << "  Commit/artifact construction happens before timed prove, matching current bench_pcs_eval semantics.\n"
+      << "  Commit/artifact construction happens before timed prove, matching current bench_basefold_pcs_eval semantics.\n"
       << "  Outer prover/verifier times are total times with the backend prove/verify subcall removed.\n"
       << "  Proof size reports exact serializer-backed bytes for the public FrobeniusPCSEvalProof.\n";
 }

@@ -25,7 +25,7 @@
 #include "PCS/BaseFold/ProofSerialize.hpp"
 #include "PCS/Common/Hash.hpp"
 #include "PCS/Common/Merkle.hpp"
-#include "bench_pcs_common.hpp"
+#include "bench_basefold_pcs_common.hpp"
 
 namespace basefold_bench_pcs_artifact {
 

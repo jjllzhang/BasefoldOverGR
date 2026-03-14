@@ -2,7 +2,7 @@
 #include <iostream>
 #include <string>
 
-#include "bench_pcs_common.hpp"
+#include "bench_basefold_pcs_common.hpp"
 
 namespace {
 
@@ -149,9 +149,9 @@ void PrintResult(const std::string &label, const ZZ &scalar_modulus, long c,
 
 void PrintHelp() {
   std::cout
-      << "bench_pcs_verify (PCS verify only; proof prebuilt outside timing)\n\n"
+      << "bench_basefold_pcs_verify (PCS verify only; proof prebuilt outside timing)\n\n"
       << "Usage:\n"
-      << "  bench_pcs_verify [--mode field|ring|both] [--c <int>] [--k0 <int>] [--d <int>]\n"
+      << "  bench_basefold_pcs_verify [--mode field|ring|both] [--c <int>] [--k0 <int>] [--d <int>]\n"
       << "                   [--queries <int>] [--checked] [--profile] [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
       << "                   [--merkle-leaves-per-thread <int>] [--merkle-level-threshold <int>] [--merkle-max-threads <int>]\n"
       << "                   [--verifier-query-per-thread <int>] [--verifier-query-threshold <int>] [--verifier-query-max-threads <int>]\n"

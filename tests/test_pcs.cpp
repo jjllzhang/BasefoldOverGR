@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-#include "bench/bench_pcs_artifact_common.hpp"
+#include "bench/bench_basefold_pcs_artifact_common.hpp"
 #include "PCS/BaseFold/BaseFoldPCS.hpp"
 #include "PCS/BaseFold/ProofDeserialize.hpp"
 #include "PCS/Common/Multilinear.hpp"

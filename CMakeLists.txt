@@ -173,23 +173,23 @@ add_executable(test_path_hygiene tests/test_path_hygiene.cpp)
 configure_repo_cxx_target(test_path_hygiene)
 target_include_directories(test_path_hygiene PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_executable(bench_pcs_commit bench/bench_pcs_commit.cpp)
-target_link_libraries(bench_pcs_commit PRIVATE basefold_core)
+add_executable(bench_basefold_pcs_commit bench/bench_basefold_pcs_commit.cpp)
+target_link_libraries(bench_basefold_pcs_commit PRIVATE basefold_core)
 
-add_executable(bench_pcs_eval bench/bench_pcs_eval.cpp)
-target_link_libraries(bench_pcs_eval PRIVATE basefold_core)
+add_executable(bench_basefold_pcs_eval bench/bench_basefold_pcs_eval.cpp)
+target_link_libraries(bench_basefold_pcs_eval PRIVATE basefold_core)
 
-add_executable(bench_pcs_prove bench/bench_pcs_prove.cpp)
-target_link_libraries(bench_pcs_prove PRIVATE basefold_core)
+add_executable(bench_basefold_pcs_prove bench/bench_basefold_pcs_prove.cpp)
+target_link_libraries(bench_basefold_pcs_prove PRIVATE basefold_core)
 
-add_executable(bench_pcs_verify bench/bench_pcs_verify.cpp)
-target_link_libraries(bench_pcs_verify PRIVATE basefold_core)
+add_executable(bench_basefold_pcs_verify bench/bench_basefold_pcs_verify.cpp)
+target_link_libraries(bench_basefold_pcs_verify PRIVATE basefold_core)
 
-add_executable(dump_pcs_eval_artifact bench/dump_pcs_eval_artifact.cpp)
-target_link_libraries(dump_pcs_eval_artifact PRIVATE basefold_core)
+add_executable(dump_basefold_pcs_eval_artifact bench/dump_basefold_pcs_eval_artifact.cpp)
+target_link_libraries(dump_basefold_pcs_eval_artifact PRIVATE basefold_core)
 
-add_executable(bench_pcs_verify_artifact bench/bench_pcs_verify_artifact.cpp)
-target_link_libraries(bench_pcs_verify_artifact PRIVATE basefold_core)
+add_executable(bench_basefold_pcs_verify_artifact bench/bench_basefold_pcs_verify_artifact.cpp)
+target_link_libraries(bench_basefold_pcs_verify_artifact PRIVATE basefold_core)
 
 add_executable(bench_z2k_ring_switch_commit bench/bench_z2k_ring_switch_commit.cpp)
 target_link_libraries(bench_z2k_ring_switch_commit PRIVATE z2k_compiler_core)
