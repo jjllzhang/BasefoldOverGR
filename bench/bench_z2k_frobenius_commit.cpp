@@ -133,7 +133,7 @@ void PrintHelp() {
 }  // namespace
 
 int main(int argc, char **argv) {
-  long c = 2;
+  long c = 4;
   long ell = 3;
   long kappa = 1;
   int warmup = 1;
