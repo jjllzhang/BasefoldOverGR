@@ -251,7 +251,7 @@
 
 ### B3. 继续针对编码器做“常见参数族”专门化
 
-状态：`pending`
+状态：`completed`
 
 目的：
 - 既然 `bench_basefold_pcs_commit` 里 encode 仍明显大于 top Merkle，就继续只做编码器里高信号的专门化。
@@ -267,6 +267,11 @@
   - 常见 `k0` / `c` 组合下减少 NTL 临时对象；
   - 避免无收益的数据搬运。
 
+本轮已完成：
+- 在 `FoldableCode.cpp` 的 `k0==1` level-0 路径上增加 `G0 = [1, zeta, 1, ...]` 探测。
+- 对 `c==1`、`c==2` 和一般 `c` 分别走更轻量的赋值/单次乘法路径，避免每列都做通用 `m * G0[0][j]`。
+- 在 `tests/test_foldable_codes.cpp` 增加 `[1, zeta, 1, ...]` 行模式的 checked / unchecked 定向回归。
+
 不做：
 - 不引入大规模模板膨胀。
 - 不做平台相关 SIMD 手写。
@@ -274,6 +279,12 @@
 验收：
 - `bench_basefold_pcs_commit` 的 encode-only mean 下降。
 - `tests/test_foldable_codes.cpp` 通过。
+
+代表性结果：
+- `OMP_NUM_THREADS=1`, `GR(4,2)`, `d=12`, `warmup=1`, `reps=5`
+- `c=2, k0=1`: encode-only `29.507 ms -> 28.909 ms`，commit `32.713 ms -> 32.111 ms`
+- `c=4, k0=1`: encode-only `57.094 ms -> 56.857 ms`，commit `63.488 ms -> 63.406 ms`
+- 结论：这类 level-0 常见参数专门化有小幅稳定收益，但整体 commit 仍主要由更深层 folding 编码主导。
 
 ## 执行顺序
 
@@ -304,4 +315,4 @@ ctest --test-dir build-release --output-on-failure
 | A3 | multiproof 查找表 | A | completed | `BaseFoldPCSVerify.cpp`, `BaseFoldPCSExtension.cpp` | verifier mean |
 | B1 | BaseFold sumcheck init cache | B | pending | `Sumcheck.cpp`, `BaseFoldPCSProve.cpp` | repeated-prove 微基准 |
 | B2 | scratch buffer 复用 | B | pending | `BaseFoldPCSCommon.cpp`, `BaseFoldPCSExtension.cpp` | prove-phase 小幅下降 |
-| B3 | 编码器常见参数专门化 | B | pending | `FoldableCode.cpp` | encode-only mean |
+| B3 | 编码器常见参数专门化 | B | completed | `FoldableCode.cpp` | encode-only mean |

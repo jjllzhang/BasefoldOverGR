@@ -591,6 +591,96 @@ void TestFoldableEncode_Randomized_GR42() {
   }
 }
 
+void TestFoldableEncode_K0Eq1DefaultG0Row() {
+  testutil::PrintInfo(
+      "Targeted k0=1 fast-path cases: G0 row [1, zeta, 1, ...] matches dense generator");
+
+  const struct ContextCase {
+    const char *label;
+    ZZ scalar_modulus;
+    ZZ base_prime;
+  } contexts[] = {
+      {"GF(2^2)", to_ZZ(2), to_ZZ(2)},
+      {"GR(4,2)", to_ZZ(4), to_ZZ(2)},
+  };
+
+  for (const ContextCase &ctx : contexts) {
+    testutil::PrintInfo(ctx.label);
+    ZZ_pPush mod_push(ctx.scalar_modulus);
+
+    ZZ_pX F;
+    SetCoeff(F, 2, 1);
+    SetCoeff(F, 1, 1);
+    SetCoeff(F, 0, 1);
+    ZZ_pEPush e_push(F);
+
+    ZZ_pX xpoly;
+    SetCoeff(xpoly, 1, 1);
+    ZZ_pE zeta;
+    conv(zeta, xpoly);
+
+    const vector<long> c_values = {1, 2, 4};
+    for (long c : c_values) {
+      const long d = 3;
+      const long kd = 1L << d;
+
+      basefold::FoldableCodeParams params;
+      params.c = c;
+      params.k0 = 1;
+      params.d = d;
+      params.p = ctx.base_prime;
+      params.zeta = zeta;
+      params.G0.SetDims(1, c);
+      params.G0[0][0] = testutil::ConstZZpE(1);
+      if (c >= 2) {
+        params.G0[0][1] = zeta;
+      }
+      for (long j = 2; j < c; ++j) {
+        params.G0[0][j] = testutil::ConstZZpE(1);
+      }
+
+      params.diag_T.resize(static_cast<size_t>(d));
+      for (long level = 0; level < d; ++level) {
+        const long ni = c * (1L << level);
+        params.diag_T[static_cast<size_t>(level)].SetLength(ni);
+        for (long i = 0; i < ni; ++i) {
+          params.diag_T[static_cast<size_t>(level)][i] =
+              testutil::ConstZZpE(1);
+        }
+      }
+
+      const mat_ZZ_pE Gd =
+          BuildFoldableGeneratorMatrix(params.G0, params.diag_T, zeta);
+
+      vec_ZZ_pE msg;
+      msg.SetLength(kd);
+      for (long i = 0; i < kd; ++i) {
+        msg[i] = ctx.scalar_modulus == to_ZZ(2)
+                     ? LookupGF4ElementByCode(static_cast<int>(i % 4), zeta)
+                     : ElemFromCoeffs(
+                           {static_cast<long>(i % 4), static_cast<long>((i + 1) % 4)});
+      }
+
+      vec_ZZ_pE expected;
+      mul(expected, msg, Gd);
+
+      vec_ZZ_pE got_checked;
+      basefold::EncodeFoldable(got_checked, msg, params);
+      CHECK_EQ(got_checked.length(), expected.length());
+      for (long i = 0; i < expected.length(); ++i) {
+        CHECK_EQ(got_checked[i], expected[i]);
+      }
+
+      vec_ZZ_pE got_unchecked;
+      basefold::EncodeFoldableUnchecked(got_unchecked, msg, params);
+      CHECK_EQ(got_unchecked.length(), expected.length());
+      for (long i = 0; i < expected.length(); ++i) {
+        CHECK_EQ(got_unchecked[i], expected[i]);
+      }
+    }
+  }
+}
+
 } // namespace
 
 int main() {
@@ -599,6 +689,7 @@ int main() {
     RUN_TEST(TestFoldableEncode_OverGaloisRing);
     RUN_TEST(TestFoldableEncode_Randomized);
     RUN_TEST(TestFoldableEncode_Randomized_GR42);
+    RUN_TEST(TestFoldableEncode_K0Eq1DefaultG0Row);
   } catch (const exception &e) {
     cerr << "Unhandled std::exception: " << e.what() << "\n";
     return 2;

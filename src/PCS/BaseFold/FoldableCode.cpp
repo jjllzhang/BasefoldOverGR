@@ -201,6 +201,23 @@ bool IsSystematicRepeatedIdentity(const FoldableCodeParams &params) {
   return true;
 }
 
+bool IsK0Eq1DefaultG0Row(const FoldableCodeParams &params) {
+  if (params.k0 != 1 || params.c <= 0) return false;
+  if (params.G0.NumRows() != 1 || params.G0.NumCols() != params.c) {
+    return false;
+  }
+
+  ZZ_pE one;
+  set(one);
+
+  if (params.G0[0][0] != one) return false;
+  if (params.c >= 2 && params.G0[0][1] != params.zeta) return false;
+  for (long j = 2; j < params.c; ++j) {
+    if (params.G0[0][j] != one) return false;
+  }
+  return true;
+}
+
 struct EncoderFastPathCache {
   bool valid = false;
   const FoldableCodeParams *params = nullptr;
@@ -212,6 +229,7 @@ struct EncoderFastPathCache {
   long g0_rows = 0;
   long g0_cols = 0;
   std::vector<unsigned char> diag_t_all_ones;
+  bool k0_eq_1_default_g0_row = false;
   bool systematic_repeated_identity_g0 = false;
 };
 
@@ -246,6 +264,7 @@ const EncoderFastPathCache &GetEncoderFastPathCache(
     cache.diag_t_all_ones[static_cast<std::size_t>(level)] =
         IsAllOnes(params.diag_T[static_cast<std::size_t>(level)]) ? 1 : 0;
   }
+  cache.k0_eq_1_default_g0_row = IsK0Eq1DefaultG0Row(params);
   cache.systematic_repeated_identity_g0 = IsSystematicRepeatedIdentity(params);
   return cache;
 }
@@ -272,13 +291,39 @@ void EncodeFoldable_k0_1_Iterative(vec_ZZ_pE &out, const vec_ZZ_pE &msg,
   const EncoderFastPathCache &fast_path = GetEncoderFastPathCache(params);
 
   // Level 0: encode each scalar message symbol using the single-row G0.
-  ForEachIndexMaybeParallel(0, kd, parallel_threshold, [&](long block) {
-    const ZZ_pE &m = msg[block];
-    const long base = block * c;
-    for (long j = 0; j < c; ++j) {
-      out[base + j] = m * params.G0[0][j];
+  if (fast_path.k0_eq_1_default_g0_row) {
+    if (c == 1) {
+      ForEachIndexMaybeParallel(0, kd, parallel_threshold, [&](long block) {
+        out[block] = msg[block];
+      });
+    } else if (c == 2) {
+      ForEachIndexMaybeParallel(0, kd, parallel_threshold, [&](long block) {
+        const ZZ_pE &m = msg[block];
+        const long base = block * 2;
+        out[base] = m;
+        out[base + 1] = zeta * m;
+      });
+    } else {
+      ForEachIndexMaybeParallel(0, kd, parallel_threshold, [&](long block) {
+        const ZZ_pE &m = msg[block];
+        const ZZ_pE zeta_times_m = zeta * m;
+        const long base = block * c;
+        out[base] = m;
+        out[base + 1] = zeta_times_m;
+        for (long j = 2; j < c; ++j) {
+          out[base + j] = m;
+        }
+      });
     }
-  });
+  } else {
+    ForEachIndexMaybeParallel(0, kd, parallel_threshold, [&](long block) {
+      const ZZ_pE &m = msg[block];
+      const long base = block * c;
+      for (long j = 0; j < c; ++j) {
+        out[base + j] = m * params.G0[0][j];
+      }
+    });
+  }
 
   long block_len = c;  // n_0
   long blocks = kd;    // number of blocks at current level
