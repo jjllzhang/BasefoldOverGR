@@ -33,11 +33,20 @@ struct ExtensionMerkleMultiproof {
 // then build evaluation proofs without re-running the top encode/commit stage.
 // `base_sumcheck_precomputation` is prover-local cache data and never enters the
 // proof or verifier API.
+struct ExtensionCommitRoundLevelPrecomputation {
+  NTL::vec_ZZ_pE inv_denoms;
+};
+
+struct ExtensionCommitRoundPrecomputation {
+  std::vector<ExtensionCommitRoundLevelPrecomputation> levels;
+};
+
 struct BaseFoldPCSCommitArtifacts {
   Oracle pi_d;
   MerkleTree merkle_d;
   MerkleRoot root_d;
   SumcheckMonomialPrecomputation base_sumcheck_precomputation;
+  ExtensionCommitRoundPrecomputation extension_commit_precomputation;
 };
 
 // Additional proof payload used by the extension-challenge path.

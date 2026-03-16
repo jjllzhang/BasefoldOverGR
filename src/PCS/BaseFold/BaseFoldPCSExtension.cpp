@@ -821,11 +821,30 @@ bool CheckExtensionSumcheckRelations(
   return true;
 }
 
+const ExtensionCommitRoundLevelPrecomputation *
+LookupExtensionCommitRoundLevelPrecomputation(
+    const ExtensionCommitRoundPrecomputation *precomputation, long level_i,
+    long n_i) {
+  if (precomputation == nullptr || level_i < 0 ||
+      level_i >= static_cast<long>(precomputation->levels.size())) {
+    return nullptr;
+  }
+  const ExtensionCommitRoundLevelPrecomputation &level_cache =
+      precomputation->levels[static_cast<std::size_t>(level_i)];
+  const long inv_len = level_cache.inv_denoms.length();
+  if (inv_len == 1 || inv_len == n_i) {
+    return &level_cache;
+  }
+  return nullptr;
+}
+
 void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
                                           const std::vector<ZZ_pEX> &pi_ip1,
                                           const ZZ_pEX &alpha_i, long level_i,
                                           const FoldableCodeParams &params,
-                                          const ZZ_pEX &extension_modulus) {
+                                          const ZZ_pEX &extension_modulus,
+                                          const ExtensionCommitRoundPrecomputation
+                                              *precomputation = nullptr) {
   Profile *prof = ActiveProfile();
   ScopedTimer timer(prof ? &prof->ext_prover_commit_round_ns : nullptr,
                     prof ? &prof->ext_prover_commit_round_calls : nullptr);
@@ -840,19 +859,77 @@ void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
     LogicError("ProverCommitRoundExtensionNoValidate: diag_T length mismatch");
   }
   pi_i.resize(static_cast<std::size_t>(n_i));
+  if (n_i == 0) {
+    return;
+  }
 
   const FieldElement one = BaseRingOne();
   const FieldElement zeta_minus_one = params.zeta - one;
   if (zeta_minus_one == 0) {
     LogicError("ProverCommitRoundExtensionNoValidate: zeta must not be 1");
   }
+  constexpr long kParallelThreshold = 4096;
+
+  const ExtensionCommitRoundLevelPrecomputation *level_cache =
+      LookupExtensionCommitRoundLevelPrecomputation(precomputation, level_i, n_i);
+  if (level_cache != nullptr) {
+    const long inv_len = level_cache->inv_denoms.length();
+    if (inv_len == 1) {
+      const FieldElement &x1 = diag[0];
+      const FieldElement &inv_denom = level_cache->inv_denoms[0];
+      basefold_pcs_internal::ForEachIndexMaybeParallel(
+          0, n_i, kParallelThreshold, [&](long j) {
+            pi_i[static_cast<std::size_t>(j)] = EvalLineAtExtensionWithInvDenom(
+                alpha_i, x1, pi_ip1[static_cast<std::size_t>(j)],
+                pi_ip1[static_cast<std::size_t>(j + n_i)], inv_denom,
+                extension_modulus);
+          });
+      return;
+    }
+    if (inv_len == n_i) {
+      basefold_pcs_internal::ForEachIndexMaybeParallel(
+          0, n_i, kParallelThreshold, [&](long j) {
+            const FieldElement &x1 = diag[static_cast<std::size_t>(j)];
+            pi_i[static_cast<std::size_t>(j)] = EvalLineAtExtensionWithInvDenom(
+                alpha_i, x1, pi_ip1[static_cast<std::size_t>(j)],
+                pi_ip1[static_cast<std::size_t>(j + n_i)],
+                level_cache->inv_denoms[static_cast<std::size_t>(j)],
+                extension_modulus);
+          });
+      return;
+    }
+  }
+
+  const FieldElement first_t = diag[0];
+  bool all_equal = true;
+  for (long j = 1; j < n_i; ++j) {
+    if (diag[static_cast<std::size_t>(j)] != first_t) {
+      all_equal = false;
+      break;
+    }
+  }
+  if (all_equal) {
+    FieldElement inv_denom;
+    if (!basefold_pcs_internal::TryInvertBaseUnit(inv_denom,
+                                                  zeta_minus_one * first_t)) {
+      LogicError(
+          "ProverCommitRoundExtensionNoValidate: denominator is not invertible");
+    }
+    basefold_pcs_internal::ForEachIndexMaybeParallel(
+        0, n_i, kParallelThreshold, [&](long j) {
+          pi_i[static_cast<std::size_t>(j)] = EvalLineAtExtensionWithInvDenom(
+              alpha_i, first_t, pi_ip1[static_cast<std::size_t>(j)],
+              pi_ip1[static_cast<std::size_t>(j + n_i)], inv_denom,
+              extension_modulus);
+        });
+    return;
+  }
 
   std::vector<FieldElement> denoms(static_cast<std::size_t>(n_i));
-  constexpr long kParallelThreshold = 4096;
   basefold_pcs_internal::ForEachIndexMaybeParallel(
       0, n_i, kParallelThreshold, [&](long j) {
-        const FieldElement &t = diag[static_cast<std::size_t>(j)];
-        denoms[static_cast<std::size_t>(j)] = zeta_minus_one * t;
+        denoms[static_cast<std::size_t>(j)] =
+            zeta_minus_one * diag[static_cast<std::size_t>(j)];
       });
 
   std::vector<FieldElement> inv_denoms;
@@ -1129,6 +1206,10 @@ ProveEvalWithExtensionChallengesFromCommittedTopOracleUnchecked(
 
   proof.extension.h_by_level.resize(static_cast<std::size_t>(params.d));
   std::vector<ZZ_pEX> r_by_level(static_cast<std::size_t>(params.d));
+  const ExtensionCommitRoundPrecomputation *commit_round_precomputation =
+      commit_artifacts.extension_commit_precomputation.levels.empty()
+          ? nullptr
+          : &commit_artifacts.extension_commit_precomputation;
 
   std::vector<std::vector<ZZ_pEX>> ext_oracles(static_cast<std::size_t>(params.d + 1));
   ext_oracles[static_cast<std::size_t>(params.d)] =
@@ -1151,7 +1232,7 @@ ProveEvalWithExtensionChallengesFromCommittedTopOracleUnchecked(
     ProverCommitRoundExtensionNoValidate(
         ext_oracles[static_cast<std::size_t>(i)],
         ext_oracles[static_cast<std::size_t>(i + 1)], r_i_ext, i, params,
-        extension_modulus);
+        extension_modulus, commit_round_precomputation);
     ext_merkle_trees[static_cast<std::size_t>(i)] = ExtensionMerkleTree::Build(
         ext_oracles[static_cast<std::size_t>(i)], extension_modulus);
     proof.extension.roots_by_level[static_cast<std::size_t>(i)] =

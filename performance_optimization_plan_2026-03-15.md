@@ -309,6 +309,141 @@ extension-challenge 后续方向：
 - `c=4, k0=1`: encode-only `57.094 ms -> 56.857 ms`，commit `63.488 ms -> 63.406 ms`
 - 结论：这类 level-0 常见参数专门化有小幅稳定收益，但整体 commit 仍主要由更深层 folding 编码主导。
 
+## Extension-Challenge 专项计划
+
+状态：`pending`
+
+目标：
+- 单独针对 `BaseFoldPCSChallengeConfig{use_extension_challenges=true}` 模式做一条可跟踪的优化线。
+- 只做 prover-local 或 benchmark-hot-path 优化，不改变 proof 语义、transcript 顺序或 verifier 约束。
+
+当前基线：
+- 基准：`OMP_NUM_THREADS=1 BASEFOLD_VERIFY_QUERY_MAX_THREADS=1 ./build-release/bench_basefold_pcs_eval --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 12 --queries 4 --profile --warmup 1 --reps 3 --use-extension-challenges`
+- 当前 `prove-phase mean = 65.287 ms`
+- 主要桶：
+  - `ExtensionCommitRound = 82.923 ms / 3 reps`
+  - `ExtensionSumcheck total = 68.239 ms / 3 reps`
+    - `init = 14.952 ms`
+    - `CurrentPolynomial = 36.578 ms`
+    - `ReceiveChallenge = 16.709 ms`
+  - `ExtensionMerkleTree::Build = 18.775 ms / 3 reps`
+  - `Other = 25.093 ms / 3 reps`
+- 当前 `verifier mean = 0.983 ms`，不是主战场。
+
+### EC1. Extension commit round 优化
+
+状态：`completed`
+
+目的：
+- 先打当前最大的单桶 `ExtensionCommitRound`。
+
+主要范围：
+- `src/PCS/BaseFold/BaseFoldPCSExtension.cpp`
+
+拟做内容：
+- 复用 `denoms` / `inv_denoms` scratch buffer。
+- 补上和 base path 对齐的 `diag_T` all-equal fast path。
+- 评估是否把 `inv((zeta-1) * t_j)` 作为 level-local 参数预处理缓存下来；它只依赖 `params.zeta` 和 `diag_T[level]`，不依赖 witness 或 challenge。
+
+不做：
+- 不改 extension proof 格式。
+- 不把 challenge-dependent 数据放入 commit artifacts。
+
+验收：
+- `ExtensionCommitRound` 总时间下降。
+- `bench_basefold_pcs_prove --use-extension-challenges --profile` 的 prove-phase 有稳定下降。
+
+结果：
+- 已实现按 level 预计算 `inv((zeta-1) * t_j)` 并复用到 extension folding commit round。
+- 已补上和 base path 对齐的 `diag_T` all-equal fast path。
+- 当前 release 对照（`GR(4,2), c=2, k0=1, d=12, queries=4, warmup=1, reps=3, ext_deg=2`）：
+  - `bench_basefold_pcs_prove --use-extension-challenges`：
+    `prove-phase mean 54.687 ms -> 43.802 ms`
+    `ExtensionCommitRound 82.695 ms / 3 reps -> 52.114 ms / 3 reps`
+  - `bench_basefold_pcs_eval --use-extension-challenges`：
+    `prove-phase mean 65.287 ms -> 54.035 ms`
+    `ExtensionCommitRound 82.923 ms / 3 reps -> 52.018 ms / 3 reps`
+
+### EC2. 复用 base boolean-eval table 到 extension sumcheck init
+
+状态：`pending`
+
+目的：
+- 避免 extension 路径重复跑 `BooleanEvalTableFromMonomialCoeffsExtension(...)`。
+
+主要范围：
+- `src/PCS/BaseFold/BaseFoldPCSExtension.cpp`
+- `include/PCS/BaseFold/BaseFoldPCS.hpp`
+
+拟做内容：
+- 复用 B1 已经缓存到 `BaseFoldPCSCommitArtifacts` 的 base boolean-eval table。
+- prove 时把该表 lift 到 `E(U)`，替代“先 lift monomial coeffs，再做 extension zeta transform”的现状。
+
+验收：
+- `ExtensionSumcheck init` 明显下降。
+- 相关 BaseFold tests 全绿。
+
+### EC3. extension prefix-equality 改为 base-ring 原生表示
+
+状态：`pending`
+
+目的：
+- 降低 `ExtensionSumcheck::CurrentPolynomial` 的扩域运算密度。
+
+主要范围：
+- `src/PCS/BaseFold/BaseFoldPCSExtension.cpp`
+
+拟做内容：
+- 把 `z` 和 `prefix_eq_by_vars_` 保持在 base ring，而不是整张表都存 `ZZ_pEX`。
+- 保留真正需要在扩域里的 `suffix_eq_prod_` / `f_eval_table_`。
+- 去掉 `CurrentPolynomial()` 中反复的 `ExtractBaseConstantCoefficient(...)` 风格绕行。
+
+验收：
+- `ExtensionSumcheck current` 下降。
+- 不改变 verifier 结果和 proof payload。
+
+### EC4. unchecked 热路径移出 prover-local 自检
+
+状态：`pending`
+
+目的：
+- 去掉 extension unchecked 路径里不属于协议消息本身的本地重算。
+
+主要范围：
+- `src/PCS/BaseFold/BaseFoldPCSExtension.cpp`
+
+拟做内容：
+- 把 `expected_pi0` / `EncodeC0Extension(...)` 这类一致性自检留在 checked 路径。
+- unchecked 路径只保留真正生成 proof 需要的计算。
+
+验收：
+- unchecked prove/eval 的结果不变。
+- `Other` 或 headline `prove-phase mean` 有可见下降。
+
+### EC5. lifted top oracle 与 suffix 工件缓存
+
+状态：`pending`
+
+目的：
+- 面向“同一 commitment 多次 extension opening / prove”的工作流，减少重复 lifting 和 suffix 收尾开销。
+
+主要范围：
+- `src/PCS/BaseFold/BaseFoldPCSExtension.cpp`
+- `include/PCS/BaseFold/BaseFoldPCS.hpp`
+
+拟做内容：
+- 研究缓存 `LiftOracleToExtension(commit_artifacts.pi_d)`。
+- 视测量结果决定是否继续缓存 `Msg0CoeffsAtSuffixChallenges(...)` 的中间工件。
+
+验收：
+- repeated-prove 微基准下降。
+- 不把 point-dependent结果错误缓存到 commit artifacts。
+
+不建议现在优先做：
+- extension verifier 优化；当前 verifier 还不是问题。
+- extension Merkle 小修小补；`ExtensionMerkleTree::Build` 不是第一大头。
+- transcript / serializer 微优化。
+
 ## 执行顺序
 
 1. `A1` Frobenius / RingSwitch unchecked 热路径
@@ -318,6 +453,7 @@ extension-challenge 后续方向：
 5. 若 outer prover 仍是主要瓶颈，做 `B1`
 6. 若 commit 仍明显重于 Merkle，做 `B3`
 7. `B2` 作为补充整理项穿插进行
+8. 若开始专门优化 extension-challenge，按 `EC1 -> EC2 -> EC3 -> EC4 -> EC5` 顺序推进
 
 ## 每轮变更后的固定检查
 
@@ -339,3 +475,8 @@ ctest --test-dir build-release --output-on-failure
 | B1 | BaseFold sumcheck init cache | B | completed | `Sumcheck.cpp`, `BaseFoldPCSProve.cpp` | repeated-prove 微基准 |
 | B2 | scratch buffer 复用 | B | pending | `BaseFoldPCSCommon.cpp`, `BaseFoldPCSExtension.cpp` | prove-phase 小幅下降 |
 | B3 | 编码器常见参数专门化 | B | completed | `FoldableCode.cpp` | encode-only mean |
+| EC1 | Extension commit round 优化 | Ext | completed | `BaseFoldPCSExtension.cpp`, `BaseFoldPCSCommit.cpp`, `BaseFoldPCS.hpp` | `ExtensionCommitRound` |
+| EC2 | 复用 base eval table 到 extension sumcheck init | Ext | pending | `BaseFoldPCSExtension.cpp`, `BaseFoldPCS.hpp` | `ExtensionSumcheck init` |
+| EC3 | extension prefix-equality base-ring 化 | Ext | pending | `BaseFoldPCSExtension.cpp` | `ExtensionSumcheck current` |
+| EC4 | extension unchecked 自检移出热路径 | Ext | pending | `BaseFoldPCSExtension.cpp` | ext prove-phase mean |
+| EC5 | lifted top oracle / suffix 工件缓存 | Ext | pending | `BaseFoldPCSExtension.cpp`, `BaseFoldPCS.hpp` | repeated-prove 微基准 |
