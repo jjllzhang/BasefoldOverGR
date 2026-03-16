@@ -1266,9 +1266,15 @@ ProveEvalWithExtensionChallengesFromCommittedTopOracleUnchecked(
           ? nullptr
           : &commit_artifacts.extension_commit_precomputation;
 
-  std::vector<std::vector<ZZ_pEX>> ext_oracles(static_cast<std::size_t>(params.d + 1));
-  ext_oracles[static_cast<std::size_t>(params.d)] =
-      LiftOracleToExtension(commit_artifacts.pi_d);
+  std::vector<std::vector<ZZ_pEX>> ext_oracles(
+      static_cast<std::size_t>(params.d));
+  const std::vector<ZZ_pEX> *top_ext_oracle =
+      &commit_artifacts.extension_lifted_pi_d;
+  std::vector<ZZ_pEX> top_ext_oracle_fallback;
+  if (top_ext_oracle->empty()) {
+    top_ext_oracle_fallback = LiftOracleToExtension(commit_artifacts.pi_d);
+    top_ext_oracle = &top_ext_oracle_fallback;
+  }
 
   std::vector<ExtensionMerkleTree> ext_merkle_trees(
       static_cast<std::size_t>(params.d));
@@ -1286,10 +1292,12 @@ ProveEvalWithExtensionChallengesFromCommittedTopOracleUnchecked(
                                  extension_modulus);
     r_by_level[static_cast<std::size_t>(i)] = r_i_ext;
 
+    const std::vector<ZZ_pEX> &upper_oracle =
+        (i == params.d - 1) ? *top_ext_oracle
+                            : ext_oracles[static_cast<std::size_t>(i + 1)];
     ProverCommitRoundExtensionNoValidate(
-        ext_oracles[static_cast<std::size_t>(i)],
-        ext_oracles[static_cast<std::size_t>(i + 1)], r_i_ext, i, params,
-        extension_modulus, commit_round_precomputation);
+        ext_oracles[static_cast<std::size_t>(i)], upper_oracle, r_i_ext, i,
+        params, extension_modulus, commit_round_precomputation);
     ext_merkle_trees[static_cast<std::size_t>(i)] = ExtensionMerkleTree::Build(
         ext_oracles[static_cast<std::size_t>(i)], extension_modulus);
     proof.extension.roots_by_level[static_cast<std::size_t>(i)] =

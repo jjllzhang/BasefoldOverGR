@@ -1,6 +1,7 @@
 #include "BaseFoldPCSInternal.hpp"
 
 using NTL::LogicError;
+using NTL::ZZ_pEX;
 using NTL::vec_ZZ_pE;
 
 namespace basefold {
@@ -80,6 +81,15 @@ ExtensionCommitRoundPrecomputation BuildExtensionCommitRoundPrecomputation(
   return precomputation;
 }
 
+std::vector<ZZ_pEX> LiftOracleToExtensionCache(const Oracle &oracle) {
+  std::vector<ZZ_pEX> out(static_cast<std::size_t>(oracle.length()));
+  for (long i = 0; i < oracle.length(); ++i) {
+    NTL::SetCoeff(out[static_cast<std::size_t>(i)], 0,
+                  oracle[static_cast<std::size_t>(i)]);
+  }
+  return out;
+}
+
 }  // namespace
 
 BaseFoldPCSCommitArtifacts BaseFoldPCSBuildCommitArtifacts(
@@ -101,6 +111,8 @@ BaseFoldPCSCommitArtifacts BaseFoldPCSBuildCommitArtifactsUnchecked(
       BuildSumcheckMonomialPrecomputation(f_coeffs);
   commit_artifacts.extension_commit_precomputation =
       BuildExtensionCommitRoundPrecomputation(params);
+  commit_artifacts.extension_lifted_pi_d =
+      LiftOracleToExtensionCache(commit_artifacts.pi_d);
   return commit_artifacts;
 }
 

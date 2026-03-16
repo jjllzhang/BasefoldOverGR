@@ -458,7 +458,7 @@ extension-challenge 后续方向：
 
 ### EC5. lifted top oracle 与 suffix 工件缓存
 
-状态：`pending`
+状态：`completed`
 
 目的：
 - 面向“同一 commitment 多次 extension opening / prove”的工作流，减少重复 lifting 和 suffix 收尾开销。
@@ -467,13 +467,19 @@ extension-challenge 后续方向：
 - `src/PCS/BaseFold/BaseFoldPCSExtension.cpp`
 - `include/PCS/BaseFold/BaseFoldPCS.hpp`
 
-拟做内容：
-- 研究缓存 `LiftOracleToExtension(commit_artifacts.pi_d)`。
-- 视测量结果决定是否继续缓存 `Msg0CoeffsAtSuffixChallenges(...)` 的中间工件。
+本轮完成：
+- 在 `BaseFoldPCSCommitArtifacts` 里缓存 lifted top oracle，供 extension prove repeated-prove 热路径直接复用。
+- unchecked extension prove 在 cache 缺失时仍保留本地 fallback，不改 proof / verifier 语义。
+- 明确不缓存 `Msg0CoeffsAtSuffixChallenges(...)`；它依赖本次 transcript 采样出的 `r_by_level`，不能安全放进通用 commit artifacts。
 
 验收：
-- repeated-prove 微基准下降。
+- repeated-prove 微基准下降。主验收面使用 `bench_basefold_pcs_prove`，因为它会在 reps 之间复用同一个 `commit_artifacts`；`bench_basefold_pcs_eval` 每轮都会重建 artifacts，不适合作为 EC5 主指标。
 - 不把 point-dependent结果错误缓存到 commit artifacts。
+
+当前 release 对照（基于 `57376dd` 的同组参数：`GR(4,2), c=2, k0=1, d=12, queries=4, warmup=1, reps=10, ext_deg=2`）：
+- `bench_basefold_pcs_prove --use-extension-challenges`：
+  `prove-phase mean 41.822 ms -> 37.359 ms`
+- 结论：这一步对 repeated extension prove 是有意义的，下降约 `10.7%`。收益主要来自把 `LiftOracleToExtension(commit_artifacts.pi_d)` 从计时内移到 artifact 预处理，并避免在 prove 热路径里重复构造/复制 top extension oracle。
 
 不建议现在优先做：
 - extension verifier 优化；当前 verifier 还不是问题。
@@ -515,4 +521,4 @@ ctest --test-dir build-release --output-on-failure
 | EC2 | 复用 base eval table 到 extension sumcheck init | Ext | completed | `BaseFoldPCSExtension.cpp` | `ExtensionSumcheck init` |
 | EC3 | extension prefix-equality base-ring 化 | Ext | completed | `BaseFoldPCSExtension.cpp` | `ExtensionSumcheck current` |
 | EC4 | extension unchecked 自检移出热路径 | Ext | completed | `BaseFoldPCSExtension.cpp` | ext prove-phase mean |
-| EC5 | lifted top oracle / suffix 工件缓存 | Ext | pending | `BaseFoldPCSExtension.cpp`, `BaseFoldPCS.hpp` | repeated-prove 微基准 |
+| EC5 | lifted top oracle / suffix 工件缓存 | Ext | completed | `BaseFoldPCSExtension.cpp`, `BaseFoldPCS.hpp` | repeated-prove 微基准 |

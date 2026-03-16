@@ -47,6 +47,7 @@ struct BaseFoldPCSCommitArtifacts {
   MerkleRoot root_d;
   SumcheckMonomialPrecomputation base_sumcheck_precomputation;
   ExtensionCommitRoundPrecomputation extension_commit_precomputation;
+  std::vector<NTL::ZZ_pEX> extension_lifted_pi_d;
 };
 
 // Additional proof payload used by the extension-challenge path.
