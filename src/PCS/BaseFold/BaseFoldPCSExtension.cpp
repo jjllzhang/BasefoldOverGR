@@ -543,6 +543,15 @@ std::vector<ZZ_pEX> BooleanEvalTableFromMonomialCoeffsExtension(
   return eval;
 }
 
+std::vector<ZZ_pEX> LiftFieldVecToExtension(const FieldVec &values) {
+  std::vector<ZZ_pEX> out(static_cast<std::size_t>(values.length()));
+  for (long i = 0; i < values.length(); ++i) {
+    out[static_cast<std::size_t>(i)] =
+        LiftBaseToExtension(values[static_cast<std::size_t>(i)]);
+  }
+  return out;
+}
+
 std::vector<ZZ_pEX> Msg0CoeffsAtSuffixChallenges(
     const vec_ZZ_pE &f_coeffs, long kappa, const std::vector<ZZ_pEX> &r_by_level,
     const ZZ_pEX &extension_modulus) {
@@ -618,6 +627,43 @@ class ExtensionSumcheckProver {
       LogicError("ExtensionSumcheckProver: f_coeffs length must be 2^d");
     }
     d_ = basefold_pcs_internal::Log2ExactPowerOfTwoLong(n);
+    InitializePointAndPrefixProducts(z);
+
+    const std::vector<ZZ_pEX> lifted_coeffs = LiftFieldVecToExtension(f_coeffs);
+    f_eval_table_ = BooleanEvalTableFromMonomialCoeffsExtension(
+        lifted_coeffs, d_, extension_modulus_);
+    suffix_eq_prod_ = ExtensionOne();
+  }
+
+  ExtensionSumcheckProver(
+      const SumcheckMonomialPrecomputation &precomputation,
+      const std::vector<FieldElement> &z, const ZZ_pEX &extension_modulus)
+      : extension_modulus_(extension_modulus) {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->ext_sumcheck_init_ns : nullptr,
+                      prof ? &prof->ext_sumcheck_init_calls : nullptr);
+
+    if (!precomputation.valid) {
+      LogicError("ExtensionSumcheckProver: precomputation must be valid");
+    }
+
+    const long n = precomputation.f_eval_table.length();
+    if (!basefold_pcs_internal::IsPowerOfTwoLong(n)) {
+      LogicError(
+          "ExtensionSumcheckProver: precomputation f_eval_table length must be 2^d");
+    }
+    d_ = basefold_pcs_internal::Log2ExactPowerOfTwoLong(n);
+    if (precomputation.d != d_) {
+      LogicError("ExtensionSumcheckProver: precomputation dimension mismatch");
+    }
+
+    InitializePointAndPrefixProducts(z);
+    f_eval_table_ = LiftFieldVecToExtension(precomputation.f_eval_table);
+    suffix_eq_prod_ = ExtensionOne();
+  }
+
+ private:
+  void InitializePointAndPrefixProducts(const std::vector<FieldElement> &z) {
     if (static_cast<long>(z.size()) != d_) {
       LogicError("ExtensionSumcheckProver: z dimension mismatch");
     }
@@ -628,14 +674,6 @@ class ExtensionSumcheckProver {
       z_[static_cast<std::size_t>(i)] =
           LiftBaseToExtension(z[static_cast<std::size_t>(i)]);
     }
-
-    std::vector<ZZ_pEX> lifted_coeffs(static_cast<std::size_t>(n));
-    for (long i = 0; i < n; ++i) {
-      lifted_coeffs[static_cast<std::size_t>(i)] =
-          LiftBaseToExtension(f_coeffs[static_cast<std::size_t>(i)]);
-    }
-    f_eval_table_ = BooleanEvalTableFromMonomialCoeffsExtension(
-        lifted_coeffs, d_, extension_modulus_);
 
     prefix_eq_by_vars_.resize(static_cast<std::size_t>(d_));
     if (d_ > 0) {
@@ -664,10 +702,9 @@ class ExtensionSumcheckProver {
         }
       }
     }
-
-    suffix_eq_prod_ = ExtensionOne();
   }
 
+ public:
   ExtensionQuadraticPoly CurrentPolynomial() const {
     Profile *prof = ActiveProfile();
     ScopedTimer timer(prof ? &prof->ext_sumcheck_current_poly_ns : nullptr,
@@ -836,6 +873,17 @@ LookupExtensionCommitRoundLevelPrecomputation(
     return &level_cache;
   }
   return nullptr;
+}
+
+ExtensionSumcheckProver BuildExtensionSumcheckProver(
+    const FieldVec &f_coeffs, const std::vector<FieldElement> &z,
+    const ZZ_pEX &extension_modulus,
+    const BaseFoldPCSCommitArtifacts &commit_artifacts) {
+  if (commit_artifacts.base_sumcheck_precomputation.valid) {
+    return ExtensionSumcheckProver(commit_artifacts.base_sumcheck_precomputation,
+                                   z, extension_modulus);
+  }
+  return ExtensionSumcheckProver(f_coeffs, z, extension_modulus);
 }
 
 void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
@@ -1218,7 +1266,9 @@ ProveEvalWithExtensionChallengesFromCommittedTopOracleUnchecked(
   std::vector<ExtensionMerkleTree> ext_merkle_trees(
       static_cast<std::size_t>(params.d));
 
-  ExtensionSumcheckProver sumcheck_ext(f_coeffs, z, extension_modulus);
+  ExtensionSumcheckProver sumcheck_ext =
+      BuildExtensionSumcheckProver(f_coeffs, z, extension_modulus,
+                                   commit_artifacts);
   const ExtensionQuadraticPoly h_d_ext = sumcheck_ext.CurrentPolynomial();
   proof.extension.h_by_level[static_cast<std::size_t>(params.d - 1)] = h_d_ext;
   AbsorbExtensionQuadraticPoly(transcript, h_d_ext, extension_modulus);

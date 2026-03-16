@@ -565,6 +565,14 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
   const basefold::BaseFoldPCSEvalProof proof_from_committed =
       basefold::BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle(
           f_coeffs, z, y, num_queries, params, commit_artifacts, cfg);
+  basefold::BaseFoldPCSCommitArtifacts
+      commit_artifacts_without_ext_sumcheck_cache = commit_artifacts;
+  commit_artifacts_without_ext_sumcheck_cache.base_sumcheck_precomputation = {};
+  const basefold::BaseFoldPCSEvalProof
+      proof_from_committed_without_ext_sumcheck_cache =
+          basefold::BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle(
+              f_coeffs, z, y, num_queries, params,
+              commit_artifacts_without_ext_sumcheck_cache, cfg);
   basefold::BaseFoldPCSCommitArtifacts commit_artifacts_without_ext_commit_cache =
       commit_artifacts;
   commit_artifacts_without_ext_commit_cache.extension_commit_precomputation = {};
@@ -587,6 +595,9 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
       commitment_root, z, y, num_queries, proof_from_committed, params, cfg));
   CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
       commitment_root, z, y, num_queries,
+      proof_from_committed_without_ext_sumcheck_cache, params, cfg));
+  CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      commitment_root, z, y, num_queries,
       proof_from_committed_without_ext_commit_cache, params, cfg));
   basefold::BaseFoldPCSEvalProof proof_without_metadata = proof;
   proof_without_metadata.extension.r_by_level.resize(
@@ -606,6 +617,11 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
   basefold::FixedProofEncodingOptions encoding_options;
   encoding_options.include_version_byte = true;
   encoding_options.challenge_ext_degree = NTL::deg(cfg.challenge_extension_modulus);
+  CHECK_EQ(basefold::SerializeBaseFoldPCSEvalProofFixedBytes(
+               proof_from_committed, encoding_options),
+           basefold::SerializeBaseFoldPCSEvalProofFixedBytes(
+               proof_from_committed_without_ext_sumcheck_cache,
+               encoding_options));
   CHECK_EQ(basefold::SerializeBaseFoldPCSEvalProofFixedBytes(
                proof_from_committed, encoding_options),
            basefold::SerializeBaseFoldPCSEvalProofFixedBytes(
