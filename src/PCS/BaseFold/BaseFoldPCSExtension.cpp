@@ -345,13 +345,6 @@ ZZ_pEX MulExtensionByBaseConstant(const ZZ_pEX &a, const FieldElement &scalar) {
   return out;
 }
 
-ZZ_pEX SubBaseConstantFromExtension(const ZZ_pEX &a, const FieldElement &c) {
-  ZZ_pEX out = a;
-  NTL::SetCoeff(out, 0, NTL::coeff(out, 0) - c);
-  out.normalize();
-  return out;
-}
-
 ZZ_pEX AddExtension(const ZZ_pEX &a, const ZZ_pEX &b,
                     const ZZ_pEX &extension_modulus) {
   ZZ_pEX out = a + b;
@@ -408,6 +401,33 @@ ZZ_pEX MulExtension(const ZZ_pEX &a, const ZZ_pEX &b,
   return out;
 }
 
+void MulReducedExtensionInto(ZZ_pEX &out, const ZZ_pEX &a, const ZZ_pEX &b,
+                             const NTL::ZZ_pEXModulus &mod_ctx) {
+  const long deg_a = NTL::deg(a);
+  const long deg_b = NTL::deg(b);
+  if (deg_a <= 0) {
+    out = MulExtensionByBaseConstant(b, NTL::coeff(a, 0));
+    return;
+  }
+  if (deg_b <= 0) {
+    out = MulExtensionByBaseConstant(a, NTL::coeff(b, 0));
+    return;
+  }
+  NTL::MulMod(out, a, b, mod_ctx);
+}
+
+ZZ_pEX EqFactorExtensionFromBaseReduced(const FieldElement &z_i,
+                                        const ZZ_pEX &x_i) {
+  const FieldElement one = BaseRingOne();
+  const FieldElement factor0 = one - z_i;
+  const FieldElement delta_factor = z_i - factor0;
+
+  ZZ_pEX out = MulExtensionByBaseConstant(x_i, delta_factor);
+  NTL::SetCoeff(out, 0, NTL::coeff(out, 0) + factor0);
+  out.normalize();
+  return out;
+}
+
 ZZ_pEX EqFactorExtension(const ZZ_pEX &z_i, const ZZ_pEX &x_i,
                          const ZZ_pEX &extension_modulus) {
   const ZZ_pEX one = ExtensionOne();
@@ -416,16 +436,6 @@ ZZ_pEX EqFactorExtension(const ZZ_pEX &z_i, const ZZ_pEX &x_i,
   const ZZ_pEX linear = SubExtension(SubExtension(one, z_i, extension_modulus),
                                      x_i, extension_modulus);
   return AddExtension(linear, two_zx, extension_modulus);
-}
-
-ZZ_pEX EqFactorExtensionFromBase(const FieldElement &z_i, const ZZ_pEX &x_i,
-                                 const ZZ_pEX &extension_modulus) {
-  const FieldElement one = BaseRingOne();
-  const FieldElement factor0 = one - z_i;
-  const FieldElement delta_factor = z_i - factor0;
-  return AddExtension(LiftBaseToExtension(factor0),
-                      MulExtensionByBaseConstant(x_i, delta_factor),
-                      extension_modulus);
 }
 
 ZZ_pEX EvalExtensionQuadraticPoly(const ExtensionQuadraticPoly &p,
@@ -488,15 +498,36 @@ ZZ_pEX SampleExtensionChallenge(const HashTranscript &transcript,
   return sampled;
 }
 
+void EvalLineAtReducedExtensionWithInvDenomInto(
+    ZZ_pEX &out, ZZ_pEX &delta_x, const ZZ_pEX &x, const FieldElement &x1,
+    const ZZ_pEX &y1, const ZZ_pEX &y2, const FieldElement &inv_denom,
+    const NTL::ZZ_pEXModulus &mod_ctx) {
+  out = y2;
+  out -= y1;
+  out.normalize();
+  NTL::mul(out, out, inv_denom);
+  out.normalize();
+
+  delta_x = x;
+  NTL::SetCoeff(delta_x, 0, NTL::coeff(delta_x, 0) - x1);
+  delta_x.normalize();
+
+  MulReducedExtensionInto(out, out, delta_x, mod_ctx);
+  out += y1;
+  out.normalize();
+}
+
 ZZ_pEX EvalLineAtExtensionWithInvDenom(const ZZ_pEX &x, const FieldElement &x1,
                                        const ZZ_pEX &y1, const ZZ_pEX &y2,
                                        const FieldElement &inv_denom,
                                        const ZZ_pEX &extension_modulus) {
-  const ZZ_pEX delta_y = SubExtension(y2, y1, extension_modulus);
-  const ZZ_pEX slope = MulExtensionByBaseConstant(delta_y, inv_denom);
-  const ZZ_pEX delta_x = SubBaseConstantFromExtension(x, x1);
-  const ZZ_pEX correction = MulExtension(slope, delta_x, extension_modulus);
-  return AddExtension(y1, correction, extension_modulus);
+  const NTL::ZZ_pEXModulus &mod_ctx = ExtensionModulusContextOrThrow(
+      extension_modulus, "EvalLineAtExtensionWithInvDenom");
+  ZZ_pEX out;
+  ZZ_pEX delta_x;
+  EvalLineAtReducedExtensionWithInvDenomInto(out, delta_x, x, x1, y1, y2,
+                                             inv_denom, mod_ctx);
+  return out;
 }
 
 ZZ_pEX EvalLineAtExtension(const ZZ_pEX &x, const FieldElement &x1,
@@ -731,35 +762,38 @@ class ExtensionSumcheckProver {
     const FieldElement factor0_base = one_base - z_k_base;
     const FieldElement delta_factor_base = z_k_base - factor0_base;
 
-    ExtensionQuadraticPoly out;
-    out.a0 = ExtensionZero();
-    out.a1 = ExtensionZero();
-    out.a2 = ExtensionZero();
+    ZZ_pEX sum_f0 = ExtensionZero();
+    ZZ_pEX sum_delta_f = ExtensionZero();
 
     for (long mask = 0; mask < half; ++mask) {
-      const ZZ_pEX common =
-          MulExtensionByBaseConstant(suffix_eq_prod_, prefix[mask]);
-
-      const ZZ_pEX eq0 = MulExtensionByBaseConstant(common, factor0_base);
-      const ZZ_pEX delta_eq =
-          MulExtensionByBaseConstant(common, delta_factor_base);
-
       const ZZ_pEX &f0 = f_eval_table_[static_cast<std::size_t>(mask)];
       const ZZ_pEX &f1 = f_eval_table_[static_cast<std::size_t>(mask + half)];
       const ZZ_pEX delta_f = SubExtension(f1, f0, extension_modulus_);
 
-      out.a0 = AddExtension(out.a0, MulExtension(f0, eq0, extension_modulus_),
-                            extension_modulus_);
-      const ZZ_pEX term1 = MulExtension(f0, delta_eq, extension_modulus_);
-      const ZZ_pEX term2 = MulExtension(delta_f, eq0, extension_modulus_);
-      out.a1 =
-          AddExtension(out.a1, AddExtension(term1, term2, extension_modulus_),
-                       extension_modulus_);
-      out.a2 = AddExtension(out.a2,
-                            MulExtension(delta_f, delta_eq, extension_modulus_),
-                            extension_modulus_);
+      sum_f0 = AddExtension(
+          sum_f0, MulExtensionByBaseConstant(f0, prefix[mask]),
+          extension_modulus_);
+      sum_delta_f = AddExtension(
+          sum_delta_f, MulExtensionByBaseConstant(delta_f, prefix[mask]),
+          extension_modulus_);
     }
 
+    // Factor the shared eq polynomial terms so the inner loop only does base
+    // scalar multiplies plus additions; the two extension multiplies happen
+    // once after the reduction.
+    const ZZ_pEX scaled_sum_f0 =
+        MulExtension(suffix_eq_prod_, sum_f0, extension_modulus_);
+    const ZZ_pEX scaled_sum_delta_f =
+        MulExtension(suffix_eq_prod_, sum_delta_f, extension_modulus_);
+
+    ExtensionQuadraticPoly out;
+    out.a0 = MulExtensionByBaseConstant(scaled_sum_f0, factor0_base);
+    out.a1 = AddExtension(
+        MulExtensionByBaseConstant(scaled_sum_f0, delta_factor_base),
+        MulExtensionByBaseConstant(scaled_sum_delta_f, factor0_base),
+        extension_modulus_);
+    out.a2 =
+        MulExtensionByBaseConstant(scaled_sum_delta_f, delta_factor_base);
     return out;
   }
 
@@ -780,18 +814,30 @@ class ExtensionSumcheckProver {
           "ExtensionSumcheckProver::ReceiveChallenge: internal length mismatch");
     }
 
-    const ZZ_pEX eq = EqFactorExtensionFromBase(
-        z_[static_cast<std::size_t>(k - 1)], r_kminus1, extension_modulus_);
-    suffix_eq_prod_ = MulExtension(suffix_eq_prod_, eq, extension_modulus_);
+    // All operands here stay reduced modulo the fixed extension polynomial, so
+    // we can hoist the modulus context once per round and fold in-place without
+    // routing every operation through the generic checked helpers.
+    const NTL::ZZ_pEXModulus &mod_ctx = ExtensionModulusContextOrThrow(
+        extension_modulus_, "ExtensionSumcheckProver::ReceiveChallenge");
+
+    const ZZ_pEX eq = EqFactorExtensionFromBaseReduced(
+        z_[static_cast<std::size_t>(k - 1)], r_kminus1);
+    ZZ_pEX next_suffix;
+    MulReducedExtensionInto(next_suffix, suffix_eq_prod_, eq, mod_ctx);
+    suffix_eq_prod_.swap(next_suffix);
 
     const long half = n / 2;
+    ZZ_pEX delta_f;
+    ZZ_pEX folded;
     for (long i = 0; i < half; ++i) {
       const ZZ_pEX &f0 = f_eval_table_[static_cast<std::size_t>(i)];
       const ZZ_pEX &f1 = f_eval_table_[static_cast<std::size_t>(i + half)];
-      const ZZ_pEX delta_f = SubExtension(f1, f0, extension_modulus_);
-      f_eval_table_[static_cast<std::size_t>(i)] =
-          AddExtension(f0, MulExtension(delta_f, r_kminus1, extension_modulus_),
-                       extension_modulus_);
+      delta_f = f1 - f0;
+      delta_f.normalize();
+      MulReducedExtensionInto(folded, delta_f, r_kminus1, mod_ctx);
+      folded += f0;
+      folded.normalize();
+      f_eval_table_[static_cast<std::size_t>(i)].swap(folded);
     }
     f_eval_table_.resize(static_cast<std::size_t>(half));
     --cur_k_;
@@ -924,6 +970,8 @@ void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
     LogicError("ProverCommitRoundExtensionNoValidate: zeta must not be 1");
   }
   constexpr long kParallelThreshold = 4096;
+  const NTL::ZZ_pEXModulus &mod_ctx = ExtensionModulusContextOrThrow(
+      extension_modulus, "ProverCommitRoundExtensionNoValidate");
 
   const ExtensionCommitRoundLevelPrecomputation *level_cache =
       LookupExtensionCommitRoundLevelPrecomputation(precomputation, level_i, n_i);
@@ -934,10 +982,11 @@ void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
       const FieldElement &inv_denom = level_cache->inv_denoms[0];
       basefold_pcs_internal::ForEachIndexMaybeParallel(
           0, n_i, kParallelThreshold, [&](long j) {
-            pi_i[static_cast<std::size_t>(j)] = EvalLineAtExtensionWithInvDenom(
-                alpha_i, x1, pi_ip1[static_cast<std::size_t>(j)],
-                pi_ip1[static_cast<std::size_t>(j + n_i)], inv_denom,
-                extension_modulus);
+            ZZ_pEX delta_x;
+            EvalLineAtReducedExtensionWithInvDenomInto(
+                pi_i[static_cast<std::size_t>(j)], delta_x, alpha_i, x1,
+                pi_ip1[static_cast<std::size_t>(j)],
+                pi_ip1[static_cast<std::size_t>(j + n_i)], inv_denom, mod_ctx);
           });
       return;
     }
@@ -945,11 +994,12 @@ void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
       basefold_pcs_internal::ForEachIndexMaybeParallel(
           0, n_i, kParallelThreshold, [&](long j) {
             const FieldElement &x1 = diag[static_cast<std::size_t>(j)];
-            pi_i[static_cast<std::size_t>(j)] = EvalLineAtExtensionWithInvDenom(
-                alpha_i, x1, pi_ip1[static_cast<std::size_t>(j)],
+            ZZ_pEX delta_x;
+            EvalLineAtReducedExtensionWithInvDenomInto(
+                pi_i[static_cast<std::size_t>(j)], delta_x, alpha_i, x1,
+                pi_ip1[static_cast<std::size_t>(j)],
                 pi_ip1[static_cast<std::size_t>(j + n_i)],
-                level_cache->inv_denoms[static_cast<std::size_t>(j)],
-                extension_modulus);
+                level_cache->inv_denoms[static_cast<std::size_t>(j)], mod_ctx);
           });
       return;
     }
@@ -972,10 +1022,11 @@ void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
     }
     basefold_pcs_internal::ForEachIndexMaybeParallel(
         0, n_i, kParallelThreshold, [&](long j) {
-          pi_i[static_cast<std::size_t>(j)] = EvalLineAtExtensionWithInvDenom(
-              alpha_i, first_t, pi_ip1[static_cast<std::size_t>(j)],
-              pi_ip1[static_cast<std::size_t>(j + n_i)], inv_denom,
-              extension_modulus);
+          ZZ_pEX delta_x;
+          EvalLineAtReducedExtensionWithInvDenomInto(
+              pi_i[static_cast<std::size_t>(j)], delta_x, alpha_i, first_t,
+              pi_ip1[static_cast<std::size_t>(j)],
+              pi_ip1[static_cast<std::size_t>(j + n_i)], inv_denom, mod_ctx);
         });
     return;
   }
@@ -1004,10 +1055,12 @@ void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
   basefold_pcs_internal::ForEachIndexMaybeParallel(
       0, n_i, kParallelThreshold, [&](long j) {
         const FieldElement &x1 = diag[static_cast<std::size_t>(j)];
-        pi_i[static_cast<std::size_t>(j)] = EvalLineAtExtensionWithInvDenom(
-            alpha_i, x1, pi_ip1[static_cast<std::size_t>(j)],
+        ZZ_pEX delta_x;
+        EvalLineAtReducedExtensionWithInvDenomInto(
+            pi_i[static_cast<std::size_t>(j)], delta_x, alpha_i, x1,
+            pi_ip1[static_cast<std::size_t>(j)],
             pi_ip1[static_cast<std::size_t>(j + n_i)],
-            inv_denoms[static_cast<std::size_t>(j)], extension_modulus);
+            inv_denoms[static_cast<std::size_t>(j)], mod_ctx);
       });
 }
 

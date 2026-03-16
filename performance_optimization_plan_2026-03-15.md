@@ -486,6 +486,135 @@ extension-challenge 后续方向：
 - extension Merkle 小修小补；`ExtensionMerkleTree::Build` 不是第一大头。
 - transcript / serializer 微优化。
 
+### extension-challenge 后续执行计划（EC6+）
+
+当前热点基线（`build-release`, `OMP_NUM_THREADS=1`, `GR(4,2), c=2, k0=1, d=12, queries=4, warmup=1, reps=3, ext_deg=2`）：
+- `bench_basefold_pcs_eval --use-extension-challenges`
+  - `prove-phase mean 51.759 ms`
+  - `ExtensionSumcheck total 57.932 ms / 3 reps`
+  - `CurrentPolynomial 37.179 ms / 36 calls`
+  - `ReceiveChallenge 17.352 ms / 36 calls`
+  - `ExtensionCommitRound 53.482 ms / 3 reps`
+- `bench_basefold_pcs_prove --use-extension-challenges`
+  - `prove-phase mean 37.774 ms`
+  - `ExtensionCommitRound 51.274 ms / 3 reps`
+  - `ExtensionSumcheck total 26.819 ms / 3 reps`
+  - `ExtensionMerkleTree::Build 17.282 ms / 3 reps`
+
+结论：
+- 如果目标是完整 extension `eval` prove-phase，下一优先项应先打 `ExtensionSumcheck`。
+- 如果目标是 repeated-prove，`ExtensionCommitRound` 的扩域算术内核也值得继续打。
+- `B2` 原始定义里的 scratch-buffer 复用已经不是 extension 主热点；当前快路径大多直接走 precomputed inverse，不再频繁落到 `denoms` / `inv_denoms` 临时分配。
+
+### EC6. `ExtensionSumcheck::CurrentPolynomial()` 因式重排
+
+状态：`completed`
+
+目的：
+- 降低 `CurrentPolynomial()` 内层循环里的通用扩域乘法数量。
+
+主要范围：
+- `src/PCS/BaseFold/BaseFoldPCSExtension.cpp`
+
+本轮完成：
+- 已把 `CurrentPolynomial()` 改成先累积
+  `S0 = Σ prefix * f0` 与 `S1 = Σ prefix * (f1-f0)`，
+  再在循环外组合成
+  `a0 = suffix * factor0 * S0`
+  `a1 = suffix * (delta * S0 + factor0 * S1)`
+  `a2 = suffix * delta * S1`
+- 内层循环现在只保留“base 常数乘扩域元素 + 加法”；通用 `MulExtension(...)` 从每个 `mask` 的 4 次压缩到循环外 2 次。
+
+验收：
+- `bench_basefold_pcs_eval --use-extension-challenges` 的 `ExtensionSumcheck current` 明显下降。
+- proof / verifier 结果不变。
+
+当前 release 对照（基于 EC5 之后的同组参数：`GR(4,2), c=2, k0=1, d=12, queries=4, warmup=1, reps=5, ext_deg=2`）：
+- `bench_basefold_pcs_eval --use-extension-challenges`
+  - `prove-phase mean 51.367 ms -> 39.519 ms`
+  - `ExtensionSumcheck total 95.726 ms / 5 reps -> 50.627 ms / 5 reps`
+  - `CurrentPolynomial 61.128 ms / 60 calls -> 17.282 ms / 60 calls`
+- `bench_basefold_pcs_prove --use-extension-challenges`
+  - `prove-phase mean 37.691 ms -> 37.931 ms`
+  - `CurrentPolynomial 13.384 ms / 60 calls -> 11.641 ms / 60 calls`
+- 结论：EC6 对完整 extension `eval` 路径是大收益，直接压掉了 `CurrentPolynomial()` 这个最大单桶；但 repeated-prove headline 基本持平，因为剩余主瓶颈已经变成 `ExtensionCommitRound` 与 `ReceiveChallenge()`。
+
+### EC7. `ExtensionSumcheck::ReceiveChallenge()` in-place 与 modulus hoist
+
+状态：`completed`
+
+目的：
+- 降低 `ReceiveChallenge()` 的扩域临时对象 churn 和 helper 调度开销。
+
+主要范围：
+- `src/PCS/BaseFold/BaseFoldPCSExtension.cpp`
+
+本轮完成：
+- 在 `ReceiveChallenge()` 里引入 reduced-input 专用乘法 helper，避免每个 fold 都重新走通用 `AddExtension` / `SubExtension` / `MulExtension` 包装。
+- 把 `mod_ctx` hoist 到 round 局部，并把 `EqFactorExtensionFromBase` 改成不依赖通用 helper 的 reduced 版本。
+- 复用少量局部 scratch `ZZ_pEX`，减少 `delta_f` / folded 值的临时对象 churn。
+
+验收：
+- `bench_basefold_pcs_eval --use-extension-challenges` 的 `ExtensionSumcheck receive` 稳定下降。
+- correctness 不变，`test_pcs` 继续通过。
+
+当前 release 对照（基于 EC6 之后的同组参数：`GR(4,2), c=2, k0=1, d=12, queries=4, warmup=1, reps=5, ext_deg=2`）：
+- `bench_basefold_pcs_eval --use-extension-challenges`
+  - `prove-phase mean 39.519 ms -> 39.504 ms`
+  - `ExtensionSumcheck total 50.627 ms / 5 reps -> 48.093 ms / 5 reps`
+  - `ReceiveChallenge 27.771 ms / 60 calls -> 24.490 ms / 60 calls`
+- `bench_basefold_pcs_prove --use-extension-challenges`
+  - `prove-phase mean 37.931 ms -> 36.668 ms`
+  - `ReceiveChallenge 26.906 ms / 60 calls -> 22.820 ms / 60 calls`
+- 结论：EC7 的收益主要体现在 `ReceiveChallenge()` 本身，eval headline 基本持平但 repeated-prove 已有小幅下降；当前 extension 路径剩余最大桶已经更明确地落在 `ExtensionCommitRound`，所以下一步优先做 EC8。
+
+### EC8. extension commit round 的 fused arithmetic kernel
+
+状态：`completed`
+
+目的：
+- 继续优化 `EvalLineAtExtensionWithInvDenom(...)` 一带的扩域算术常数，而不是继续追 scratch-buffer 分配。
+
+主要范围：
+- `src/PCS/BaseFold/BaseFoldPCSExtension.cpp`
+
+本轮完成：
+- 已在 extension commit round 内部引入 reduced-input 的 fused helper，直接把
+  `delta_y`、乘 base 常数、`delta_x` 和最终加回 `y1` 串成一条 in-place 路径。
+- 已把 `mod_ctx` hoist 到 `ProverCommitRoundExtensionNoValidate()` 的 round 局部，让四条热循环共享同一份 modulus context。
+- 本轮没有继续做 `lambda_j` 预计算；先吃掉低风险的临时对象和 helper 调度开销。
+
+验收：
+- `bench_basefold_pcs_prove --use-extension-challenges` 的 `ExtensionCommitRound` 稳定下降。
+- `bench_basefold_pcs_eval --use-extension-challenges` headline `prove-phase mean` 至少有可见改善。
+
+当前 release 对照（基于 EC7 之后的同组参数：`GR(4,2), c=2, k0=1, d=12, queries=4, warmup=1, reps=5, ext_deg=2`）：
+- `bench_basefold_pcs_eval --use-extension-challenges`
+  - `prove-phase mean 39.633 ms -> 36.365 ms`
+  - `ExtensionCommitRound 88.465 ms / 60 calls -> 73.199 ms / 60 calls`
+- `bench_basefold_pcs_prove --use-extension-challenges`
+  - `prove-phase mean 37.177 ms -> 34.182 ms`
+  - `ExtensionCommitRound 86.955 ms / 60 calls -> 72.676 ms / 60 calls`
+- 结论：EC8 是 extension 线里又一波大收益，直接把当前最大剩余桶压下去了。到这一步为止，`EC6 + EC7 + EC8` 已经把 extension sumcheck 与 commit round 的主要低风险优化都吃掉了；是否继续做 `EC9`，应取决于你是否真的长期固定在 `ext_deg=2` 工作负载上。
+
+### EC9. `ext_deg=2` 热路径专门化
+
+状态：`pending`
+
+目的：
+- 当主要 workload 固定在 `ext_deg=2` 时，进一步降低通用 `ZZ_pEX` helper 的常数开销。
+
+主要范围：
+- `src/PCS/BaseFold/BaseFoldPCSExtension.cpp`
+
+拟做内容：
+- 评估在 prover 热路径内部引入 degree-2 专门化表示，只在边界保留 `ZZ_pEX`。
+- 只在前面的 EC6~EC8 做完后再决定是否值得推进，避免过早把原型代码复杂化。
+
+验收：
+- `bench_basefold_pcs_eval --use-extension-challenges` 与 `bench_basefold_pcs_prove --use-extension-challenges` 均有稳定收益。
+- 不破坏现有通用扩域路径。
+
 ## 执行顺序
 
 1. `A1` Frobenius / RingSwitch unchecked 热路径
@@ -495,7 +624,10 @@ extension-challenge 后续方向：
 5. 若 outer prover 仍是主要瓶颈，做 `B1`
 6. 若 commit 仍明显重于 Merkle，做 `B3`
 7. `B2` 作为补充整理项穿插进行
-8. 若开始专门优化 extension-challenge，按 `EC1 -> EC2 -> EC3 -> EC4 -> EC5` 顺序推进
+8. 若开始专门优化 extension-challenge，先完成 `EC1 -> EC2 -> EC3 -> EC4 -> EC5`
+9. extension 后续优化按 `EC6 -> EC7 -> EC8` 顺序推进
+10. `B2` 原始 scope 暂时后置；只有在 fallback/no-cache 路径重新变热时再做
+11. `EC9` 仅在 `ext_deg=2` 仍是主 workload 且 EC6~EC8 收益已吃完时再评估
 
 ## 每轮变更后的固定检查
 
@@ -522,3 +654,7 @@ ctest --test-dir build-release --output-on-failure
 | EC3 | extension prefix-equality base-ring 化 | Ext | completed | `BaseFoldPCSExtension.cpp` | `ExtensionSumcheck current` |
 | EC4 | extension unchecked 自检移出热路径 | Ext | completed | `BaseFoldPCSExtension.cpp` | ext prove-phase mean |
 | EC5 | lifted top oracle / suffix 工件缓存 | Ext | completed | `BaseFoldPCSExtension.cpp`, `BaseFoldPCS.hpp` | repeated-prove 微基准 |
+| EC6 | `CurrentPolynomial()` 因式重排 | Ext | completed | `BaseFoldPCSExtension.cpp` | `ExtensionSumcheck current` |
+| EC7 | `ReceiveChallenge()` in-place / modulus hoist | Ext | completed | `BaseFoldPCSExtension.cpp` | `ExtensionSumcheck receive` |
+| EC8 | commit round fused arithmetic kernel | Ext | completed | `BaseFoldPCSExtension.cpp` | `ExtensionCommitRound` |
+| EC9 | `ext_deg=2` 热路径专门化 | Ext | pending | `BaseFoldPCSExtension.cpp` | ext prove-phase mean |
