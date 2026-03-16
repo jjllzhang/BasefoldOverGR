@@ -361,18 +361,6 @@ std::vector<FieldElement> SlicePoint(const std::vector<FieldElement> &z,
   return std::vector<FieldElement>(z.begin() + begin, z.begin() + begin + count);
 }
 
-vec_ZZ_pE BuildEqualityTable(const std::vector<FieldElement> &point) {
-  const long dimension = static_cast<long>(point.size());
-  const long length = Pow2LongOrThrow(
-      dimension, "BuildEqualityTable: dimension is too large for long");
-  vec_ZZ_pE table;
-  table.SetLength(length);
-  for (long idx = 0; idx < length; ++idx) {
-    table[idx] = EqPolynomial(point, BooleanPointFromIndex(idx, dimension));
-  }
-  return table;
-}
-
 std::vector<FieldElement> RecoverPartialEvaluationsFromSByU(
     const RingSwitchPCSParams &params,
     const std::vector<FieldElement> &s_by_u) {
@@ -466,14 +454,13 @@ std::vector<FieldElement> ComputeSByU(const RingSwitchComponentTensor &tensor,
 }
 
 vec_ZZ_pE BuildBatchedGTable(const RingSwitchComponentTensor &tensor,
-                             const std::vector<FieldElement> &rprime_prefix) {
+                             const vec_ZZ_pE &eq_prefix) {
   const long num_u = tensor.basis_dimension;
   const long num_w = Pow2LongOrThrow(
       tensor.ell_prime, "BuildBatchedGTable: ell_prime is too large for long");
   vec_ZZ_pE out;
   out.SetLength(num_w);
 
-  const vec_ZZ_pE eq_prefix = BuildEqualityTable(rprime_prefix);
   if (eq_prefix.length() != num_u) {
     LogicError("BuildBatchedGTable: prefix equality table length mismatch");
   }
@@ -489,8 +476,7 @@ vec_ZZ_pE BuildBatchedGTable(const RingSwitchComponentTensor &tensor,
 }
 
 FieldElement ComputeInitialBatchedClaim(const std::vector<FieldElement> &s_by_u,
-                                        const std::vector<FieldElement> &rprime_prefix) {
-  const vec_ZZ_pE eq_prefix = BuildEqualityTable(rprime_prefix);
+                                        const vec_ZZ_pE &eq_prefix) {
   if (eq_prefix.length() != static_cast<long>(s_by_u.size())) {
     LogicError(
         "ComputeInitialBatchedClaim: prefix equality table length mismatch");
@@ -572,10 +558,11 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
     rprime_prefix[static_cast<std::size_t>(i)] =
         transcript.ChallengeFieldElement("rprime/prefix/" + std::to_string(i));
   }
+  const vec_ZZ_pE eq_prefix = EqualityTableFromPoint(rprime_prefix);
 
   const FieldElement initial_claim =
-      ComputeInitialBatchedClaim(out.proof.s_by_u, rprime_prefix);
-  const vec_ZZ_pE g_table = BuildBatchedGTable(tensor, rprime_prefix);
+      ComputeInitialBatchedClaim(out.proof.s_by_u, eq_prefix);
+  const vec_ZZ_pE g_table = BuildBatchedGTable(tensor, eq_prefix);
 
   out.rprime_suffix.resize(static_cast<std::size_t>(params.ell_prime));
   if (params.ell_prime > 0) {
@@ -706,9 +693,10 @@ bool VerifyOuterEvalAndMaybeRecoverSuffix(
     rprime_prefix[static_cast<std::size_t>(i)] =
         transcript.ChallengeFieldElement("rprime/prefix/" + std::to_string(i));
   }
+  const vec_ZZ_pE eq_prefix = EqualityTableFromPoint(rprime_prefix);
 
   const FieldElement initial_claim =
-      ComputeInitialBatchedClaim(proof.s_by_u, rprime_prefix);
+      ComputeInitialBatchedClaim(proof.s_by_u, eq_prefix);
 
   std::vector<FieldElement> rprime_suffix(
       static_cast<std::size_t>(params.ell_prime));

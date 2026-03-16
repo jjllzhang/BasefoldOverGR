@@ -24,6 +24,10 @@ FieldElement EqFactor(const FieldElement &z_i, const FieldElement &x_i);
 FieldElement EqPolynomial(const std::vector<FieldElement> &z,
                           const std::vector<FieldElement> &x);
 
+// Returns the Boolean hypercube evaluation table of eq_point(X), ordered so
+// index v encodes the Boolean point with bit i stored in the i-th variable.
+FieldVec EqualityTableFromPoint(const std::vector<FieldElement> &point);
+
 }  // namespace basefold
 
 #endif  // BASEFOLD_MULTILINEAR_HPP_

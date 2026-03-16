@@ -193,6 +193,48 @@ basefold::FoldableCodeParams BuildParamsGR_4_2_k0_2(const ZZ &p,
   return params;
 }
 
+std::vector<ZZ_pE> BooleanPointFromIndex(long index, long dimension) {
+  std::vector<ZZ_pE> point(static_cast<std::size_t>(dimension));
+  for (long i = 0; i < dimension; ++i) {
+    point[static_cast<std::size_t>(i)] =
+        testutil::ConstZZpE((index >> i) & 1L);
+  }
+  return point;
+}
+
+void TestPCS_EqualityTableFromPoint_MatchesEqPolynomialDefinition() {
+  testutil::PrintInfo(
+      "PCS common: EqualityTableFromPoint matches the EqPolynomial definition");
+
+  const ZZ p = to_ZZ(2);
+  ZZ_pPush p_push(p);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush e_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const std::vector<ZZ_pE> point = {
+      alpha, alpha + testutil::ConstZZpE(1), testutil::ConstZZpE(1)};
+  const vec_ZZ_pE table = basefold::EqualityTableFromPoint(point);
+  CHECK_EQ(table.length(), 8);
+  for (long idx = 0; idx < table.length(); ++idx) {
+    CHECK_EQ(table[idx],
+             basefold::EqPolynomial(point, BooleanPointFromIndex(idx, 3)));
+  }
+
+  const vec_ZZ_pE empty_table =
+      basefold::EqualityTableFromPoint(std::vector<ZZ_pE>{});
+  CHECK_EQ(empty_table.length(), 1);
+  CHECK_EQ(empty_table[0], testutil::ConstZZpE(1));
+}
+
 void TestPCS_EvalProof_GF4() {
   testutil::PrintInfo("PCS: eval proof verifies over GF(2^2)");
 
@@ -1433,6 +1475,7 @@ void TestPCS_ArtifactVerifyFailsWhenClaimedYTampered() {
 
 int main() {
   try {
+    RUN_TEST(TestPCS_EqualityTableFromPoint_MatchesEqPolynomialDefinition);
     RUN_TEST(TestPCS_EvalProof_GF4);
     RUN_TEST(TestPCS_PaperAPI_GF4);
     RUN_TEST(TestPCS_EvalProof_GF4_k0_2);

@@ -3,6 +3,7 @@
 #include <NTL/ZZ.h>
 
 #include <cstddef>
+#include <limits>
 
 using NTL::LogicError;
 using NTL::vec_ZZ_pE;
@@ -71,5 +72,33 @@ FieldElement EqPolynomial(const std::vector<FieldElement> &z,
   return acc;
 }
 
-}  // namespace basefold
+FieldVec EqualityTableFromPoint(const std::vector<FieldElement> &point) {
+  long length = 1;
+  for (std::size_t i = 0; i < point.size(); ++i) {
+    if (length > std::numeric_limits<long>::max() / 2) {
+      LogicError("EqualityTableFromPoint: dimension is too large for long");
+    }
+    length *= 2;
+  }
 
+  vec_ZZ_pE table;
+  table.SetLength(length);
+  table[0] = One();
+
+  long filled = 1;
+  const ZZ_pE one = One();
+  for (std::size_t var = 0; var < point.size(); ++var) {
+    const ZZ_pE zero_branch = one - point[var];
+    const ZZ_pE one_branch = point[var];
+    for (long idx = filled; idx-- > 0;) {
+      const ZZ_pE prev = table[idx];
+      table[idx + filled] = prev * one_branch;
+      table[idx] = prev * zero_branch;
+    }
+    filled *= 2;
+  }
+
+  return table;
+}
+
+}  // namespace basefold

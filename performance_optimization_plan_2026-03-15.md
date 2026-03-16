@@ -90,7 +90,7 @@
 
 ### A2. 共享并重写 equality table 构造为迭代 DP
 
-状态：`pending`
+状态：`completed`（2026-03-16）
 
 目的：
 - 消除 `BuildEqualityTable(point)` 中“每个布尔点都重新构造 `BooleanPointFromIndex` 再调用 `EqPolynomial`”的低效写法。
@@ -115,6 +115,33 @@
 - Frobenius / RingSwitch 相关 tests 全绿。
 - `bench_z2k_frobenius_eval` outer prover mean 下降。
 - 如有必要，再补一个 equality-table helper 单测。
+
+已完成内容：
+- 在共享层新增 `EqualityTableFromPoint(...)`，放到 `PCS/Common/Multilinear`。
+- 用迭代 DP 直接构造 `eq_point` 在 Boolean hypercube 上的 evaluation table，不再对每个布尔点单独构造向量并调用 `EqPolynomial(...)`。
+- Frobenius suffix orbit 上的 `sigma_eq_tables_by_i` 改为走共享 helper。
+- Frobenius prefix equality table `lambda_by_i` 改为走共享 helper。
+- RingSwitch prefix equality table 改为走共享 helper。
+- RingSwitch prove / verify 热路径中，同一轮 prefix equality table 的重复构造收敛为一次。
+- 新增共享 helper 单测，保持与 `EqPolynomial` 定义逐点一致。
+
+本轮验证：
+- `cmake --build build-release -j 4 --target test_pcs test_z2k_frobenius_pcs test_z2k_ring_switch_pcs bench_z2k_frobenius_eval bench_z2k_ring_switch_eval bench_z2k_frobenius_outer_prove bench_z2k_ring_switch_outer_prove`
+- `ctest --test-dir build-release --output-on-failure -R 'test_(pcs|z2k_frobenius_pcs|z2k_ring_switch_pcs)'`
+- 对照基准：
+  - A1 baseline: commit `d7453cc`
+  - A2 current workspace
+  - 统一参数：`OMP_NUM_THREADS=1`, `c=4`, `ell=10`, `kappa=1`, `queries=4`, `warmup=1`, `reps=5`, `GR(4,2)`
+
+本轮测得收益：
+- `bench_z2k_frobenius_eval` outer prover mean：`7.438 ms -> 1.718 ms`
+- `bench_z2k_frobenius_outer_prove`：`7.165 ms -> 1.284 ms`
+- `bench_z2k_ring_switch_eval` outer prover mean：`4.597 ms -> 4.472 ms`
+- `bench_z2k_ring_switch_outer_prove`：`4.341 ms -> 4.470 ms`
+
+备注：
+- Frobenius 收益很大，说明此前热点确实主要在 equality table 的逐点重算。
+- RingSwitch 收益较小，但 `eval` 仍有轻微下降；`outer_prove` 在这组小参数下基本视为持平，后续应在更大 `kappa` / `ell_prime` 上复测再决定是否继续深挖 RingSwitch 外层。
 
 ### A3. verifier multiproof 查找表一次性构建
 
@@ -241,7 +268,7 @@ ctest --test-dir build-release --output-on-failure
 | ID | 任务 | 优先级 | 状态 | 主要文件 | 验收基准 |
 |---|---|---|---|---|---|
 | A1 | Frobenius / RingSwitch unchecked 热路径 | A | completed | `src/Compiler/Z2k/*PCS.cpp` | outer prover mean |
-| A2 | equality table 迭代 helper | A | pending | `src/Compiler/Z2k/*PCS.cpp`, `src/PCS/Common/*` | outer prover mean |
+| A2 | equality table 迭代 helper | A | completed | `src/Compiler/Z2k/*PCS.cpp`, `src/PCS/Common/*` | outer prover mean |
 | A3 | multiproof 查找表 | A | pending | `BaseFoldPCSVerify.cpp`, `BaseFoldPCSExtension.cpp` | verifier mean |
 | B1 | BaseFold sumcheck init cache | B | pending | `Sumcheck.cpp`, `BaseFoldPCSProve.cpp` | repeated-prove 微基准 |
 | B2 | scratch buffer 复用 | B | pending | `BaseFoldPCSCommon.cpp`, `BaseFoldPCSExtension.cpp` | prove-phase 小幅下降 |

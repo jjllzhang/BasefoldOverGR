@@ -365,18 +365,6 @@ std::vector<FieldElement> SlicePoint(const std::vector<FieldElement> &z,
   return std::vector<FieldElement>(z.begin() + begin, z.begin() + begin + count);
 }
 
-NTL::vec_ZZ_pE BuildEqualityTable(const std::vector<FieldElement> &point) {
-  const long dimension = static_cast<long>(point.size());
-  const long length = Pow2LongOrThrow(
-      dimension, "BuildEqualityTable: dimension is too large for long");
-  NTL::vec_ZZ_pE table;
-  table.SetLength(length);
-  for (long idx = 0; idx < length; ++idx) {
-    table[idx] = EqPolynomial(point, BooleanPointFromIndex(idx, dimension));
-  }
-  return table;
-}
-
 std::vector<std::vector<ZZ_p>> RecoverPointNormalBasisCoords(
     const FrobeniusPCSParams &params, const std::vector<FieldElement> &point) {
   std::vector<std::vector<ZZ_p>> coords_by_var(point.size());
@@ -421,8 +409,9 @@ SuffixOrbitCache BuildSuffixOrbitCache(const FrobeniusPCSParams &params,
             params.precomputed.sigma_basis_rows[static_cast<std::size_t>(i)],
             out.suffix_coords_by_var, "BuildSuffixOrbitCache");
     if (build_eq_tables) {
-      out.sigma_eq_tables_by_i[static_cast<std::size_t>(i)] = BuildEqualityTable(
-          out.sigma_points_by_i[static_cast<std::size_t>(i)]);
+      out.sigma_eq_tables_by_i[static_cast<std::size_t>(i)] =
+          EqualityTableFromPoint(
+              out.sigma_points_by_i[static_cast<std::size_t>(i)]);
     }
   }
   return out;
@@ -654,7 +643,7 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
     rprime_prefix[static_cast<std::size_t>(i)] =
         transcript.ChallengeFieldElement("rprime/prefix/" + std::to_string(i));
   }
-  const NTL::vec_ZZ_pE lambda_by_i = BuildEqualityTable(rprime_prefix);
+  const NTL::vec_ZZ_pE lambda_by_i = EqualityTableFromPoint(rprime_prefix);
 
   const FieldElement initial_claim =
       ComputeInitialBatchedClaim(out.proof.s_by_i, lambda_by_i);
@@ -786,7 +775,7 @@ bool VerifyOuterEvalAndMaybeRecoverSuffix(
     rprime_prefix[static_cast<std::size_t>(i)] =
         transcript.ChallengeFieldElement("rprime/prefix/" + std::to_string(i));
   }
-  const NTL::vec_ZZ_pE lambda_by_i = BuildEqualityTable(rprime_prefix);
+  const NTL::vec_ZZ_pE lambda_by_i = EqualityTableFromPoint(rprime_prefix);
 
   const FieldElement initial_claim =
       ComputeInitialBatchedClaim(proof.s_by_i, lambda_by_i);
