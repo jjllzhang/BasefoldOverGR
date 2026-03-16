@@ -879,6 +879,20 @@ ExtensionSumcheckProver BuildExtensionSumcheckProver(
   return ExtensionSumcheckProver(f_coeffs, z, extension_modulus);
 }
 
+void ValidateExtensionPi0ConsistencyOrThrow(
+    const BaseFoldPCSEvalProof &proof, const FoldableCodeParams &params,
+    const ZZ_pEX &extension_modulus, const char *func_name) {
+  if (!proof.extension.has_extension_payload) {
+    return;
+  }
+  const std::vector<ZZ_pEX> expected_pi0 =
+      EncodeC0Extension(proof.extension.msg0_coeffs, params, extension_modulus);
+  if (expected_pi0 != proof.extension.pi0_codeword) {
+    LogicError(
+        (std::string(func_name) + ": internal pi0 mismatch").c_str());
+  }
+}
+
 void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
                                           const std::vector<ZZ_pEX> &pi_ip1,
                                           const ZZ_pEX &alpha_i, long level_i,
@@ -1296,12 +1310,6 @@ ProveEvalWithExtensionChallengesFromCommittedTopOracleUnchecked(
   const long kappa = basefold_pcs_internal::Log2ExactPowerOfTwoLong(params.k0);
   proof.extension.msg0_coeffs = Msg0CoeffsAtSuffixChallenges(
       f_coeffs, kappa, r_by_level, extension_modulus);
-  const std::vector<ZZ_pEX> expected_pi0 =
-      EncodeC0Extension(proof.extension.msg0_coeffs, params, extension_modulus);
-  if (expected_pi0 != proof.extension.pi0_codeword) {
-    LogicError(
-        "BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked: internal pi0 mismatch");
-  }
 
   proof.extension.base_top_query_multiproof = MerkleMultiproof{};
   proof.extension.query_multiproofs.resize(static_cast<std::size_t>(params.d));
@@ -1689,9 +1697,14 @@ BaseFoldPCSEvalProof BaseFoldPCSProveEvalWithChallengeConfig(
 
   const BaseFoldPCSCommitArtifacts commit_artifacts =
       BaseFoldPCSBuildCommitArtifactsUnchecked(f_coeffs, params);
-  return BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked(
-      f_coeffs, z, claimed_y, num_queries, params, commit_artifacts,
-      challenge_cfg);
+  BaseFoldPCSEvalProof proof =
+      BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked(
+          f_coeffs, z, claimed_y, num_queries, params, commit_artifacts,
+          challenge_cfg);
+  ValidateExtensionPi0ConsistencyOrThrow(
+      proof, params, challenge_cfg.challenge_extension_modulus,
+      "BaseFoldPCSProveEvalWithChallengeConfig");
+  return proof;
 }
 
 BaseFoldPCSEvalProof BaseFoldPCSProveEvalWithChallengeConfigUnchecked(
@@ -1745,9 +1758,14 @@ BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle(
         "BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle: claimed_y != f(z)");
   }
 
-  return BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked(
-      f_coeffs, z, claimed_y, num_queries, params, commit_artifacts,
-      challenge_cfg);
+  BaseFoldPCSEvalProof proof =
+      BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked(
+          f_coeffs, z, claimed_y, num_queries, params, commit_artifacts,
+          challenge_cfg);
+  ValidateExtensionPi0ConsistencyOrThrow(
+      proof, params, challenge_cfg.challenge_extension_modulus,
+      "BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle");
+  return proof;
 }
 
 BaseFoldPCSEvalProof

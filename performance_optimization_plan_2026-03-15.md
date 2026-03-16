@@ -430,7 +430,7 @@ extension-challenge 后续方向：
 
 ### EC4. unchecked 热路径移出 prover-local 自检
 
-状态：`pending`
+状态：`completed`
 
 目的：
 - 去掉 extension unchecked 路径里不属于协议消息本身的本地重算。
@@ -445,6 +445,16 @@ extension-challenge 后续方向：
 验收：
 - unchecked prove/eval 的结果不变。
 - `Other` 或 headline `prove-phase mean` 有可见下降。
+
+结果：
+- 已把 `expected_pi0` / `EncodeC0Extension(...)` 的一致性自检移出 unchecked 路径，只保留在 checked 包装层。
+- 已补 checked / unchecked 一致性回归，固定宽度 proof 序列化保持一致。
+- 当前 release 对照（基于 EC3 之后的同一组参数：`GR(4,2), c=2, k0=1, d=12, queries=4, warmup=1, reps=3, ext_deg=2`）：
+  - `bench_basefold_pcs_prove --use-extension-challenges`：
+    `prove-phase mean 39.575 ms -> 40.041 ms`
+  - `bench_basefold_pcs_eval --use-extension-challenges`：
+    `prove-phase mean 51.165 ms -> 51.850 ms`
+- 结论：这一步主要是把 unchecked/checked 的语义边界理顺，当前 benchmark 尺度下的 end-to-end 收益太小，3 reps 的前后对比基本落在噪声带内，不适合宣称为明显加速。
 
 ### EC5. lifted top oracle 与 suffix 工件缓存
 
@@ -504,5 +514,5 @@ ctest --test-dir build-release --output-on-failure
 | EC1 | Extension commit round 优化 | Ext | completed | `BaseFoldPCSExtension.cpp`, `BaseFoldPCSCommit.cpp`, `BaseFoldPCS.hpp` | `ExtensionCommitRound` |
 | EC2 | 复用 base eval table 到 extension sumcheck init | Ext | completed | `BaseFoldPCSExtension.cpp` | `ExtensionSumcheck init` |
 | EC3 | extension prefix-equality base-ring 化 | Ext | completed | `BaseFoldPCSExtension.cpp` | `ExtensionSumcheck current` |
-| EC4 | extension unchecked 自检移出热路径 | Ext | pending | `BaseFoldPCSExtension.cpp` | ext prove-phase mean |
+| EC4 | extension unchecked 自检移出热路径 | Ext | completed | `BaseFoldPCSExtension.cpp` | ext prove-phase mean |
 | EC5 | lifted top oracle / suffix 工件缓存 | Ext | pending | `BaseFoldPCSExtension.cpp`, `BaseFoldPCS.hpp` | repeated-prove 微基准 |
