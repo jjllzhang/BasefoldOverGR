@@ -16,6 +16,7 @@
 #include "bench/bench_basefold_pcs_artifact_common.hpp"
 #include "PCS/BaseFold/BaseFoldPCS.hpp"
 #include "PCS/BaseFold/ProofDeserialize.hpp"
+#include "PCS/Common/MerkleMultiproofReplay.hpp"
 #include "PCS/Common/Multilinear.hpp"
 #include "PCS/BaseFold/ProofSize.hpp"
 #include "tests/test_common.hpp"
@@ -233,6 +234,31 @@ void TestPCS_EqualityTableFromPoint_MatchesEqPolynomialDefinition() {
       basefold::EqualityTableFromPoint(std::vector<ZZ_pE>{});
   CHECK_EQ(empty_table.length(), 1);
   CHECK_EQ(empty_table[0], testutil::ConstZZpE(1));
+}
+
+void TestPCS_MultiproofValueCache_ReplaysExpectedPositions() {
+  testutil::PrintInfo(
+      "PCS common: multiproof value cache returns the same positions as queried indices");
+
+  const std::vector<long> queried_indices = {2, 5, 9};
+  std::vector<long> values = {20, 50, 90};
+  basefold::multiproof_replay::ValuePositionCache cache;
+  CHECK(basefold::multiproof_replay::BuildValuePositionCache(
+      queried_indices, static_cast<long>(values.size()), &cache));
+
+  const long *found = basefold::multiproof_replay::FindMultiproofValue(
+      cache, 5, [&](std::size_t pos) { return &values[pos]; });
+  CHECK(found != nullptr);
+  CHECK_EQ(*found, 50);
+
+  const long *missing = basefold::multiproof_replay::FindMultiproofValue(
+      cache, 6, [&](std::size_t pos) { return &values[pos]; });
+  CHECK(missing == nullptr);
+
+  CHECK(!basefold::multiproof_replay::BuildValuePositionCache(
+      queried_indices, /*value_count=*/2, &cache));
+  CHECK(!basefold::multiproof_replay::BuildValuePositionCache(
+      std::vector<long>{2, 2, 5}, /*value_count=*/3, &cache));
 }
 
 void TestPCS_EvalProof_GF4() {
@@ -1476,6 +1502,7 @@ void TestPCS_ArtifactVerifyFailsWhenClaimedYTampered() {
 int main() {
   try {
     RUN_TEST(TestPCS_EqualityTableFromPoint_MatchesEqPolynomialDefinition);
+    RUN_TEST(TestPCS_MultiproofValueCache_ReplaysExpectedPositions);
     RUN_TEST(TestPCS_EvalProof_GF4);
     RUN_TEST(TestPCS_PaperAPI_GF4);
     RUN_TEST(TestPCS_EvalProof_GF4_k0_2);

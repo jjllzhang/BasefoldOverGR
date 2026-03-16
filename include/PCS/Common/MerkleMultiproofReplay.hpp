@@ -2,6 +2,7 @@
 #define BASEFOLD_MERKLEMULTIPROOFREPLAY_HPP_
 
 #include <cstddef>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -9,6 +10,43 @@
 
 namespace basefold {
 namespace multiproof_replay {
+
+struct ValuePositionCache {
+  std::unordered_map<long, std::size_t> positions_by_index;
+};
+
+inline bool BuildValuePositionCache(const std::vector<long> &queried_indices,
+                                    long value_count,
+                                    ValuePositionCache *out) {
+  if (out == nullptr) {
+    return false;
+  }
+  out->positions_by_index.clear();
+  if (value_count != static_cast<long>(queried_indices.size())) {
+    return false;
+  }
+  out->positions_by_index.reserve(queried_indices.size());
+  for (std::size_t pos = 0; pos < queried_indices.size(); ++pos) {
+    const auto inserted =
+        out->positions_by_index.emplace(queried_indices[pos], pos);
+    if (!inserted.second) {
+      out->positions_by_index.clear();
+      return false;
+    }
+  }
+  return true;
+}
+
+template <typename ValueAtFn>
+inline auto FindMultiproofValue(const ValuePositionCache &cache, long index,
+                                const ValueAtFn &value_at)
+    -> decltype(value_at(std::size_t{})) {
+  const auto it = cache.positions_by_index.find(index);
+  if (it == cache.positions_by_index.end()) {
+    return nullptr;
+  }
+  return value_at(it->second);
+}
 
 template <typename ValueAtFn>
 inline auto FindMultiproofValue(

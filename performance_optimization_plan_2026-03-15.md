@@ -145,7 +145,7 @@
 
 ### A3. verifier multiproof 查找表一次性构建
 
-状态：`pending`
+状态：`completed`（2026-03-16）
 
 目的：
 - 避免 verifier 在 query 内层循环中反复对同一 `queried_indices` 做 `lower_bound`。
@@ -167,6 +167,38 @@
 ```bash
 ./build-release/bench_basefold_pcs_eval --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 12 --queries 2048 --warmup 1 --reps 3
 ```
+
+已完成内容：
+- 在 `MerkleMultiproofReplay` 共享层新增 verifier 侧 `ValuePositionCache`。
+- 为每棵树的 multiproof 一次性构造 `index -> position` 查找表，替代 query 内层循环中的重复 `lower_bound`。
+- base verifier 与 extension verifier 都接到这套 shared helper：
+  - `src/PCS/BaseFold/BaseFoldPCSVerify.cpp`
+  - `src/PCS/BaseFold/BaseFoldPCSExtension.cpp`
+- proof layout、serializer、Merkle multiproof 校验语义均未改变。
+- 新增 shared helper 单测，覆盖命中、miss、长度不匹配、重复索引拒绝。
+
+本轮验证：
+- `cmake --build build-release -j 4 --target test_pcs bench_basefold_pcs_eval`
+- `ctest --test-dir build-release --output-on-failure -R '^test_pcs$'`
+- 对照基准：
+  - A2 baseline: commit `03a808f`
+  - A3 current workspace
+  - 统一参数：`BASEFOLD_VERIFY_QUERY_MAX_THREADS=1`, `OMP_NUM_THREADS=1`
+  - 命令：
+
+```bash
+./build-release/bench_basefold_pcs_eval --mode ring --ring-mod 4 --ring-p 2 --ring-F 1,1,1 --ring-zeta 0,1 --d 12 --queries 2048 --profile --warmup 1 --reps 3
+```
+
+本轮测得收益：
+- verifier mean：`42.974 ms -> 40.632 ms`，下降 `2.342 ms`，约 `5.4%`
+- `VerifyQueryMultiproofs` 总时间：`115.782 ms -> 108.707 ms`，下降 `7.075 ms`，约 `6.1%`
+- `Inside queries other`：`33.146 ms -> 28.014 ms`，下降 `5.132 ms`
+
+备注：
+- 这次收益集中在 verifier query 路径，符合 A3 目标。
+- `MerkleVerifyMultiproof` 本身基本不变，说明提升主要来自值回放查找，而不是底层 Merkle replay。
+- extension verifier 也已切到相同 cache helper；这轮只对 base bench 做了高-query 定量，extension 路径由 `test_pcs` 覆盖 correctness。
 
 ## 优先级 B
 
@@ -269,7 +301,7 @@ ctest --test-dir build-release --output-on-failure
 |---|---|---|---|---|---|
 | A1 | Frobenius / RingSwitch unchecked 热路径 | A | completed | `src/Compiler/Z2k/*PCS.cpp` | outer prover mean |
 | A2 | equality table 迭代 helper | A | completed | `src/Compiler/Z2k/*PCS.cpp`, `src/PCS/Common/*` | outer prover mean |
-| A3 | multiproof 查找表 | A | pending | `BaseFoldPCSVerify.cpp`, `BaseFoldPCSExtension.cpp` | verifier mean |
+| A3 | multiproof 查找表 | A | completed | `BaseFoldPCSVerify.cpp`, `BaseFoldPCSExtension.cpp` | verifier mean |
 | B1 | BaseFold sumcheck init cache | B | pending | `Sumcheck.cpp`, `BaseFoldPCSProve.cpp` | repeated-prove 微基准 |
 | B2 | scratch buffer 复用 | B | pending | `BaseFoldPCSCommon.cpp`, `BaseFoldPCSExtension.cpp` | prove-phase 小幅下降 |
 | B3 | 编码器常见参数专门化 | B | pending | `FoldableCode.cpp` | encode-only mean |

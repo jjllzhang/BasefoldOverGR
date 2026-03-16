@@ -186,6 +186,8 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
       basefold_pcs_internal::CollectBaseQueryIndicesByTree(query_plans, params);
   ScopedTimer query_timer(prof ? &prof->verify_query_merkle_ns : nullptr,
                           prof ? &prof->verify_query_merkle_calls : nullptr);
+  std::vector<multiproof_replay::ValuePositionCache> value_positions_by_tree(
+      static_cast<std::size_t>(params.d + 1));
 
   for (long tree_level = 0; tree_level <= params.d; ++tree_level) {
     const MerkleMultiproof &multiproof =
@@ -194,6 +196,11 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
         requested_indices_by_tree[static_cast<std::size_t>(tree_level)];
     if (static_cast<long>(multiproof.values.length()) !=
         static_cast<long>(expected_indices.size())) {
+      return false;
+    }
+    if (!multiproof_replay::BuildValuePositionCache(
+            expected_indices, multiproof.values.length(),
+            &value_positions_by_tree[static_cast<std::size_t>(tree_level)])) {
       return false;
     }
     const long leaf_count = CodewordLengthAtLevel(params, tree_level);
@@ -218,23 +225,23 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
           proof.query_multiproofs[static_cast<std::size_t>(i + 1)];
       const MerkleMultiproof &folded_multiproof =
           proof.query_multiproofs[static_cast<std::size_t>(i)];
-      const std::vector<long> &upper_indices =
-          requested_indices_by_tree[static_cast<std::size_t>(i + 1)];
-      const std::vector<long> &folded_indices =
-          requested_indices_by_tree[static_cast<std::size_t>(i)];
+      const multiproof_replay::ValuePositionCache &upper_positions =
+          value_positions_by_tree[static_cast<std::size_t>(i + 1)];
+      const multiproof_replay::ValuePositionCache &folded_positions =
+          value_positions_by_tree[static_cast<std::size_t>(i)];
 
       const FieldElement *left = multiproof_replay::FindMultiproofValue(
-          upper_indices, upper_multiproof.values.length(), mu,
+          upper_positions, mu,
           [&](std::size_t pos) {
             return &upper_multiproof.values[static_cast<long>(pos)];
           });
       const FieldElement *right = multiproof_replay::FindMultiproofValue(
-          upper_indices, upper_multiproof.values.length(), mu + n_i,
+          upper_positions, mu + n_i,
           [&](std::size_t pos) {
             return &upper_multiproof.values[static_cast<long>(pos)];
           });
       const FieldElement *folded = multiproof_replay::FindMultiproofValue(
-          folded_indices, folded_multiproof.values.length(), mu,
+          folded_positions, mu,
           [&](std::size_t pos) {
             return &folded_multiproof.values[static_cast<long>(pos)];
           });

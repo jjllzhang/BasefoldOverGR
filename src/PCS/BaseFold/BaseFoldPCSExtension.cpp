@@ -1392,12 +1392,25 @@ bool VerifyEvalWithExtensionChallenges(
   ScopedTimer query_timer(
       prof ? &prof->ext_verify_query_merkle_ns : nullptr,
       prof ? &prof->ext_verify_query_merkle_calls : nullptr);
+  multiproof_replay::ValuePositionCache top_value_positions;
+  if (!multiproof_replay::BuildValuePositionCache(
+          expected_top_indices, top_query_multiproof.values.length(),
+          &top_value_positions)) {
+    return false;
+  }
+  std::vector<multiproof_replay::ValuePositionCache> value_positions_by_tree(
+      static_cast<std::size_t>(params.d));
   for (long tree_level = 0; tree_level < params.d; ++tree_level) {
     const ExtensionMerkleMultiproof &multiproof =
         proof.extension.query_multiproofs[static_cast<std::size_t>(tree_level)];
     const std::vector<long> &expected_indices =
         requested_indices_by_tree[static_cast<std::size_t>(tree_level)];
     if (multiproof.values.size() != expected_indices.size()) {
+      return false;
+    }
+    if (!multiproof_replay::BuildValuePositionCache(
+            expected_indices, static_cast<long>(multiproof.values.size()),
+            &value_positions_by_tree[static_cast<std::size_t>(tree_level)])) {
       return false;
     }
     const long leaf_count = CodewordLengthAtLevel(params, tree_level);
@@ -1420,13 +1433,12 @@ bool VerifyEvalWithExtensionChallenges(
     const long n_top = CodewordLengthAtLevel(params, top_i);
 
     const FieldElement *left_top = multiproof_replay::FindMultiproofValue(
-        expected_top_indices, top_query_multiproof.values.length(), mu_top,
+        top_value_positions, mu_top,
         [&](std::size_t pos) {
           return &top_query_multiproof.values[static_cast<long>(pos)];
         });
     const FieldElement *right_top = multiproof_replay::FindMultiproofValue(
-        expected_top_indices, top_query_multiproof.values.length(),
-        mu_top + n_top, [&](std::size_t pos) {
+        top_value_positions, mu_top + n_top, [&](std::size_t pos) {
           return &top_query_multiproof.values[static_cast<long>(pos)];
         });
     if (left_top == nullptr || right_top == nullptr) {
@@ -1449,10 +1461,10 @@ bool VerifyEvalWithExtensionChallenges(
 
       const ExtensionMerkleMultiproof &folded_multiproof =
           proof.extension.query_multiproofs[static_cast<std::size_t>(i)];
-      const std::vector<long> &folded_indices =
-          requested_indices_by_tree[static_cast<std::size_t>(i)];
+      const multiproof_replay::ValuePositionCache &folded_positions =
+          value_positions_by_tree[static_cast<std::size_t>(i)];
       const ZZ_pEX *folded_ext = multiproof_replay::FindMultiproofValue(
-          folded_indices, static_cast<long>(folded_multiproof.values.size()), mu_i,
+          folded_positions, mu_i,
           [&](std::size_t pos) { return &folded_multiproof.values[pos]; });
       if (folded_ext == nullptr) {
         return false;
@@ -1462,14 +1474,13 @@ bool VerifyEvalWithExtensionChallenges(
       if (i < params.d - 1) {
         const ExtensionMerkleMultiproof &next_multiproof =
             proof.extension.query_multiproofs[static_cast<std::size_t>(i + 1)];
-        const std::vector<long> &next_indices =
-            requested_indices_by_tree[static_cast<std::size_t>(i + 1)];
+        const multiproof_replay::ValuePositionCache &next_positions =
+            value_positions_by_tree[static_cast<std::size_t>(i + 1)];
         const ZZ_pEX *left_ext = multiproof_replay::FindMultiproofValue(
-            next_indices, static_cast<long>(next_multiproof.values.size()), mu_i,
+            next_positions, mu_i,
             [&](std::size_t pos) { return &next_multiproof.values[pos]; });
         const ZZ_pEX *right_ext = multiproof_replay::FindMultiproofValue(
-            next_indices, static_cast<long>(next_multiproof.values.size()),
-            mu_i + n_i,
+            next_positions, mu_i + n_i,
             [&](std::size_t pos) { return &next_multiproof.values[pos]; });
         if (left_ext == nullptr || right_ext == nullptr) {
           return false;
@@ -1503,8 +1514,7 @@ bool VerifyEvalWithExtensionChallenges(
         }
 
         const ZZ_pEX *next_value = multiproof_replay::FindMultiproofValue(
-            folded_indices, static_cast<long>(folded_multiproof.values.size()),
-            carries_left ? left_carry_index : right_carry_index,
+            folded_positions, carries_left ? left_carry_index : right_carry_index,
             [&](std::size_t pos) { return &folded_multiproof.values[pos]; });
         if (next_value == nullptr || folded_ext_value != *next_value) {
           return false;
