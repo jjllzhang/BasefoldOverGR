@@ -398,7 +398,7 @@ extension-challenge 后续方向：
 
 ### EC3. extension prefix-equality 改为 base-ring 原生表示
 
-状态：`pending`
+状态：`completed`
 
 目的：
 - 降低 `ExtensionSumcheck::CurrentPolynomial` 的扩域运算密度。
@@ -414,6 +414,19 @@ extension-challenge 后续方向：
 验收：
 - `ExtensionSumcheck current` 下降。
 - 不改变 verifier 结果和 proof payload。
+
+结果：
+- 已把 `ExtensionSumcheckProver` 内部的 `z` 和 `prefix_eq_by_vars_` 改成 base-ring 表示。
+- 已去掉 `CurrentPolynomial()` 中对 `z` / `prefix_eq_by_vars_` 的 `ExtractBaseConstantCoefficient(...)` 绕行；`suffix_eq_prod_` / `f_eval_table_` 仍保留在扩域。
+- 当前 release 对照（基于 EC2 之后的同一组参数：`GR(4,2), c=2, k0=1, d=12, queries=4, warmup=1, reps=3, ext_deg=2`）：
+  - `bench_basefold_pcs_prove --use-extension-challenges`：
+    `prove-phase mean 39.668 ms -> 39.575 ms`，小幅下降
+    `ExtensionSumcheck current 8.112 ms / 36 calls -> 7.998 ms / 36 calls`
+  - `bench_basefold_pcs_eval --use-extension-challenges`：
+    `prove-phase mean 51.919 ms -> 51.165 ms`
+    `ExtensionSumcheck total 58.957 ms / 3 reps -> 57.225 ms / 3 reps`
+    `ExtensionSumcheck current 37.461 ms / 36 calls -> 35.989 ms / 36 calls`
+- 结论：这一步是温和收益，不是 EC1/EC2 那种大幅下降；主要改善体现在 `eval` 路径的 `CurrentPolynomial` 桶，`prove-only` 路径只有小幅改善。
 
 ### EC4. unchecked 热路径移出 prover-local 自检
 
@@ -490,6 +503,6 @@ ctest --test-dir build-release --output-on-failure
 | B3 | 编码器常见参数专门化 | B | completed | `FoldableCode.cpp` | encode-only mean |
 | EC1 | Extension commit round 优化 | Ext | completed | `BaseFoldPCSExtension.cpp`, `BaseFoldPCSCommit.cpp`, `BaseFoldPCS.hpp` | `ExtensionCommitRound` |
 | EC2 | 复用 base eval table 到 extension sumcheck init | Ext | completed | `BaseFoldPCSExtension.cpp` | `ExtensionSumcheck init` |
-| EC3 | extension prefix-equality base-ring 化 | Ext | pending | `BaseFoldPCSExtension.cpp` | `ExtensionSumcheck current` |
+| EC3 | extension prefix-equality base-ring 化 | Ext | completed | `BaseFoldPCSExtension.cpp` | `ExtensionSumcheck current` |
 | EC4 | extension unchecked 自检移出热路径 | Ext | pending | `BaseFoldPCSExtension.cpp` | ext prove-phase mean |
 | EC5 | lifted top oracle / suffix 工件缓存 | Ext | pending | `BaseFoldPCSExtension.cpp`, `BaseFoldPCS.hpp` | repeated-prove 微基准 |

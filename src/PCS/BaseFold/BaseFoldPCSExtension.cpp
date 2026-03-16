@@ -313,10 +313,6 @@ ZZ_pEX LiftBaseToExtension(const FieldElement &x) {
   return out;
 }
 
-FieldElement ExtractBaseConstantCoefficient(const ZZ_pEX &x) {
-  return NTL::coeff(x, 0);
-}
-
 void ReduceExtensionElementInPlace(ZZ_pEX &x, const ZZ_pEX &extension_modulus) {
   const long extension_degree = ExtensionDegreeOrThrow(
       extension_modulus, "ReduceExtensionElementInPlace");
@@ -420,6 +416,16 @@ ZZ_pEX EqFactorExtension(const ZZ_pEX &z_i, const ZZ_pEX &x_i,
   const ZZ_pEX linear = SubExtension(SubExtension(one, z_i, extension_modulus),
                                      x_i, extension_modulus);
   return AddExtension(linear, two_zx, extension_modulus);
+}
+
+ZZ_pEX EqFactorExtensionFromBase(const FieldElement &z_i, const ZZ_pEX &x_i,
+                                 const ZZ_pEX &extension_modulus) {
+  const FieldElement one = BaseRingOne();
+  const FieldElement factor0 = one - z_i;
+  const FieldElement delta_factor = z_i - factor0;
+  return AddExtension(LiftBaseToExtension(factor0),
+                      MulExtensionByBaseConstant(x_i, delta_factor),
+                      extension_modulus);
 }
 
 ZZ_pEX EvalExtensionQuadraticPoly(const ExtensionQuadraticPoly &p,
@@ -669,36 +675,27 @@ class ExtensionSumcheckProver {
     }
 
     cur_k_ = d_;
-    z_.resize(static_cast<std::size_t>(d_));
-    for (long i = 0; i < d_; ++i) {
-      z_[static_cast<std::size_t>(i)] =
-          LiftBaseToExtension(z[static_cast<std::size_t>(i)]);
-    }
+    z_ = z;
 
     prefix_eq_by_vars_.resize(static_cast<std::size_t>(d_));
     if (d_ > 0) {
-      prefix_eq_by_vars_[0].resize(1);
-      prefix_eq_by_vars_[0][0] = ExtensionOne();
+      const FieldElement one = BaseRingOne();
+      prefix_eq_by_vars_[0].SetLength(1);
+      prefix_eq_by_vars_[0][0] = one;
 
       for (long t = 1; t < d_; ++t) {
-        const ZZ_pEX z_var = z_[static_cast<std::size_t>(t - 1)];
-        const ZZ_pEX factor0 =
-            SubExtension(ExtensionOne(), z_var, extension_modulus_);
-        const ZZ_pEX factor1 = z_var;
+        const FieldElement z_var = z_[static_cast<std::size_t>(t - 1)];
+        const FieldElement factor0 = one - z_var;
+        const FieldElement factor1 = z_var;
 
-        const std::vector<ZZ_pEX> &prev =
-            prefix_eq_by_vars_[static_cast<std::size_t>(t - 1)];
-        const long old = static_cast<long>(prev.size());
-        prefix_eq_by_vars_[static_cast<std::size_t>(t)].resize(
-            static_cast<std::size_t>(2 * old));
-        std::vector<ZZ_pEX> &cur =
-            prefix_eq_by_vars_[static_cast<std::size_t>(t)];
+        const FieldVec &prev = prefix_eq_by_vars_[static_cast<std::size_t>(t - 1)];
+        const long old = prev.length();
+        prefix_eq_by_vars_[static_cast<std::size_t>(t)].SetLength(2 * old);
+        FieldVec &cur = prefix_eq_by_vars_[static_cast<std::size_t>(t)];
         for (long mask = 0; mask < old; ++mask) {
-          const ZZ_pEX &base = prev[static_cast<std::size_t>(mask)];
-          cur[static_cast<std::size_t>(mask)] =
-              MulExtension(base, factor0, extension_modulus_);
-          cur[static_cast<std::size_t>(mask + old)] =
-              MulExtension(base, factor1, extension_modulus_);
+          const FieldElement &base = prev[mask];
+          cur[mask] = base * factor0;
+          cur[mask + old] = base * factor1;
         }
       }
     }
@@ -722,16 +719,15 @@ class ExtensionSumcheckProver {
     }
 
     const long half = 1L << (k - 1);
-    const std::vector<ZZ_pEX> &prefix =
+    const FieldVec &prefix =
         prefix_eq_by_vars_[static_cast<std::size_t>(k - 1)];
-    if (static_cast<long>(prefix.size()) != half) {
+    if (prefix.length() != half) {
       LogicError(
           "ExtensionSumcheckProver::CurrentPolynomial: prefix size mismatch");
     }
 
     const FieldElement one_base = BaseRingOne();
-    const FieldElement z_k_base =
-        ExtractBaseConstantCoefficient(z_[static_cast<std::size_t>(k - 1)]);
+    const FieldElement z_k_base = z_[static_cast<std::size_t>(k - 1)];
     const FieldElement factor0_base = one_base - z_k_base;
     const FieldElement delta_factor_base = z_k_base - factor0_base;
 
@@ -741,11 +737,8 @@ class ExtensionSumcheckProver {
     out.a2 = ExtensionZero();
 
     for (long mask = 0; mask < half; ++mask) {
-      const ZZ_pEX &prefix_mask = prefix[static_cast<std::size_t>(mask)];
-      const FieldElement prefix_mask_base =
-          ExtractBaseConstantCoefficient(prefix_mask);
       const ZZ_pEX common =
-          MulExtensionByBaseConstant(suffix_eq_prod_, prefix_mask_base);
+          MulExtensionByBaseConstant(suffix_eq_prod_, prefix[mask]);
 
       const ZZ_pEX eq0 = MulExtensionByBaseConstant(common, factor0_base);
       const ZZ_pEX delta_eq =
@@ -787,8 +780,8 @@ class ExtensionSumcheckProver {
           "ExtensionSumcheckProver::ReceiveChallenge: internal length mismatch");
     }
 
-    const ZZ_pEX eq = EqFactorExtension(z_[static_cast<std::size_t>(k - 1)],
-                                        r_kminus1, extension_modulus_);
+    const ZZ_pEX eq = EqFactorExtensionFromBase(
+        z_[static_cast<std::size_t>(k - 1)], r_kminus1, extension_modulus_);
     suffix_eq_prod_ = MulExtension(suffix_eq_prod_, eq, extension_modulus_);
 
     const long half = n / 2;
@@ -808,9 +801,9 @@ class ExtensionSumcheckProver {
   long d_ = 0;
   long cur_k_ = 0;
   ZZ_pEX extension_modulus_;
-  std::vector<ZZ_pEX> z_;
+  std::vector<FieldElement> z_;
   std::vector<ZZ_pEX> f_eval_table_;
-  std::vector<std::vector<ZZ_pEX>> prefix_eq_by_vars_;
+  std::vector<FieldVec> prefix_eq_by_vars_;
   ZZ_pEX suffix_eq_prod_;
 };
 
