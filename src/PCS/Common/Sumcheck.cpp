@@ -164,6 +164,17 @@ ProductSumcheckProver ProductSumcheckProver::FromMonomialCoeffs(
       BooleanEvalTableFromMonomialCoeffs(g_coeffs, d));
 }
 
+SumcheckMonomialPrecomputation BuildSumcheckMonomialPrecomputation(
+    const FieldVec &f_coeffs) {
+  const long d = ValidateEvalTableLengthOrThrow(
+      f_coeffs, "BuildSumcheckMonomialPrecomputation");
+  SumcheckMonomialPrecomputation out;
+  out.valid = true;
+  out.d = d;
+  out.f_eval_table = BooleanEvalTableFromMonomialCoeffs(f_coeffs, d);
+  return out;
+}
+
 QuadraticPoly ProductSumcheckProver::CurrentPolynomial() const {
   if (cur_k_ <= 0) {
     LogicError("ProductSumcheckProver::CurrentPolynomial: no remaining variables");
@@ -228,20 +239,30 @@ void ProductSumcheckProver::ReceiveChallenge(const FieldElement &r_kminus1) {
 
 SumcheckProver::SumcheckProver(const FieldVec &f_coeffs,
                                const std::vector<FieldElement> &z)
+    : SumcheckProver(BuildSumcheckMonomialPrecomputation(f_coeffs), z) {}
+
+SumcheckProver::SumcheckProver(
+    const SumcheckMonomialPrecomputation &precomputation,
+    const std::vector<FieldElement> &z)
     : z_(z) {
   Profile *prof = ActiveProfile();
   ScopedTimer timer(prof ? &prof->sumcheck_init_ns : nullptr,
                     prof ? &prof->sumcheck_init_calls : nullptr);
 
-  const long n = f_coeffs.length();
-  if (!IsPowerOfTwoLong(n))
-    LogicError("SumcheckProver: f_coeffs length must be 2^d");
-  d_ = Log2ExactPowerOfTwoLong(n);
+  if (!precomputation.valid) {
+    LogicError("SumcheckProver: precomputation must be valid");
+  }
+
+  d_ = ValidateEvalTableLengthOrThrow(precomputation.f_eval_table,
+                                      "SumcheckProver");
+  if (precomputation.d != d_) {
+    LogicError("SumcheckProver: precomputation dimension mismatch");
+  }
   if (z_.size() != static_cast<std::size_t>(d_))
     LogicError("SumcheckProver: z dimension mismatch");
 
   cur_k_ = d_;
-  f_eval_table_ = BooleanEvalTableFromMonomialCoeffs(f_coeffs, d_);
+  f_eval_table_ = precomputation.f_eval_table;
   prefix_eq_by_vars_ = PrecomputePrefixEqByVars(z_);
   suffix_eq_prod_ = One();
 }

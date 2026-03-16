@@ -16,6 +16,7 @@
 #include "bench/bench_basefold_pcs_artifact_common.hpp"
 #include "PCS/BaseFold/BaseFoldPCS.hpp"
 #include "PCS/BaseFold/ProofDeserialize.hpp"
+#include "PCS/BaseFold/ProofSerialize.hpp"
 #include "PCS/Common/MerkleMultiproofReplay.hpp"
 #include "PCS/Common/Multilinear.hpp"
 #include "PCS/BaseFold/ProofSize.hpp"
@@ -295,18 +296,37 @@ void TestPCS_EvalProof_GF4() {
   const basefold::BaseFoldPCSCommitArtifacts commit_artifacts =
       basefold::BaseFoldPCSBuildCommitArtifacts(f_coeffs, params);
   CHECK(commit_artifacts.root_d == commitment_root);
+  CHECK(commit_artifacts.base_sumcheck_precomputation.valid);
+  CHECK_EQ(commit_artifacts.base_sumcheck_precomputation.f_eval_table.length(),
+           f_coeffs.length());
   const long num_queries = 3;
   const basefold::BaseFoldPCSEvalProof proof =
       basefold::BaseFoldPCSProveEval(f_coeffs, z, y, num_queries, params);
   const basefold::BaseFoldPCSEvalProof proof_from_committed =
       basefold::BaseFoldPCSProveEvalFromCommittedTopOracle(
           f_coeffs, z, y, num_queries, params, commit_artifacts);
+  basefold::BaseFoldPCSCommitArtifacts commit_artifacts_without_sumcheck =
+      commit_artifacts;
+  commit_artifacts_without_sumcheck.base_sumcheck_precomputation = {};
+  const basefold::BaseFoldPCSEvalProof proof_from_committed_without_sumcheck =
+      basefold::BaseFoldPCSProveEvalFromCommittedTopOracle(
+          f_coeffs, z, y, num_queries, params,
+          commit_artifacts_without_sumcheck);
 
   CHECK(static_cast<long>(proof.query_multiproofs.size()) == params.d + 1);
   CHECK(basefold::BaseFoldPCSVerifyEval(commitment_root, z, y, num_queries,
                                         proof, params));
   CHECK(basefold::BaseFoldPCSVerifyEval(commitment_root, z, y, num_queries,
                                         proof_from_committed, params));
+  CHECK(basefold::BaseFoldPCSVerifyEval(commitment_root, z, y, num_queries,
+                                        proof_from_committed_without_sumcheck,
+                                        params));
+  basefold::FixedProofEncodingOptions encoding_options;
+  encoding_options.include_version_byte = true;
+  CHECK_EQ(basefold::SerializeBaseFoldPCSEvalProofFixedBytes(
+               proof_from_committed, encoding_options),
+           basefold::SerializeBaseFoldPCSEvalProofFixedBytes(
+               proof_from_committed_without_sumcheck, encoding_options));
   basefold::BaseFoldPCSEvalProof proof_without_indices = proof;
   for (basefold::MerkleMultiproof &multiproof :
        proof_without_indices.query_multiproofs) {

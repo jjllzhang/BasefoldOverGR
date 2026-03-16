@@ -204,7 +204,7 @@
 
 ### B1. BaseFold sumcheck 初始化缓存到 committed witness
 
-状态：`pending`
+状态：`completed`
 
 前提：
 - 只在“同一 commitment 反复 opening / prove”是现实工作流时做。
@@ -222,6 +222,12 @@
 - 研究把 `SumcheckProver` 初始化所需的预处理工件缓存到 prover-local committed witness。
 - 只缓存 prover 本地中间态，不进入 proof，不改变 verifier。
 
+本轮已完成：
+- 在 `Sumcheck.cpp` 中拆出 `SumcheckMonomialPrecomputation`，只缓存 witness 相关的 base boolean-eval table。
+- 将该 precompute 挂到 `BaseFoldPCSCommitArtifacts`，由 `BaseFoldPCSBuildCommitArtifacts*` 构建并由 base prove 路径复用。
+- 保持 `z` 相关的 prefix equality table 仍在 prove 时按 opening 点现算，不把 point-dependent 状态混入 commit artifacts。
+- 增加 regression test：同一组 `commit_artifacts` 在开启 / 关闭该 cache 时生成的 proof 固定序列化字节一致。
+
 风险点：
 - 内存占用会上升。
 - 需要严格限定为 prover-local cache，不能把“只是为了加速”的状态混进协议对象。
@@ -229,6 +235,23 @@
 验收：
 - BaseFold tests 全绿。
 - 在“同一 commit，多次 prove”微基准下看到收益。
+
+代表性结果：
+- `OMP_NUM_THREADS=1`, `GR(4,2)`, `d=12`, `queries=4`, `warmup=1`, `reps=3`
+- `bench_basefold_pcs_prove`:
+  - prove-phase `18.426 ms -> 17.813 ms`
+  - `SumcheckProver init` `6.961 ms -> 1.762 ms`（总计 3 reps）
+- `bench_basefold_pcs_eval`:
+  - prove-phase `16.924 ms -> 15.538 ms`
+  - `SumcheckProver init` `7.103 ms -> 2.777 ms`（总计 3 reps）
+- 结论：这轮确实把 base path 里“重复 monomial-to-boolean transform”的大头挪出了 prove 热路径；当前低-query prove-phase 的下一个主要桶已转到 folding commit rounds。
+
+extension-challenge 后续方向：
+- 当前 `bench_basefold_pcs_prove --use-extension-challenges` 的主要桶是 `ExtensionCommitRound`，其次是 `ExtensionSumcheck` 的 init / receive。
+- 下一步如果要优化 extension-challenge，优先顺序应是：
+  - 复用这轮缓存的 base boolean-eval table，并在 prove 时 lift 到 `E(U)`，避免重新跑 `BooleanEvalTableFromMonomialCoeffsExtension`
+  - 再看 extension 版 commit round 的 scratch / denom 复用
+  - 最后再考虑 extension prefix-equality 的 point-dependent预处理
 
 ### B2. folding commit round 的 scratch buffer 复用
 
@@ -313,6 +336,6 @@ ctest --test-dir build-release --output-on-failure
 | A1 | Frobenius / RingSwitch unchecked 热路径 | A | completed | `src/Compiler/Z2k/*PCS.cpp` | outer prover mean |
 | A2 | equality table 迭代 helper | A | completed | `src/Compiler/Z2k/*PCS.cpp`, `src/PCS/Common/*` | outer prover mean |
 | A3 | multiproof 查找表 | A | completed | `BaseFoldPCSVerify.cpp`, `BaseFoldPCSExtension.cpp` | verifier mean |
-| B1 | BaseFold sumcheck init cache | B | pending | `Sumcheck.cpp`, `BaseFoldPCSProve.cpp` | repeated-prove 微基准 |
+| B1 | BaseFold sumcheck init cache | B | completed | `Sumcheck.cpp`, `BaseFoldPCSProve.cpp` | repeated-prove 微基准 |
 | B2 | scratch buffer 复用 | B | pending | `BaseFoldPCSCommon.cpp`, `BaseFoldPCSExtension.cpp` | prove-phase 小幅下降 |
 | B3 | 编码器常见参数专门化 | B | completed | `FoldableCode.cpp` | encode-only mean |

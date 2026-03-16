@@ -11,6 +11,15 @@ using NTL::vec_ZZ_pE;
 namespace basefold {
 namespace {
 
+SumcheckProver MakeBaseSumcheckProver(
+    const vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
+    const BaseFoldPCSCommitArtifacts &commit_artifacts) {
+  if (commit_artifacts.base_sumcheck_precomputation.valid) {
+    return SumcheckProver(commit_artifacts.base_sumcheck_precomputation, z);
+  }
+  return SumcheckProver(f_coeffs, z);
+}
+
 BaseFoldPCSEvalProof ProveEvalFromCommittedTopOracleUnchecked(
     const vec_ZZ_pE &f_coeffs, const std::vector<FieldElement> &z,
     const FieldElement &claimed_y, long num_queries,
@@ -40,7 +49,7 @@ BaseFoldPCSEvalProof ProveEvalFromCommittedTopOracleUnchecked(
   std::vector<Oracle> oracles(static_cast<std::size_t>(params.d));
   std::vector<MerkleTree> merkle(static_cast<std::size_t>(params.d));
 
-  SumcheckProver sumcheck(f_coeffs, z);
+  SumcheckProver sumcheck = MakeBaseSumcheckProver(f_coeffs, z, commit_artifacts);
 
   const QuadraticPoly h_d = sumcheck.CurrentPolynomial();
   proof.h_by_level[static_cast<std::size_t>(params.d - 1)] = h_d;

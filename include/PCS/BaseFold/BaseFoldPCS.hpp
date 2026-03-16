@@ -31,10 +31,13 @@ struct ExtensionMerkleMultiproof {
 //
 // These let callers precompute the top codeword/oracle pi_d and its Merkle tree,
 // then build evaluation proofs without re-running the top encode/commit stage.
+// `base_sumcheck_precomputation` is prover-local cache data and never enters the
+// proof or verifier API.
 struct BaseFoldPCSCommitArtifacts {
   Oracle pi_d;
   MerkleTree merkle_d;
   MerkleRoot root_d;
+  SumcheckMonomialPrecomputation base_sumcheck_precomputation;
 };
 
 // Additional proof payload used by the extension-challenge path.

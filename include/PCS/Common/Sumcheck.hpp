@@ -53,12 +53,32 @@ class ProductSumcheckProver {
 // (given in monomial-basis coefficients).
 //
 // This prover never divides; it works over both finite fields and Galois rings.
+struct SumcheckMonomialPrecomputation {
+  bool valid = false;
+  long d = 0;
+  FieldVec f_eval_table;
+};
+
+// Precomputes the witness-only part of BaseFold sumcheck initialization.
+//
+// This cache depends only on `f_coeffs`, so callers can build it once during
+// commit and reuse it across multiple openings/proofs for the same witness.
+SumcheckMonomialPrecomputation BuildSumcheckMonomialPrecomputation(
+    const FieldVec &f_coeffs);
+
 class SumcheckProver {
  public:
   // Preconditions:
   // - f_coeffs.length() == 2^d for some d>=0
   // - z.size() == d
   SumcheckProver(const FieldVec &f_coeffs,
+                 const std::vector<FieldElement> &z);
+
+  // Preconditions:
+  // - precomputation.valid
+  // - precomputation.f_eval_table.length() == 2^d for some d>=0
+  // - z.size() == d
+  SumcheckProver(const SumcheckMonomialPrecomputation &precomputation,
                  const std::vector<FieldElement> &z);
 
   long Dimension() const { return d_; }
