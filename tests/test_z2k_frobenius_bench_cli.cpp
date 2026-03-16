@@ -178,8 +178,8 @@ void TestFrobeniusBenchEval_HelpTextIsStable() {
   const fs::path exe = g_executable_dir / "bench_z2k_frobenius_eval";
   ExpectCommandSuccessContains(
       exe, {"--help"},
-      {"bench_z2k_frobenius_eval", "--queries <int>",
-       "serializer-backed bytes"},
+      {"bench_z2k_frobenius_eval", "--queries <int>", "--checked",
+       "unchecked prover hot path", "serializer-backed bytes"},
       "TestFrobeniusBenchEval_HelpTextIsStable");
 }
 
@@ -202,8 +202,8 @@ void TestFrobeniusBenchOuterProve_HelpTextIsStable() {
   const fs::path exe = g_executable_dir / "bench_z2k_frobenius_outer_prove";
   ExpectCommandSuccessContains(
       exe, {"--help"},
-      {"bench_z2k_frobenius_outer_prove", "--queries <int>",
-       "outer proof generation"},
+      {"bench_z2k_frobenius_outer_prove", "--queries <int>", "--checked",
+       "unchecked prover hot path", "outer proof generation"},
       "TestFrobeniusBenchOuterProve_HelpTextIsStable");
 }
 
@@ -339,6 +339,18 @@ void TestFrobeniusBenchEval_HardcodedPresetForGR2P32_64() {
 #endif
 }
 
+void TestFrobeniusBenchEval_CheckedFlagAccepted() {
+  testutil::PrintInfo(
+      "Frobenius bench CLI: eval accepts --checked and still prints stable fields");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_frobenius_eval";
+  ExpectCommandSuccessContains(
+      exe, {"--checked", "--warmup", "0", "--reps", "1", "--queries", "2",
+            "--seed", "31"},
+      {"[frobenius eval]", "prove-phase mean", "verifier mean"},
+      "TestFrobeniusBenchEval_CheckedFlagAccepted");
+}
+
 void TestFrobeniusBenchOuterProve_SmokeRunPrintsStableFieldsAndSizes() {
   testutil::PrintInfo(
       "Frobenius bench CLI: outer prove smoke run prints stable fields and sane proof sizes");
@@ -376,6 +388,18 @@ void TestFrobeniusBenchOuterProve_SmokeRunPrintsStableFieldsAndSizes() {
   testutil::PrintInfo(
       "TestFrobeniusBenchOuterProve_SmokeRunPrintsStableFieldsAndSizes: skipped subprocess assertion on this platform");
 #endif
+}
+
+void TestFrobeniusBenchOuterProve_CheckedFlagAccepted() {
+  testutil::PrintInfo(
+      "Frobenius bench CLI: outer prove accepts --checked and still prints stable fields");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_frobenius_outer_prove";
+  ExpectCommandSuccessContains(
+      exe, {"--checked", "--warmup", "0", "--reps", "1", "--queries", "2",
+            "--seed", "37"},
+      {"[frobenius outer prove]", "prove-phase mean", "proof size"},
+      "TestFrobeniusBenchOuterProve_CheckedFlagAccepted");
 }
 
 void TestFrobeniusBenchOuterVerify_SmokeRunPrintsStableFieldsAndSizes() {
@@ -432,7 +456,9 @@ int main(int argc, char **argv) {
   RUN_TEST(TestFrobeniusBenchOuterCommit_SmokeRunPrintsStableFields);
   RUN_TEST(TestFrobeniusBenchEval_SmokeRunPrintsStableFieldsAndSizes);
   RUN_TEST(TestFrobeniusBenchEval_HardcodedPresetForGR2P32_64);
+  RUN_TEST(TestFrobeniusBenchEval_CheckedFlagAccepted);
   RUN_TEST(TestFrobeniusBenchOuterProve_SmokeRunPrintsStableFieldsAndSizes);
+  RUN_TEST(TestFrobeniusBenchOuterProve_CheckedFlagAccepted);
   RUN_TEST(TestFrobeniusBenchOuterVerify_SmokeRunPrintsStableFieldsAndSizes);
 
   if (g_test_failure_count != 0) {

@@ -519,13 +519,18 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
     const MerkleRoot &commitment, const std::vector<FieldElement> &z,
     const FieldElement &claimed_s, long num_queries,
     const RingSwitchPCSOuterCommitArtifacts &commit_artifacts,
-    const char *func_name) {
-  ValidateEvalInputsOrThrow(params, t_table, z, num_queries, func_name);
-  ValidateOuterCommitArtifactsOrThrow(params, commit_artifacts, func_name);
+    bool checked_path, const char *func_name) {
+  if (checked_path) {
+    ValidateEvalInputsOrThrow(params, t_table, z, num_queries, func_name);
+    ValidateOuterCommitArtifactsOrThrow(params, commit_artifacts, func_name);
+  }
 
-  const FieldElement direct_eval = ComputeOriginalEvaluation(t_table, z);
-  if (direct_eval != claimed_s) {
-    LogicError((std::string(func_name) + ": claimed_s must equal t(z)").c_str());
+  if (checked_path) {
+    const FieldElement direct_eval = ComputeOriginalEvaluation(t_table, z);
+    if (direct_eval != claimed_s) {
+      LogicError(
+          (std::string(func_name) + ": claimed_s must equal t(z)").c_str());
+    }
   }
 
   const std::vector<FieldElement> z_prefix = SlicePoint(z, 0, params.kappa);
@@ -540,17 +545,19 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
 
   const std::vector<FieldElement> recovered_partials =
       RecoverPartialEvaluationsFromSByU(params, out.proof.s_by_u);
-  const std::vector<FieldElement> direct_partials =
-      ComputeDirectPartialEvaluations(params, t_table, z_suffix);
-  if (recovered_partials != direct_partials) {
-    LogicError((std::string(func_name) +
-                ": recovered partial evaluations do not match Appendix C.1 reconstruction")
-                   .c_str());
-  }
-  if (RecombineClaimFromPartials(recovered_partials, z_prefix) != claimed_s) {
-    LogicError((std::string(func_name) +
-                ": Equality Check 1 failed on honest witness")
-                   .c_str());
+  if (checked_path) {
+    const std::vector<FieldElement> direct_partials =
+        ComputeDirectPartialEvaluations(params, t_table, z_suffix);
+    if (recovered_partials != direct_partials) {
+      LogicError((std::string(func_name) +
+                  ": recovered partial evaluations do not match Appendix C.1 reconstruction")
+                     .c_str());
+    }
+    if (RecombineClaimFromPartials(recovered_partials, z_prefix) != claimed_s) {
+      LogicError((std::string(func_name) +
+                  ": Equality Check 1 failed on honest witness")
+                     .c_str());
+    }
   }
 
   HashTranscript transcript = MakeRingSwitchTranscript();
@@ -593,7 +600,8 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
       }
     }
 
-    if (!CheckProductSumcheckChain(initial_claim, out.proof.h_by_level,
+    if (checked_path &&
+        !CheckProductSumcheckChain(initial_claim, out.proof.h_by_level,
                                    out.rprime_suffix)) {
       LogicError((std::string(func_name) +
                   ": honest product sumcheck chain is inconsistent")
@@ -609,17 +617,53 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
                      out.rprime_suffix.end());
   const FieldElement g_star =
       EvalMultilinearMonomialCoeffs(tensor.r_monomial_coeffs, rprime_full);
-  const FieldElement final_sumcheck_claim =
-      (params.ell_prime == 0)
-          ? initial_claim
-          : out.proof.h_by_level[0].Eval(out.rprime_suffix[0]);
-  if (final_sumcheck_claim != out.proof.t_star * g_star) {
-    LogicError((std::string(func_name) +
-                ": honest Equality Check 3 failed")
-                   .c_str());
+  if (checked_path) {
+    const FieldElement final_sumcheck_claim =
+        (params.ell_prime == 0)
+            ? initial_claim
+            : out.proof.h_by_level[0].Eval(out.rprime_suffix[0]);
+    if (final_sumcheck_claim != out.proof.t_star * g_star) {
+      LogicError((std::string(func_name) +
+                  ": honest Equality Check 3 failed")
+                     .c_str());
+    }
   }
 
   return out;
+}
+
+RingSwitchPCSEvalProof ProveEvalFromCommitArtifactsInternal(
+    const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const RingSwitchPCSCommitArtifacts &commit_artifacts,
+    bool checked_path, const char *func_name) {
+  if (checked_path) {
+    ValidateCommitArtifactsOrThrow(params, commit_artifacts, func_name);
+  }
+
+  RingSwitchPCSOuterCommitArtifacts outer_commit_artifacts;
+  outer_commit_artifacts.t_packed_table = commit_artifacts.t_packed_table;
+  outer_commit_artifacts.t_packed_monomial_coeffs =
+      commit_artifacts.t_packed_monomial_coeffs;
+  OuterProveEvalResult outer = ProveOuterEvalFromCommitArtifactsInternal(
+      params, t_table, commit_artifacts.commitment, z, claimed_s, num_queries,
+      outer_commit_artifacts, checked_path, func_name);
+
+  RingSwitchPCSEvalProof proof;
+  proof.s_by_u = outer.proof.s_by_u;
+  proof.h_by_level = outer.proof.h_by_level;
+  proof.t_star = outer.proof.t_star;
+
+  {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->z2k_backend_prove_ns : nullptr,
+                      prof ? &prof->z2k_backend_prove_calls : nullptr);
+    proof.backend_proof = Z2kPCSBackendProveEval(
+        params.backend, commit_artifacts.t_packed_monomial_coeffs,
+        outer.rprime_suffix, proof.t_star, num_queries,
+        &commit_artifacts.backend_commit_artifacts);
+  }
+  return proof;
 }
 
 bool VerifyOuterEvalAndMaybeRecoverSuffix(
@@ -914,6 +958,16 @@ RingSwitchPCSEvalProof RingSwitchPCSProveEval(
       params, t_table, z, claimed_s, num_queries, commit_artifacts);
 }
 
+RingSwitchPCSEvalProof RingSwitchPCSProveEvalUnchecked(
+    const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries) {
+  const RingSwitchPCSCommitArtifacts commit_artifacts =
+      RingSwitchPCSBuildCommitArtifacts(params, t_table);
+  return RingSwitchPCSProveEvalFromCommitArtifactsUnchecked(
+      params, t_table, z, claimed_s, num_queries, commit_artifacts);
+}
+
 RingSwitchPCSOuterEvalProof RingSwitchPCSProveOuterEval(
     const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table,
     const MerkleRoot &commitment, const std::vector<FieldElement> &z,
@@ -924,6 +978,16 @@ RingSwitchPCSOuterEvalProof RingSwitchPCSProveOuterEval(
       params, t_table, commitment, z, claimed_s, num_queries, commit_artifacts);
 }
 
+RingSwitchPCSOuterEvalProof RingSwitchPCSProveOuterEvalUnchecked(
+    const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table,
+    const MerkleRoot &commitment, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_s, long num_queries) {
+  const RingSwitchPCSOuterCommitArtifacts commit_artifacts =
+      RingSwitchPCSBuildOuterCommitArtifacts(params, t_table);
+  return RingSwitchPCSProveOuterEvalFromCommitArtifactsUnchecked(
+      params, t_table, commitment, z, claimed_s, num_queries, commit_artifacts);
+}
+
 RingSwitchPCSOuterEvalProof RingSwitchPCSProveOuterEvalFromCommitArtifacts(
     const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table,
     const MerkleRoot &commitment, const std::vector<FieldElement> &z,
@@ -931,8 +995,20 @@ RingSwitchPCSOuterEvalProof RingSwitchPCSProveOuterEvalFromCommitArtifacts(
     const RingSwitchPCSOuterCommitArtifacts &commit_artifacts) {
   return ProveOuterEvalFromCommitArtifactsInternal(
              params, t_table, commitment, z, claimed_s, num_queries,
-             commit_artifacts,
+             commit_artifacts, /*checked_path=*/true,
              "RingSwitchPCSProveOuterEvalFromCommitArtifacts")
+      .proof;
+}
+
+RingSwitchPCSOuterEvalProof RingSwitchPCSProveOuterEvalFromCommitArtifactsUnchecked(
+    const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table,
+    const MerkleRoot &commitment, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_s, long num_queries,
+    const RingSwitchPCSOuterCommitArtifacts &commit_artifacts) {
+  return ProveOuterEvalFromCommitArtifactsInternal(
+             params, t_table, commitment, z, claimed_s, num_queries,
+             commit_artifacts, /*checked_path=*/false,
+             "RingSwitchPCSProveOuterEvalFromCommitArtifactsUnchecked")
       .proof;
 }
 
@@ -940,31 +1016,19 @@ RingSwitchPCSEvalProof RingSwitchPCSProveEvalFromCommitArtifacts(
     const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table,
     const std::vector<FieldElement> &z, const FieldElement &claimed_s,
     long num_queries, const RingSwitchPCSCommitArtifacts &commit_artifacts) {
-  ValidateCommitArtifactsOrThrow(params, commit_artifacts,
-                                 "RingSwitchPCSProveEvalFromCommitArtifacts");
-  RingSwitchPCSOuterCommitArtifacts outer_commit_artifacts;
-  outer_commit_artifacts.t_packed_table = commit_artifacts.t_packed_table;
-  outer_commit_artifacts.t_packed_monomial_coeffs =
-      commit_artifacts.t_packed_monomial_coeffs;
-  OuterProveEvalResult outer = ProveOuterEvalFromCommitArtifactsInternal(
-      params, t_table, commit_artifacts.commitment, z, claimed_s, num_queries,
-      outer_commit_artifacts, "RingSwitchPCSProveEvalFromCommitArtifacts");
+  return ProveEvalFromCommitArtifactsInternal(
+      params, t_table, z, claimed_s, num_queries, commit_artifacts,
+      /*checked_path=*/true, "RingSwitchPCSProveEvalFromCommitArtifacts");
+}
 
-  RingSwitchPCSEvalProof proof;
-  proof.s_by_u = outer.proof.s_by_u;
-  proof.h_by_level = outer.proof.h_by_level;
-  proof.t_star = outer.proof.t_star;
-
-  {
-    Profile *prof = ActiveProfile();
-    ScopedTimer timer(prof ? &prof->z2k_backend_prove_ns : nullptr,
-                      prof ? &prof->z2k_backend_prove_calls : nullptr);
-    proof.backend_proof = Z2kPCSBackendProveEval(
-        params.backend, commit_artifacts.t_packed_monomial_coeffs,
-        outer.rprime_suffix, proof.t_star, num_queries,
-        &commit_artifacts.backend_commit_artifacts);
-  }
-  return proof;
+RingSwitchPCSEvalProof RingSwitchPCSProveEvalFromCommitArtifactsUnchecked(
+    const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const RingSwitchPCSCommitArtifacts &commit_artifacts) {
+  return ProveEvalFromCommitArtifactsInternal(
+      params, t_table, z, claimed_s, num_queries, commit_artifacts,
+      /*checked_path=*/false,
+      "RingSwitchPCSProveEvalFromCommitArtifactsUnchecked");
 }
 
 bool RingSwitchPCSVerifyEval(const RingSwitchPCSParams &params,

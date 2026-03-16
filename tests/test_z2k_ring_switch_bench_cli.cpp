@@ -148,9 +148,21 @@ void TestRingSwitchBenchEval_HelpTextIsStable() {
   const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_eval";
   ExpectCommandSuccessContains(
       exe, {"--help"},
-      {"bench_z2k_ring_switch_eval", "--queries <int>",
-       "hardcoded bench presets"},
+      {"bench_z2k_ring_switch_eval", "--queries <int>", "--checked",
+       "unchecked prover hot path", "hardcoded bench presets"},
       "TestRingSwitchBenchEval_HelpTextIsStable");
+}
+
+void TestRingSwitchBenchOuterProve_HelpTextIsStable() {
+  testutil::PrintInfo(
+      "Ring-switch bench CLI: outer prove --help prints stable usage anchors");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_outer_prove";
+  ExpectCommandSuccessContains(
+      exe, {"--help"},
+      {"bench_z2k_ring_switch_outer_prove", "--queries <int>", "--checked",
+       "unchecked prover hot path", "compiler-side outer proof generation"},
+      "TestRingSwitchBenchOuterProve_HelpTextIsStable");
 }
 
 void TestRingSwitchBenchCommit_DefaultPresetForGR2p16r64() {
@@ -185,14 +197,41 @@ void TestRingSwitchBenchEval_DefaultPresetForGR2p32r64() {
       "TestRingSwitchBenchEval_DefaultPresetForGR2p32r64");
 }
 
+void TestRingSwitchBenchEval_CheckedFlagAccepted() {
+  testutil::PrintInfo(
+      "Ring-switch bench CLI: eval accepts --checked and still prints stable fields");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_eval";
+  ExpectCommandSuccessContains(
+      exe,
+      {"--checked", "--warmup", "0", "--reps", "1", "--queries", "2"},
+      {"[ring-switch eval]", "prove-phase mean", "verifier mean"},
+      "TestRingSwitchBenchEval_CheckedFlagAccepted");
+}
+
+void TestRingSwitchBenchOuterProve_CheckedFlagAccepted() {
+  testutil::PrintInfo(
+      "Ring-switch bench CLI: outer prove accepts --checked and still prints stable fields");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_outer_prove";
+  ExpectCommandSuccessContains(
+      exe,
+      {"--checked", "--warmup", "0", "--reps", "1", "--queries", "2"},
+      {"[ring-switch outer prove]", "prove-phase mean", "proof size"},
+      "TestRingSwitchBenchOuterProve_CheckedFlagAccepted");
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
   g_executable_dir = DetectExecutableDir(argc > 0 ? argv[0] : nullptr);
   TestRingSwitchBenchCommit_HelpTextIsStable();
   TestRingSwitchBenchEval_HelpTextIsStable();
+  TestRingSwitchBenchOuterProve_HelpTextIsStable();
   TestRingSwitchBenchCommit_DefaultPresetForGR2p16r64();
   TestRingSwitchBenchEval_DefaultPresetForGR2p32r64();
+  TestRingSwitchBenchEval_CheckedFlagAccepted();
+  TestRingSwitchBenchOuterProve_CheckedFlagAccepted();
 
   if (g_test_failure_count != 0) {
     std::cerr << g_test_failure_count << " ring-switch bench CLI test(s) failed\n";

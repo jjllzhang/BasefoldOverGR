@@ -37,7 +37,7 @@
 
 ### A1. Frobenius / RingSwitch outer prover 增加 unchecked 热路径
 
-状态：`pending`
+状态：`completed`（2026-03-16）
 
 目的：
 - 去掉 prover 热路径里仅用于 honest-witness 自检的重复重算。
@@ -68,6 +68,25 @@
 - `tests/test_z2k_frobenius_bench_cli.cpp`
 - `tests/test_z2k_ring_switch_bench_cli.cpp`
 - 前后对比 `bench_z2k_frobenius_eval` 的 outer prover mean。
+
+已完成内容：
+- 新增 Frobenius / RingSwitch 的 checked / unchecked prove API 分层：
+  - `ProveOuterEvalUnchecked(...)`
+  - `ProveOuterEvalFromCommitArtifactsUnchecked(...)`
+  - `ProveEvalUnchecked(...)`
+  - `ProveEvalFromCommitArtifactsUnchecked(...)`
+- checked 路径保留 prover 侧 honest-witness 自检；unchecked 路径跳过这些仅用于本地防呆的重算。
+- `Prover` / `OuterProver` class 默认仍走 checked API，不静默改变普通调用语义。
+- `bench_z2k_frobenius_eval`
+- `bench_z2k_ring_switch_eval`
+- `bench_z2k_frobenius_outer_prove`
+- `bench_z2k_ring_switch_outer_prove`
+  默认改为走 unchecked；新增 `--checked` 显式切回 checked 路径。
+- 补充 checked/unchecked 一致性回归测试与 CLI `--checked` 覆盖。
+
+本轮验证：
+- `cmake --build build-release -j 4 --target bench_z2k_frobenius_eval bench_z2k_ring_switch_eval bench_z2k_frobenius_outer_prove bench_z2k_ring_switch_outer_prove test_z2k_frobenius_bench_cli test_z2k_ring_switch_bench_cli test_z2k_frobenius_pcs test_z2k_ring_switch_pcs`
+- `ctest --test-dir build-release --output-on-failure -R 'test_z2k_(frobenius|ring_switch)_(bench_cli|pcs)'`
 
 ### A2. 共享并重写 equality table 构造为迭代 DP
 
@@ -221,7 +240,7 @@ ctest --test-dir build-release --output-on-failure
 
 | ID | 任务 | 优先级 | 状态 | 主要文件 | 验收基准 |
 |---|---|---|---|---|---|
-| A1 | Frobenius / RingSwitch unchecked 热路径 | A | pending | `src/Compiler/Z2k/*PCS.cpp` | outer prover mean |
+| A1 | Frobenius / RingSwitch unchecked 热路径 | A | completed | `src/Compiler/Z2k/*PCS.cpp` | outer prover mean |
 | A2 | equality table 迭代 helper | A | pending | `src/Compiler/Z2k/*PCS.cpp`, `src/PCS/Common/*` | outer prover mean |
 | A3 | multiproof 查找表 | A | pending | `BaseFoldPCSVerify.cpp`, `BaseFoldPCSExtension.cpp` | verifier mean |
 | B1 | BaseFold sumcheck init cache | B | pending | `Sumcheck.cpp`, `BaseFoldPCSProve.cpp` | repeated-prove 微基准 |

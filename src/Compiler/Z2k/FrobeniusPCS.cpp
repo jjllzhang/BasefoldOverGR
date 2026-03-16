@@ -600,13 +600,18 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
     const MerkleRoot &commitment, const std::vector<FieldElement> &z,
     const FieldElement &claimed_s, long num_queries,
     const FrobeniusPCSOuterCommitArtifacts &commit_artifacts,
-    const char *func_name) {
-  ValidateEvalInputsOrThrow(params, t_table, z, num_queries, func_name);
-  ValidateOuterCommitArtifactsOrThrow(params, commit_artifacts, func_name);
+    bool checked_path, const char *func_name) {
+  if (checked_path) {
+    ValidateEvalInputsOrThrow(params, t_table, z, num_queries, func_name);
+    ValidateOuterCommitArtifactsOrThrow(params, commit_artifacts, func_name);
+  }
 
-  const FieldElement direct_eval = ComputeOriginalEvaluation(t_table, z);
-  if (direct_eval != claimed_s) {
-    LogicError((std::string(func_name) + ": claimed_s must equal t(z)").c_str());
+  if (checked_path) {
+    const FieldElement direct_eval = ComputeOriginalEvaluation(t_table, z);
+    if (direct_eval != claimed_s) {
+      LogicError(
+          (std::string(func_name) + ": claimed_s must equal t(z)").c_str());
+    }
   }
 
   const std::vector<FieldElement> z_prefix = SlicePoint(z, 0, params.kappa);
@@ -622,17 +627,19 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
 
   const std::vector<FieldElement> recovered_partials =
       RecoverPartialEvaluationsFromSByI(params, out.proof.s_by_i);
-  const std::vector<FieldElement> direct_partials =
-      ComputeDirectPartialEvaluations(params, t_table, r_suffix);
-  if (recovered_partials != direct_partials) {
-    LogicError((std::string(func_name) +
-                ": recovered partial evaluations do not match Protocol 2 reconstruction")
-                   .c_str());
-  }
-  if (RecombineClaimFromPartials(recovered_partials, z_prefix) != claimed_s) {
-    LogicError((std::string(func_name) +
-                ": Equality Check 1 failed on honest witness")
-                   .c_str());
+  if (checked_path) {
+    const std::vector<FieldElement> direct_partials =
+        ComputeDirectPartialEvaluations(params, t_table, r_suffix);
+    if (recovered_partials != direct_partials) {
+      LogicError((std::string(func_name) +
+                  ": recovered partial evaluations do not match Protocol 2 reconstruction")
+                     .c_str());
+    }
+    if (RecombineClaimFromPartials(recovered_partials, z_prefix) != claimed_s) {
+      LogicError((std::string(func_name) +
+                  ": Equality Check 1 failed on honest witness")
+                     .c_str());
+    }
   }
 
   HashTranscript transcript = MakeFrobeniusTranscript();
@@ -677,7 +684,8 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
       }
     }
 
-    if (!CheckProductSumcheckChain(initial_claim, out.proof.h_by_level,
+    if (checked_path &&
+        !CheckProductSumcheckChain(initial_claim, out.proof.h_by_level,
                                    out.rprime_suffix)) {
       LogicError((std::string(func_name) +
                   ": honest product sumcheck chain is inconsistent")
@@ -689,17 +697,53 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
       commit_artifacts.t_packed_monomial_coeffs, out.rprime_suffix);
   const FieldElement g_star =
       ComputeFinalGStar(lambda_by_i, suffix_orbit, out.rprime_suffix);
-  const FieldElement final_sumcheck_claim =
-      (params.ell_prime == 0)
-          ? initial_claim
-          : out.proof.h_by_level[0].Eval(out.rprime_suffix[0]);
-  if (final_sumcheck_claim != out.proof.t_star * g_star) {
-    LogicError((std::string(func_name) +
-                ": honest Equality Check 3 failed")
-                   .c_str());
+  if (checked_path) {
+    const FieldElement final_sumcheck_claim =
+        (params.ell_prime == 0)
+            ? initial_claim
+            : out.proof.h_by_level[0].Eval(out.rprime_suffix[0]);
+    if (final_sumcheck_claim != out.proof.t_star * g_star) {
+      LogicError((std::string(func_name) +
+                  ": honest Equality Check 3 failed")
+                     .c_str());
+    }
   }
 
   return out;
+}
+
+FrobeniusPCSEvalProof ProveEvalFromCommitArtifactsInternal(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const FrobeniusPCSCommitArtifacts &commit_artifacts,
+    bool checked_path, const char *func_name) {
+  if (checked_path) {
+    ValidateCommitArtifactsOrThrow(params, commit_artifacts, func_name);
+  }
+
+  FrobeniusPCSOuterCommitArtifacts outer_commit_artifacts;
+  outer_commit_artifacts.t_packed_table = commit_artifacts.t_packed_table;
+  outer_commit_artifacts.t_packed_monomial_coeffs =
+      commit_artifacts.t_packed_monomial_coeffs;
+  OuterProveEvalResult outer = ProveOuterEvalFromCommitArtifactsInternal(
+      params, t_table, commit_artifacts.commitment, z, claimed_s, num_queries,
+      outer_commit_artifacts, checked_path, func_name);
+
+  FrobeniusPCSEvalProof proof;
+  proof.s_by_i = outer.proof.s_by_i;
+  proof.h_by_level = outer.proof.h_by_level;
+  proof.t_star = outer.proof.t_star;
+
+  {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->z2k_backend_prove_ns : nullptr,
+                      prof ? &prof->z2k_backend_prove_calls : nullptr);
+    proof.backend_proof = Z2kPCSBackendProveEval(
+        params.backend, commit_artifacts.t_packed_monomial_coeffs,
+        outer.rprime_suffix, proof.t_star, num_queries,
+        &commit_artifacts.backend_commit_artifacts);
+  }
+  return proof;
 }
 
 bool VerifyOuterEvalAndMaybeRecoverSuffix(
@@ -1030,6 +1074,16 @@ FrobeniusPCSOuterEvalProof FrobeniusPCSProveOuterEval(
       params, t_table, commitment, z, claimed_s, num_queries, commit_artifacts);
 }
 
+FrobeniusPCSOuterEvalProof FrobeniusPCSProveOuterEvalUnchecked(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const MerkleRoot &commitment, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_s, long num_queries) {
+  const FrobeniusPCSOuterCommitArtifacts commit_artifacts =
+      FrobeniusPCSBuildOuterCommitArtifacts(params, t_table);
+  return FrobeniusPCSProveOuterEvalFromCommitArtifactsUnchecked(
+      params, t_table, commitment, z, claimed_s, num_queries, commit_artifacts);
+}
+
 FrobeniusPCSOuterEvalProof FrobeniusPCSProveOuterEvalFromCommitArtifacts(
     const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table,
     const MerkleRoot &commitment, const std::vector<FieldElement> &z,
@@ -1037,7 +1091,20 @@ FrobeniusPCSOuterEvalProof FrobeniusPCSProveOuterEvalFromCommitArtifacts(
     const FrobeniusPCSOuterCommitArtifacts &commit_artifacts) {
   return ProveOuterEvalFromCommitArtifactsInternal(
              params, t_table, commitment, z, claimed_s, num_queries,
-             commit_artifacts, "FrobeniusPCSProveOuterEvalFromCommitArtifacts")
+             commit_artifacts, /*checked_path=*/true,
+             "FrobeniusPCSProveOuterEvalFromCommitArtifacts")
+      .proof;
+}
+
+FrobeniusPCSOuterEvalProof FrobeniusPCSProveOuterEvalFromCommitArtifactsUnchecked(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const MerkleRoot &commitment, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_s, long num_queries,
+    const FrobeniusPCSOuterCommitArtifacts &commit_artifacts) {
+  return ProveOuterEvalFromCommitArtifactsInternal(
+             params, t_table, commitment, z, claimed_s, num_queries,
+             commit_artifacts, /*checked_path=*/false,
+             "FrobeniusPCSProveOuterEvalFromCommitArtifactsUnchecked")
       .proof;
 }
 
@@ -1051,35 +1118,33 @@ FrobeniusPCSEvalProof FrobeniusPCSProveEval(
       params, t_table, z, claimed_s, num_queries, commit_artifacts);
 }
 
+FrobeniusPCSEvalProof FrobeniusPCSProveEvalUnchecked(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries) {
+  const FrobeniusPCSCommitArtifacts commit_artifacts =
+      FrobeniusPCSBuildCommitArtifacts(params, t_table);
+  return FrobeniusPCSProveEvalFromCommitArtifactsUnchecked(
+      params, t_table, z, claimed_s, num_queries, commit_artifacts);
+}
+
 FrobeniusPCSEvalProof FrobeniusPCSProveEvalFromCommitArtifacts(
     const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table,
     const std::vector<FieldElement> &z, const FieldElement &claimed_s,
     long num_queries, const FrobeniusPCSCommitArtifacts &commit_artifacts) {
-  ValidateCommitArtifactsOrThrow(params, commit_artifacts,
-                                 "FrobeniusPCSProveEvalFromCommitArtifacts");
-  FrobeniusPCSOuterCommitArtifacts outer_commit_artifacts;
-  outer_commit_artifacts.t_packed_table = commit_artifacts.t_packed_table;
-  outer_commit_artifacts.t_packed_monomial_coeffs =
-      commit_artifacts.t_packed_monomial_coeffs;
-  OuterProveEvalResult outer = ProveOuterEvalFromCommitArtifactsInternal(
-      params, t_table, commit_artifacts.commitment, z, claimed_s, num_queries,
-      outer_commit_artifacts, "FrobeniusPCSProveEvalFromCommitArtifacts");
+  return ProveEvalFromCommitArtifactsInternal(
+      params, t_table, z, claimed_s, num_queries, commit_artifacts,
+      /*checked_path=*/true, "FrobeniusPCSProveEvalFromCommitArtifacts");
+}
 
-  FrobeniusPCSEvalProof proof;
-  proof.s_by_i = outer.proof.s_by_i;
-  proof.h_by_level = outer.proof.h_by_level;
-  proof.t_star = outer.proof.t_star;
-
-  {
-    Profile *prof = ActiveProfile();
-    ScopedTimer timer(prof ? &prof->z2k_backend_prove_ns : nullptr,
-                      prof ? &prof->z2k_backend_prove_calls : nullptr);
-    proof.backend_proof = Z2kPCSBackendProveEval(
-        params.backend, commit_artifacts.t_packed_monomial_coeffs,
-        outer.rprime_suffix, proof.t_star, num_queries,
-        &commit_artifacts.backend_commit_artifacts);
-  }
-  return proof;
+FrobeniusPCSEvalProof FrobeniusPCSProveEvalFromCommitArtifactsUnchecked(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const FrobeniusPCSCommitArtifacts &commit_artifacts) {
+  return ProveEvalFromCommitArtifactsInternal(
+      params, t_table, z, claimed_s, num_queries, commit_artifacts,
+      /*checked_path=*/false,
+      "FrobeniusPCSProveEvalFromCommitArtifactsUnchecked");
 }
 
 bool FrobeniusPCSVerifyEval(const FrobeniusPCSParams &params,

@@ -1477,6 +1477,132 @@ void TestFrobeniusPCSOuterProveVerify_AcceptsHonestProof() {
   CHECK_EQ(outer_proof.t_star, composed_proof.t_star);
 }
 
+void TestFrobeniusPCSOuterProveFromCommitArtifacts_CheckedAndUncheckedAgree() {
+  testutil::PrintInfo(
+      "Frobenius Phase 3: checked and unchecked outer prove paths agree on honest inputs");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::FrobeniusPCSParams params =
+      BuildFrobeniusParams(p, modulus, F, alpha, /*ell=*/3, /*kappa=*/1);
+  const vec_ZZ_pE t_table =
+      BuildBaseRingCoeffVector({3, 1, 0, 2, 1, 2, 3, 0});
+  const ZZ_pE omega = params.basis_data.teichmuller_generator;
+  const vector<ZZ_pE> z = {omega, omega + testutil::ConstZZpE(1),
+                           testutil::ConstZZpE(3)};
+  const ZZ_pE claimed_s = EvalFromBooleanTable(t_table, params.ell, z);
+
+  const basefold::FrobeniusPCSCommitArtifacts composed_artifacts =
+      basefold::FrobeniusPCSBuildCommitArtifacts(params, t_table);
+  const basefold::FrobeniusPCSOuterCommitArtifacts outer_artifacts =
+      basefold::FrobeniusPCSBuildOuterCommitArtifacts(params, t_table);
+
+  const basefold::FrobeniusPCSOuterEvalProof checked_proof =
+      basefold::FrobeniusPCSProveOuterEvalFromCommitArtifacts(
+          params, t_table, composed_artifacts.commitment, z, claimed_s,
+          /*num_queries=*/2, outer_artifacts);
+  const basefold::FrobeniusPCSOuterEvalProof unchecked_proof =
+      basefold::FrobeniusPCSProveOuterEvalFromCommitArtifactsUnchecked(
+          params, t_table, composed_artifacts.commitment, z, claimed_s,
+          /*num_queries=*/2, outer_artifacts);
+
+  CHECK(basefold::FrobeniusPCSVerifyOuterEval(
+      params, composed_artifacts.commitment, z, claimed_s, /*num_queries=*/2,
+      checked_proof));
+  CHECK(basefold::FrobeniusPCSVerifyOuterEval(
+      params, composed_artifacts.commitment, z, claimed_s, /*num_queries=*/2,
+      unchecked_proof));
+  CHECK_EQ(checked_proof.s_by_i, unchecked_proof.s_by_i);
+  CHECK_EQ(checked_proof.h_by_level.size(), unchecked_proof.h_by_level.size());
+  for (long i = 0; i < static_cast<long>(checked_proof.h_by_level.size()); ++i) {
+    CHECK_EQ(checked_proof.h_by_level[static_cast<std::size_t>(i)].a0,
+             unchecked_proof.h_by_level[static_cast<std::size_t>(i)].a0);
+    CHECK_EQ(checked_proof.h_by_level[static_cast<std::size_t>(i)].a1,
+             unchecked_proof.h_by_level[static_cast<std::size_t>(i)].a1);
+    CHECK_EQ(checked_proof.h_by_level[static_cast<std::size_t>(i)].a2,
+             unchecked_proof.h_by_level[static_cast<std::size_t>(i)].a2);
+  }
+  CHECK_EQ(checked_proof.t_star, unchecked_proof.t_star);
+}
+
+void TestFrobeniusPCSProveEvalFromCommitArtifacts_CheckedAndUncheckedAgree() {
+  testutil::PrintInfo(
+      "Frobenius Phase 3: checked and unchecked composed prove paths agree on honest inputs");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::FrobeniusPCSParams params =
+      BuildFrobeniusParams(p, modulus, F, alpha, /*ell=*/3, /*kappa=*/1);
+  const vec_ZZ_pE t_table =
+      BuildBaseRingCoeffVector({3, 1, 0, 2, 1, 2, 3, 0});
+  const vector<ZZ_pE> z = {alpha + testutil::ConstZZpE(1), alpha,
+                           testutil::ConstZZpE(3)};
+  const ZZ_pE claimed_s = EvalFromBooleanTable(t_table, params.ell, z);
+
+  const basefold::FrobeniusPCSCommitArtifacts artifacts =
+      basefold::FrobeniusPCSBuildCommitArtifacts(params, t_table);
+  const basefold::FrobeniusPCSEvalProof checked_proof =
+      basefold::FrobeniusPCSProveEvalFromCommitArtifacts(
+          params, t_table, z, claimed_s, /*num_queries=*/2, artifacts);
+  const basefold::FrobeniusPCSEvalProof unchecked_proof =
+      basefold::FrobeniusPCSProveEvalFromCommitArtifactsUnchecked(
+          params, t_table, z, claimed_s, /*num_queries=*/2, artifacts);
+
+  CHECK(basefold::FrobeniusPCSVerifyEval(params, artifacts.commitment, z,
+                                         claimed_s, /*num_queries=*/2,
+                                         checked_proof));
+  CHECK(basefold::FrobeniusPCSVerifyEval(params, artifacts.commitment, z,
+                                         claimed_s, /*num_queries=*/2,
+                                         unchecked_proof));
+  CHECK_EQ(checked_proof.s_by_i, unchecked_proof.s_by_i);
+  CHECK_EQ(checked_proof.h_by_level.size(),
+           unchecked_proof.h_by_level.size());
+  for (long i = 0; i < static_cast<long>(checked_proof.h_by_level.size()); ++i) {
+    CHECK_EQ(checked_proof.h_by_level[static_cast<std::size_t>(i)].a0,
+             unchecked_proof.h_by_level[static_cast<std::size_t>(i)].a0);
+    CHECK_EQ(checked_proof.h_by_level[static_cast<std::size_t>(i)].a1,
+             unchecked_proof.h_by_level[static_cast<std::size_t>(i)].a1);
+    CHECK_EQ(checked_proof.h_by_level[static_cast<std::size_t>(i)].a2,
+             unchecked_proof.h_by_level[static_cast<std::size_t>(i)].a2);
+  }
+  CHECK_EQ(checked_proof.t_star, unchecked_proof.t_star);
+
+  const basefold::Bytes checked_bytes =
+      basefold::SerializeFrobeniusPCSEvalProofFixedBytes(params, checked_proof);
+  const basefold::Bytes unchecked_bytes =
+      basefold::SerializeFrobeniusPCSEvalProofFixedBytes(params,
+                                                         unchecked_proof);
+  CHECK_EQ(checked_bytes.size(), unchecked_bytes.size());
+  CHECK(std::equal(checked_bytes.begin(), checked_bytes.end(),
+                   unchecked_bytes.begin()));
+}
+
 void TestFrobeniusProofSerialize_ComposedSizeMatchesBytes() {
   testutil::PrintInfo("Frobenius Phase 4: serializer bytes match outer and composed proof-size accounting");
 
@@ -1576,6 +1702,8 @@ int main() {
     RUN_TEST(TestFrobeniusPCSVerifyEval_RejectsTampering);
     RUN_TEST(TestFrobeniusPCSVerifyEval_DimensionZeroUsesNoSumcheckRounds);
     RUN_TEST(TestFrobeniusPCSOuterProveVerify_AcceptsHonestProof);
+    RUN_TEST(TestFrobeniusPCSOuterProveFromCommitArtifacts_CheckedAndUncheckedAgree);
+    RUN_TEST(TestFrobeniusPCSProveEvalFromCommitArtifacts_CheckedAndUncheckedAgree);
     RUN_TEST(TestFrobeniusProofSerialize_ComposedSizeMatchesBytes);
   } catch (const exception &e) {
     cerr << "Unhandled std::exception: " << e.what() << "\n";

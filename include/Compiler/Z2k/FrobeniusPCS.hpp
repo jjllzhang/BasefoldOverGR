@@ -112,7 +112,31 @@ FrobeniusPCSOuterEvalProof FrobeniusPCSProveOuterEval(
     const MerkleRoot &commitment, const std::vector<FieldElement> &z,
     const FieldElement &claimed_s, long num_queries);
 
+// Unchecked variant intended for benchmarking / hot paths.
+//
+// Differences vs FrobeniusPCSProveOuterEval:
+// - Does NOT validate prove inputs.
+// - Does NOT validate the claimed evaluation by recomputing t(z).
+// - Does NOT run prover-side honest-witness reconstruction / equality checks.
+FrobeniusPCSOuterEvalProof FrobeniusPCSProveOuterEvalUnchecked(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const MerkleRoot &commitment, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_s, long num_queries);
+
 FrobeniusPCSOuterEvalProof FrobeniusPCSProveOuterEvalFromCommitArtifacts(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const MerkleRoot &commitment, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_s, long num_queries,
+    const FrobeniusPCSOuterCommitArtifacts &commit_artifacts);
+
+// Unchecked variant intended for benchmarking / hot paths.
+//
+// Differences vs FrobeniusPCSProveOuterEvalFromCommitArtifacts:
+// - Does NOT validate params or commit_artifacts shape.
+// - Does NOT validate prove inputs.
+// - Does NOT validate the claimed evaluation by recomputing t(z).
+// - Does NOT run prover-side honest-witness reconstruction / equality checks.
+FrobeniusPCSOuterEvalProof FrobeniusPCSProveOuterEvalFromCommitArtifactsUnchecked(
     const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table,
     const MerkleRoot &commitment, const std::vector<FieldElement> &z,
     const FieldElement &claimed_s, long num_queries,
@@ -123,7 +147,32 @@ FrobeniusPCSEvalProof FrobeniusPCSProveEval(
     const std::vector<FieldElement> &z, const FieldElement &claimed_s,
     long num_queries);
 
+// Unchecked variant intended for benchmarking / hot paths.
+//
+// Differences vs FrobeniusPCSProveEval:
+// - Does NOT validate prove inputs.
+// - Does NOT validate the claimed evaluation by recomputing t(z).
+// - Does NOT run prover-side honest-witness reconstruction / equality checks
+//   in the outer Frobenius layer.
+FrobeniusPCSEvalProof FrobeniusPCSProveEvalUnchecked(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries);
+
 FrobeniusPCSEvalProof FrobeniusPCSProveEvalFromCommitArtifacts(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const FrobeniusPCSCommitArtifacts &commit_artifacts);
+
+// Unchecked variant intended for benchmarking / hot paths.
+//
+// Differences vs FrobeniusPCSProveEvalFromCommitArtifacts:
+// - Does NOT validate params or commit_artifacts shape in the Frobenius layer.
+// - Does NOT validate prove inputs.
+// - Does NOT validate the claimed evaluation by recomputing t(z).
+// - Does NOT run prover-side honest-witness reconstruction / equality checks
+//   in the outer Frobenius layer.
+FrobeniusPCSEvalProof FrobeniusPCSProveEvalFromCommitArtifactsUnchecked(
     const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table,
     const std::vector<FieldElement> &z, const FieldElement &claimed_s,
     long num_queries, const FrobeniusPCSCommitArtifacts &commit_artifacts);

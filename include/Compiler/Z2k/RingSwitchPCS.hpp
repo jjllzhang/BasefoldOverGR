@@ -118,7 +118,31 @@ RingSwitchPCSOuterEvalProof RingSwitchPCSProveOuterEval(
     const MerkleRoot &commitment, const std::vector<FieldElement> &z,
     const FieldElement &claimed_s, long num_queries);
 
+// Unchecked variant intended for benchmarking / hot paths.
+//
+// Differences vs RingSwitchPCSProveOuterEval:
+// - Does NOT validate prove inputs.
+// - Does NOT validate the claimed evaluation by recomputing t(z).
+// - Does NOT run prover-side honest-witness reconstruction / equality checks.
+RingSwitchPCSOuterEvalProof RingSwitchPCSProveOuterEvalUnchecked(
+    const RingSwitchPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const MerkleRoot &commitment, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_s, long num_queries);
+
 RingSwitchPCSOuterEvalProof RingSwitchPCSProveOuterEvalFromCommitArtifacts(
+    const RingSwitchPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const MerkleRoot &commitment, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_s, long num_queries,
+    const RingSwitchPCSOuterCommitArtifacts &commit_artifacts);
+
+// Unchecked variant intended for benchmarking / hot paths.
+//
+// Differences vs RingSwitchPCSProveOuterEvalFromCommitArtifacts:
+// - Does NOT validate params or commit_artifacts shape.
+// - Does NOT validate prove inputs.
+// - Does NOT validate the claimed evaluation by recomputing t(z).
+// - Does NOT run prover-side honest-witness reconstruction / equality checks.
+RingSwitchPCSOuterEvalProof RingSwitchPCSProveOuterEvalFromCommitArtifactsUnchecked(
     const RingSwitchPCSParams &params, const NTL::vec_ZZ_pE &t_table,
     const MerkleRoot &commitment, const std::vector<FieldElement> &z,
     const FieldElement &claimed_s, long num_queries,
@@ -129,7 +153,33 @@ RingSwitchPCSEvalProof RingSwitchPCSProveEval(
     const std::vector<FieldElement> &z, const FieldElement &claimed_s,
     long num_queries);
 
+// Unchecked variant intended for benchmarking / hot paths.
+//
+// Differences vs RingSwitchPCSProveEval:
+// - Does NOT validate prove inputs.
+// - Does NOT validate the claimed evaluation by recomputing t(z).
+// - Does NOT run prover-side honest-witness reconstruction / equality checks
+//   in the outer ring-switch layer.
+RingSwitchPCSEvalProof RingSwitchPCSProveEvalUnchecked(
+    const RingSwitchPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries);
+
 RingSwitchPCSEvalProof RingSwitchPCSProveEvalFromCommitArtifacts(
+    const RingSwitchPCSParams &params, const NTL::vec_ZZ_pE &t_table,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const RingSwitchPCSCommitArtifacts &commit_artifacts);
+
+// Unchecked variant intended for benchmarking / hot paths.
+//
+// Differences vs RingSwitchPCSProveEvalFromCommitArtifacts:
+// - Does NOT validate params or commit_artifacts shape in the ring-switch
+//   layer.
+// - Does NOT validate prove inputs.
+// - Does NOT validate the claimed evaluation by recomputing t(z).
+// - Does NOT run prover-side honest-witness reconstruction / equality checks
+//   in the outer ring-switch layer.
+RingSwitchPCSEvalProof RingSwitchPCSProveEvalFromCommitArtifactsUnchecked(
     const RingSwitchPCSParams &params, const NTL::vec_ZZ_pE &t_table,
     const std::vector<FieldElement> &z, const FieldElement &claimed_s,
     long num_queries, const RingSwitchPCSCommitArtifacts &commit_artifacts);

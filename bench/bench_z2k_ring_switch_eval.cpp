@@ -33,7 +33,8 @@ BenchResult RunEvalBenchmark(const basefold::RingSwitchPCSParams &params,
                              const vec_ZZ_pE &t_table,
                              const std::vector<ZZ_pE> &z,
                              const ZZ_pE &claimed_s, long num_queries,
-                             int warmup, int reps) {
+                             bool use_checked_prover_path, int warmup,
+                             int reps) {
   if (warmup < 0) {
     LogicError("RunEvalBenchmark: warmup must be >= 0");
   }
@@ -74,8 +75,13 @@ BenchResult RunEvalBenchmark(const basefold::RingSwitchPCSParams &params,
     basefold::RingSwitchPCSEvalProof proof;
     {
       basefold::ProfileGuard guard(&prover_prof);
-      proof = basefold::RingSwitchPCSProveEvalFromCommitArtifacts(
-          params, t_table, z, claimed_s, num_queries, commit_artifacts);
+      if (use_checked_prover_path) {
+        proof = basefold::RingSwitchPCSProveEvalFromCommitArtifacts(
+            params, t_table, z, claimed_s, num_queries, commit_artifacts);
+      } else {
+        proof = basefold::RingSwitchPCSProveEvalFromCommitArtifactsUnchecked(
+            params, t_table, z, claimed_s, num_queries, commit_artifacts);
+      }
     }
     const auto t1 = std::chrono::steady_clock::now();
 
@@ -178,13 +184,14 @@ void PrintHelp() {
       << "bench_z2k_ring_switch_eval\n\n"
       << "Usage:\n"
       << "  bench_z2k_ring_switch_eval [--c <int>] [--ell <int>] [--kappa <int>]\n"
-      << "                             [--queries <int>] [--warmup <int>] [--reps <int>]\n"
+      << "                             [--queries <int>] [--warmup <int>] [--reps <int>] [--checked]\n"
       << "                             [--seed <u64>] [--auto-zeta teich]\n"
       << "                             [--ring-mod <decimal-int>] [--ring-p <decimal-int>]\n"
       << "                             [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n";
   PrintProvidedBasisFlagHelp(std::cout, "                             ");
   std::cout << "\nNotes:\n"
       << "  Commit/artifact construction happens before timed prove, matching current bench_basefold_pcs_eval semantics.\n"
+      << "  Timed prove defaults to the unchecked prover hot path; pass --checked to include prover-side input and honest-witness self-checks.\n"
       << "  Outer prover/verifier times are total times with the backend prove/verify subcall removed.\n"
       << "  Proof size reports exact serializer-backed bytes for the public RingSwitchPCSEvalProof.\n";
   PrintBasisCliNotes(std::cout, "  ");
@@ -201,6 +208,7 @@ int main(int argc, char **argv) {
   int reps = 3;
   std::uint64_t seed = 0x5eed5678ULL;
   bool auto_zeta_teich = false;
+  bool use_checked_prover_path = false;
 
   RingSwitchBenchCliArgs cli;
   cli.context.scalar_modulus = to_ZZ(4);
@@ -214,6 +222,8 @@ int main(int argc, char **argv) {
     if (arg == "--help" || arg == "-h") {
       PrintHelp();
       return 0;
+    } else if (arg == "--checked") {
+      use_checked_prover_path = true;
     } else if (arg == "--c") {
       if (!ParseLong(NeedValueOrExit(i, argc, argv, "--c"), c)) {
         std::cerr << "Invalid --c\n";
@@ -318,7 +328,8 @@ int main(int argc, char **argv) {
         basefold::BooleanHypercubeTableToMonomialCoeffs(t_table), z);
 
     const BenchResult result =
-        RunEvalBenchmark(params, t_table, z, claimed_s, queries, warmup, reps);
+        RunEvalBenchmark(params, t_table, z, claimed_s, queries,
+                         use_checked_prover_path, warmup, reps);
     PrintResult(c, ell, kappa, queries, warmup, reps, config, params, result);
     return 0;
   } catch (const std::exception &e) {
