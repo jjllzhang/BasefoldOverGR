@@ -9,6 +9,20 @@ using NTL::LogicError;
 using NTL::vec_ZZ_pE;
 
 namespace basefold {
+
+void ResetProverCommitParallelConfigFromEnv() {
+  basefold_pcs_internal::MutableProverCommitParallelConfig() =
+      basefold_pcs_internal::ParseProverCommitParallelConfigFromEnv();
+}
+
+void SetProverCommitParallelConfig(const ProverCommitParallelConfig &cfg) {
+  basefold_pcs_internal::MutableProverCommitParallelConfig() = cfg;
+}
+
+ProverCommitParallelConfig GetProverCommitParallelConfig() {
+  return basefold_pcs_internal::LoadProverCommitParallelConfig();
+}
+
 namespace {
 
 SumcheckProver MakeBaseSumcheckProver(

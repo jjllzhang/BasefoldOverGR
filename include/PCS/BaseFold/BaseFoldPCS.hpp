@@ -142,6 +142,33 @@ void SetVerifierQueryParallelConfig(const VerifierQueryParallelConfig &cfg);
 // Returns the currently active verifier query parallel config.
 VerifierQueryParallelConfig GetVerifierQueryParallelConfig();
 
+// Runtime tuning knobs for prover commit-round element parallelism.
+// Defaults can also be provided via environment variables:
+// - BASEFOLD_PROVER_COMMIT_BASE_ELEMENTS_PER_THREAD
+// - BASEFOLD_PROVER_COMMIT_EXT_ELEMENTS_PER_THREAD
+//
+// These values are passed as the `parallel_threshold` input to the existing
+// round-local OpenMP helper, so smaller values allow threads to kick in at
+// smaller round sizes. When `ext_elements_per_thread` is left at the default,
+// the implementation may auto-tune it more aggressively on composite-modulus
+// ring contexts; explicit env/CLI/process overrides disable that auto-tuning.
+struct ProverCommitParallelConfig {
+  long base_elements_per_thread = 4096;
+  long ext_elements_per_thread = 128;
+  bool base_elements_per_thread_overridden = false;
+  bool ext_elements_per_thread_overridden = false;
+};
+
+// Loads prover commit-round parallel config from environment variables and
+// applies it.
+void ResetProverCommitParallelConfigFromEnv();
+
+// Applies prover commit-round parallel config for the current process.
+void SetProverCommitParallelConfig(const ProverCommitParallelConfig &cfg);
+
+// Returns the currently active prover commit-round parallel config.
+ProverCommitParallelConfig GetProverCommitParallelConfig();
+
 // Computes the PCS commitment C := MerkleRoot(π_{f,d}) where π_{f,d} = Encd(f⃗).
 // Preconditions:
 // - f_coeffs.length() == MessageLength(params)

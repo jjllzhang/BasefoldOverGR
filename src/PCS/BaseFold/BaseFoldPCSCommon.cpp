@@ -70,9 +70,34 @@ VerifierQueryParallelConfig ParseVerifierQueryParallelConfigFromEnv() {
   return cfg;
 }
 
+ProverCommitParallelConfig ParseProverCommitParallelConfigFromEnv() {
+  ProverCommitParallelConfig cfg;
+  if (const char *base_env =
+          std::getenv("BASEFOLD_PROVER_COMMIT_BASE_ELEMENTS_PER_THREAD")) {
+    cfg.base_elements_per_thread =
+        ParsePositiveEnvLong("BASEFOLD_PROVER_COMMIT_BASE_ELEMENTS_PER_THREAD",
+                             cfg.base_elements_per_thread);
+    cfg.base_elements_per_thread_overridden = (base_env[0] != '\0');
+  }
+  if (const char *ext_env =
+          std::getenv("BASEFOLD_PROVER_COMMIT_EXT_ELEMENTS_PER_THREAD")) {
+    cfg.ext_elements_per_thread =
+        ParsePositiveEnvLong("BASEFOLD_PROVER_COMMIT_EXT_ELEMENTS_PER_THREAD",
+                             cfg.ext_elements_per_thread);
+    cfg.ext_elements_per_thread_overridden = (ext_env[0] != '\0');
+  }
+  return cfg;
+}
+
 VerifierQueryParallelConfig &MutableVerifierQueryParallelConfig() {
   static VerifierQueryParallelConfig cfg =
       ParseVerifierQueryParallelConfigFromEnv();
+  return cfg;
+}
+
+ProverCommitParallelConfig &MutableProverCommitParallelConfig() {
+  static ProverCommitParallelConfig cfg =
+      ParseProverCommitParallelConfigFromEnv();
   return cfg;
 }
 
@@ -88,6 +113,40 @@ VerifierQueryParallelConfig LoadVerifierQueryParallelConfig() {
     cfg.max_threads = 8;
   }
   return cfg;
+}
+
+ProverCommitParallelConfig LoadProverCommitParallelConfig() {
+  ProverCommitParallelConfig cfg = MutableProverCommitParallelConfig();
+  if (cfg.base_elements_per_thread <= 0) {
+    cfg.base_elements_per_thread = 4096;
+  }
+  if (cfg.ext_elements_per_thread <= 0) {
+    cfg.ext_elements_per_thread = 128;
+  }
+  return cfg;
+}
+
+long LoadEffectiveExtElementsPerThread() {
+  const ProverCommitParallelConfig cfg = LoadProverCommitParallelConfig();
+  if (!cfg.ext_elements_per_thread_overridden &&
+      cfg.ext_elements_per_thread == 128) {
+    struct CachedPrimeStatus {
+      bool initialized = false;
+      ZZ modulus;
+      bool is_prime = false;
+    };
+    thread_local CachedPrimeStatus cache;
+    const ZZ current_modulus = NTL::ZZ_p::modulus();
+    if (!cache.initialized || cache.modulus != current_modulus) {
+      cache.modulus = current_modulus;
+      cache.is_prime = NTL::ProbPrime(current_modulus);
+      cache.initialized = true;
+    }
+    if (!cache.is_prime) {
+      return 64;
+    }
+  }
+  return cfg.ext_elements_per_thread;
 }
 
 int ChooseQueryVerifyThreads(long num_queries) {
@@ -360,7 +419,8 @@ void ProverCommitRoundNoValidate(Oracle &pi_i, const Oracle &pi_ip1,
   pi_i.SetLength(n_i);
 
   const Oracle &diag = params.diag_T[static_cast<std::size_t>(level_i)];
-  constexpr long kParallelThreshold = 4096;
+  const ProverCommitParallelConfig cfg = LoadProverCommitParallelConfig();
+  const long parallel_threshold = cfg.base_elements_per_thread;
 
   if (n_i > 0) {
     const FieldElement first_x1 = diag[0];
@@ -380,7 +440,7 @@ void ProverCommitRoundNoValidate(Oracle &pi_i, const Oracle &pi_ip1,
       if (!TryInvertBaseUnit(inv_denom, denom)) {
         LogicError("ProverCommitRoundNoValidate: x2-x1 must be a unit");
       }
-      ForEachIndexMaybeParallel(0, n_i, kParallelThreshold, [&](long j) {
+      ForEachIndexMaybeParallel(0, n_i, parallel_threshold, [&](long j) {
         pi_i[static_cast<std::size_t>(j)] = EvalLineAtWithInvDenom(
             alpha_i, first_x1, pi_ip1[static_cast<std::size_t>(j)],
             pi_ip1[static_cast<std::size_t>(j + n_i)], inv_denom);
@@ -390,7 +450,7 @@ void ProverCommitRoundNoValidate(Oracle &pi_i, const Oracle &pi_ip1,
   }
 
   std::vector<FieldElement> denoms(static_cast<std::size_t>(n_i));
-  ForEachIndexMaybeParallel(0, n_i, kParallelThreshold, [&](long j) {
+  ForEachIndexMaybeParallel(0, n_i, parallel_threshold, [&](long j) {
     const FieldElement &x1 = diag[static_cast<std::size_t>(j)];
     denoms[static_cast<std::size_t>(j)] = (params.zeta * x1) - x1;
   });
@@ -398,7 +458,7 @@ void ProverCommitRoundNoValidate(Oracle &pi_i, const Oracle &pi_ip1,
   std::vector<FieldElement> inv_denoms;
   if (!BatchInvertBaseUnits(inv_denoms, denoms)) {
     inv_denoms.resize(static_cast<std::size_t>(n_i));
-    ForEachIndexMaybeParallel(0, n_i, kParallelThreshold, [&](long j) {
+    ForEachIndexMaybeParallel(0, n_i, parallel_threshold, [&](long j) {
       const FieldElement &denom = denoms[static_cast<std::size_t>(j)];
       if (denom == 0) {
         LogicError("ProverCommitRoundNoValidate: x1 must not equal x2");
@@ -409,7 +469,7 @@ void ProverCommitRoundNoValidate(Oracle &pi_i, const Oracle &pi_ip1,
     });
   }
 
-  ForEachIndexMaybeParallel(0, n_i, kParallelThreshold, [&](long j) {
+  ForEachIndexMaybeParallel(0, n_i, parallel_threshold, [&](long j) {
     const FieldElement &x1 = diag[static_cast<std::size_t>(j)];
     pi_i[static_cast<std::size_t>(j)] = EvalLineAtWithInvDenom(
         alpha_i, x1, pi_ip1[static_cast<std::size_t>(j)],

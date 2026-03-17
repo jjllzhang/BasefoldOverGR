@@ -160,6 +160,7 @@ void PrintHelp() {
       << "                  [--queries <int>] [--checked] [--profile] [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
       << "                  [--merkle-leaves-per-thread <int>] [--merkle-level-threshold <int>] [--merkle-max-threads <int>]\n"
       << "                  [--verifier-query-per-thread <int>] [--verifier-query-threshold <int>] [--verifier-query-max-threads <int>]\n"
+      << "                  [--prover-commit-base-per-thread <int>] [--prover-commit-ext-per-thread <int>]\n"
       << "                  [--use-extension-challenges]\n"
       << "                  [--field-challenge-ext <a0;a1;...>] [--ring-challenge-ext <a0;a1;...>]\n"
       << "                  [--auto-zeta teich]\n"
@@ -168,7 +169,11 @@ void PrintHelp() {
       << "Notes:\n"
       << "  Commit/artifact construction happens before timed prove.\n"
       << "  By default, prover uses BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked.\n"
-      << "  Exact fixed-width proof payload size is computed from the generated proof.\n";
+      << "  Exact fixed-width proof payload size is computed from the generated proof.\n"
+      << "  Prover commit-round parallel tuning can be configured by env vars:\n"
+      << "    BASEFOLD_PROVER_COMMIT_BASE_ELEMENTS_PER_THREAD\n"
+      << "    BASEFOLD_PROVER_COMMIT_EXT_ELEMENTS_PER_THREAD\n"
+      << "  and overridden by the CLI flags above.\n";
 }
 
 void RunOneContext(const ContextSpec &spec, long c, long k0, long d,
@@ -273,6 +278,9 @@ int main(int argc, char **argv) {
   basefold::ResetVerifierQueryParallelConfigFromEnv();
   basefold::VerifierQueryParallelConfig verifier_query_cfg =
       basefold::GetVerifierQueryParallelConfig();
+  basefold::ResetProverCommitParallelConfigFromEnv();
+  basefold::ProverCommitParallelConfig prover_commit_cfg =
+      basefold::GetProverCommitParallelConfig();
 
   bool do_field = true;
   bool do_ring = true;
@@ -390,6 +398,22 @@ int main(int argc, char **argv) {
         std::cerr << "Invalid --verifier-query-max-threads\n";
         return 2;
       }
+    } else if (arg == "--prover-commit-base-per-thread") {
+      if (!ParseLong(RequireNextArgValue("--prover-commit-base-per-thread"),
+                     prover_commit_cfg.base_elements_per_thread) ||
+          prover_commit_cfg.base_elements_per_thread <= 0) {
+        std::cerr << "Invalid --prover-commit-base-per-thread\n";
+        return 2;
+      }
+      prover_commit_cfg.base_elements_per_thread_overridden = true;
+    } else if (arg == "--prover-commit-ext-per-thread") {
+      if (!ParseLong(RequireNextArgValue("--prover-commit-ext-per-thread"),
+                     prover_commit_cfg.ext_elements_per_thread) ||
+          prover_commit_cfg.ext_elements_per_thread <= 0) {
+        std::cerr << "Invalid --prover-commit-ext-per-thread\n";
+        return 2;
+      }
+      prover_commit_cfg.ext_elements_per_thread_overridden = true;
     } else if (arg == "--reps") {
       if (!ParseInt(RequireNextArgValue("--reps"), reps) || reps <= 0) {
         std::cerr << "Invalid --reps\n";
@@ -450,6 +474,7 @@ int main(int argc, char **argv) {
   try {
     basefold::SetMerkleBuildParallelConfig(merkle_cfg);
     basefold::SetVerifierQueryParallelConfig(verifier_query_cfg);
+    basefold::SetProverCommitParallelConfig(prover_commit_cfg);
     if (do_field) {
       RunOneContext(field, c, k0, d, num_queries, use_extension_challenges,
                     use_checked_prover_path, enable_profile, warmup, reps,

@@ -283,6 +283,7 @@ void PrintHelp() {
       << "               [--queries <int>] [--checked] [--profile] [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
       << "               [--merkle-leaves-per-thread <int>] [--merkle-level-threshold <int>] [--merkle-max-threads <int>]\n"
       << "               [--verifier-query-per-thread <int>] [--verifier-query-threshold <int>] [--verifier-query-max-threads <int>]\n"
+      << "               [--prover-commit-base-per-thread <int>] [--prover-commit-ext-per-thread <int>]\n"
       << "               [--use-extension-challenges]\n"
       << "               [--field-challenge-ext <a0;a1;...>] [--ring-challenge-ext <a0;a1;...>]\n"
       << "               [--auto-zeta teich]\n"
@@ -311,6 +312,9 @@ void PrintHelp() {
       << "    BASEFOLD_VERIFY_QUERY_QUERIES_PER_THREAD\n"
       << "    BASEFOLD_VERIFY_QUERY_PARALLEL_THRESHOLD\n"
       << "    BASEFOLD_VERIFY_QUERY_MAX_THREADS\n"
+      << "  Prover commit-round parallel tuning can be configured by env vars:\n"
+      << "    BASEFOLD_PROVER_COMMIT_BASE_ELEMENTS_PER_THREAD\n"
+      << "    BASEFOLD_PROVER_COMMIT_EXT_ELEMENTS_PER_THREAD\n"
       << "  and overridden by the CLI flags above.\n\n"
       << "  PCS Eval supports k0 = 2^κ. The multilinear point dimension is (d + κ).\n\n"
       << "Examples:\n"
@@ -426,6 +430,9 @@ int main(int argc, char **argv) {
   basefold::ResetVerifierQueryParallelConfigFromEnv();
   basefold::VerifierQueryParallelConfig verifier_query_cfg =
       basefold::GetVerifierQueryParallelConfig();
+  basefold::ResetProverCommitParallelConfigFromEnv();
+  basefold::ProverCommitParallelConfig prover_commit_cfg =
+      basefold::GetProverCommitParallelConfig();
 
   bool do_field = true;
   bool do_ring = true;
@@ -543,6 +550,22 @@ int main(int argc, char **argv) {
         std::cerr << "Invalid --verifier-query-max-threads\n";
         return 2;
       }
+    } else if (arg == "--prover-commit-base-per-thread") {
+      if (!ParseLong(RequireNextArgValue("--prover-commit-base-per-thread"),
+                     prover_commit_cfg.base_elements_per_thread) ||
+          prover_commit_cfg.base_elements_per_thread <= 0) {
+        std::cerr << "Invalid --prover-commit-base-per-thread\n";
+        return 2;
+      }
+      prover_commit_cfg.base_elements_per_thread_overridden = true;
+    } else if (arg == "--prover-commit-ext-per-thread") {
+      if (!ParseLong(RequireNextArgValue("--prover-commit-ext-per-thread"),
+                     prover_commit_cfg.ext_elements_per_thread) ||
+          prover_commit_cfg.ext_elements_per_thread <= 0) {
+        std::cerr << "Invalid --prover-commit-ext-per-thread\n";
+        return 2;
+      }
+      prover_commit_cfg.ext_elements_per_thread_overridden = true;
     } else if (arg == "--reps") {
       if (!ParseInt(RequireNextArgValue("--reps"), reps) || reps <= 0) {
         std::cerr << "Invalid --reps\n";
@@ -604,6 +627,7 @@ int main(int argc, char **argv) {
   try {
     basefold::SetMerkleBuildParallelConfig(merkle_cfg);
     basefold::SetVerifierQueryParallelConfig(verifier_query_cfg);
+    basefold::SetProverCommitParallelConfig(prover_commit_cfg);
     if (!do_field && !do_ring) {
       std::cerr << "Nothing to do: --mode disabled both field and ring\n";
       return 2;

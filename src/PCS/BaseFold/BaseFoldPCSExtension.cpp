@@ -585,12 +585,37 @@ std::vector<ZZ_pEX> BooleanEvalTableFromMonomialCoeffsExtension(
   return eval;
 }
 
+std::vector<ZZ_pEX> MonomialCoeffsFromBooleanEvalTableExtension(
+    std::vector<ZZ_pEX> eval, long k, const char *func_name) {
+  if (k < 0) {
+    LogicError((std::string(func_name) + ": negative dimension").c_str());
+  }
+  if (static_cast<long>(eval.size()) != (1L << k)) {
+    LogicError((std::string(func_name) + ": length mismatch").c_str());
+  }
+
+  for (long bit = 0; bit < k; ++bit) {
+    const long step = 1L << bit;
+    for (long mask = 0; mask < static_cast<long>(eval.size()); ++mask) {
+      if (mask & step) {
+        eval[static_cast<std::size_t>(mask)] -=
+            eval[static_cast<std::size_t>(mask ^ step)];
+        eval[static_cast<std::size_t>(mask)].normalize();
+      }
+    }
+  }
+  return eval;
+}
+
 std::vector<ZZ_pEX> LiftFieldVecToExtension(const FieldVec &values) {
   std::vector<ZZ_pEX> out(static_cast<std::size_t>(values.length()));
-  for (long i = 0; i < values.length(); ++i) {
-    out[static_cast<std::size_t>(i)] =
-        LiftBaseToExtension(values[static_cast<std::size_t>(i)]);
-  }
+  const long parallel_threshold =
+      basefold_pcs_internal::LoadEffectiveExtElementsPerThread();
+  basefold_pcs_internal::ForEachIndexMaybeParallel(
+      0, values.length(), parallel_threshold, [&](long i) {
+        out[static_cast<std::size_t>(i)] =
+            LiftBaseToExtension(values[static_cast<std::size_t>(i)]);
+      });
   return out;
 }
 
@@ -689,6 +714,13 @@ Ext2Context BuildExt2ContextOrThrow(const ZZ_pEX &extension_modulus,
   return {NTL::coeff(extension_modulus, 0), NTL::coeff(extension_modulus, 1)};
 }
 
+void AppendSerializedExt2Element(Bytes &out, const Ext2Elem &x,
+                                 const char *func_name) {
+  AppendU64(out, static_cast<std::uint64_t>(2));
+  AppendSerializedFieldElement(out, x.c0, func_name);
+  AppendSerializedFieldElement(out, x.c1, func_name);
+}
+
 Ext2LineLambda BuildExt2LineLambda(const FieldElement &alpha_c0,
                                    const FieldElement &alpha_c1,
                                    const FieldElement &x1,
@@ -696,31 +728,48 @@ Ext2LineLambda BuildExt2LineLambda(const FieldElement &alpha_c0,
   return {(alpha_c0 - x1) * inv_denom, alpha_c1 * inv_denom};
 }
 
+void EvalLineAtReducedExt2WithLambdaInto(Ext2Elem &out, const Ext2Elem &y1,
+                                         const Ext2Elem &y2,
+                                         const Ext2LineLambda &lambda,
+                                         const Ext2Context &ctx) {
+  const FieldElement delta_y0 = y2.c0 - y1.c0;
+  const FieldElement delta_y1 = y2.c1 - y1.c1;
+  const FieldElement delta_y1_lambda1 = delta_y1 * lambda.c1;
+
+  out.c0 = y1.c0 + delta_y0 * lambda.c0 - delta_y1_lambda1 * ctx.m0;
+  out.c1 = y1.c1 + delta_y0 * lambda.c1 + delta_y1 * lambda.c0 -
+           delta_y1_lambda1 * ctx.m1;
+}
+
 void EvalLineAtReducedExt2WithLambdaInto(ZZ_pEX &out, const ZZ_pEX &y1,
                                          const ZZ_pEX &y2,
                                          const Ext2LineLambda &lambda,
                                          const Ext2Context &ctx) {
-  const FieldElement y1_c0 = NTL::coeff(y1, 0);
-  const FieldElement y1_c1 = NTL::coeff(y1, 1);
-  const FieldElement delta_y0 = NTL::coeff(y2, 0) - y1_c0;
-  const FieldElement delta_y1 = NTL::coeff(y2, 1) - y1_c1;
-  const FieldElement delta_y1_lambda1 = delta_y1 * lambda.c1;
-
-  NTL::clear(out);
-  NTL::SetCoeff(out, 0,
-                y1_c0 + delta_y0 * lambda.c0 - delta_y1_lambda1 * ctx.m0);
-  NTL::SetCoeff(out, 1, y1_c1 + delta_y0 * lambda.c1 +
-                            delta_y1 * lambda.c0 - delta_y1_lambda1 * ctx.m1);
-  out.normalize();
+  Ext2Elem out_small;
+  EvalLineAtReducedExt2WithLambdaInto(out_small, ctx.FromReducedPoly(y1),
+                                      ctx.FromReducedPoly(y2), lambda, ctx);
+  out = ctx.ToPoly(out_small);
 }
 
 template <typename Ctx>
 std::vector<typename Ctx::Elem> LiftFieldVecToSmallExtension(
     const FieldVec &values, const Ctx &ctx) {
   std::vector<typename Ctx::Elem> out(static_cast<std::size_t>(values.length()));
-  for (long i = 0; i < values.length(); ++i) {
-    out[static_cast<std::size_t>(i)] =
-        ctx.LiftBase(values[static_cast<std::size_t>(i)]);
+  const long parallel_threshold =
+      basefold_pcs_internal::LoadEffectiveExtElementsPerThread();
+  basefold_pcs_internal::ForEachIndexMaybeParallel(
+      0, values.length(), parallel_threshold, [&](long i) {
+        out[static_cast<std::size_t>(i)] =
+            ctx.LiftBase(values[static_cast<std::size_t>(i)]);
+      });
+  return out;
+}
+
+[[maybe_unused]] std::vector<ZZ_pEX> SmallExtensionOracleToPolys(
+    const std::vector<Ext2Elem> &oracle, const Ext2Context &ctx) {
+  std::vector<ZZ_pEX> out(oracle.size());
+  for (std::size_t i = 0; i < oracle.size(); ++i) {
+    out[i] = ctx.ToPoly(oracle[i]);
   }
   return out;
 }
@@ -749,6 +798,30 @@ std::vector<typename Ctx::Elem> BooleanEvalTableFromMonomialCoeffsSmall(
 }
 
 template <typename Ctx>
+std::vector<typename Ctx::Elem> MonomialCoeffsFromBooleanEvalTableSmall(
+    std::vector<typename Ctx::Elem> eval, long k, const Ctx &ctx,
+    const char *func_name) {
+  if (k < 0) {
+    LogicError((std::string(func_name) + ": negative dimension").c_str());
+  }
+  if (static_cast<long>(eval.size()) != (1L << k)) {
+    LogicError((std::string(func_name) + ": length mismatch").c_str());
+  }
+
+  for (long bit = 0; bit < k; ++bit) {
+    const long step = 1L << bit;
+    for (long mask = 0; mask < static_cast<long>(eval.size()); ++mask) {
+      if (mask & step) {
+        eval[static_cast<std::size_t>(mask)] = ctx.Sub(
+            eval[static_cast<std::size_t>(mask)],
+            eval[static_cast<std::size_t>(mask ^ step)]);
+      }
+    }
+  }
+  return eval;
+}
+
+template <typename Ctx>
 ExtensionQuadraticPoly CurrentPolynomialSmall(
     const Ctx &ctx, const std::vector<typename Ctx::Elem> &f_eval_table,
     const typename Ctx::Elem &suffix_eq_prod,
@@ -774,16 +847,63 @@ ExtensionQuadraticPoly CurrentPolynomialSmall(
   const FieldElement z_k_base = z[static_cast<std::size_t>(k - 1)];
   const FieldElement factor0_base = one_base - z_k_base;
   const FieldElement delta_factor_base = z_k_base - factor0_base;
+  const long parallel_threshold =
+      basefold_pcs_internal::LoadEffectiveExtElementsPerThread();
 
   typename Ctx::Elem sum_f0 = ctx.Zero();
   typename Ctx::Elem sum_delta_f = ctx.Zero();
-  for (long mask = 0; mask < half; ++mask) {
-    const typename Ctx::Elem &f0 = f_eval_table[static_cast<std::size_t>(mask)];
-    const typename Ctx::Elem &f1 =
-        f_eval_table[static_cast<std::size_t>(mask + half)];
-    const typename Ctx::Elem delta_f = ctx.Sub(f1, f0);
-    sum_f0 = ctx.Add(sum_f0, ctx.MulBase(f0, prefix[mask]));
-    sum_delta_f = ctx.Add(sum_delta_f, ctx.MulBase(delta_f, prefix[mask]));
+
+#if defined(BASEFOLD_USE_OPENMP)
+  const int threads_to_use =
+      basefold_pcs_internal::ChooseElementParallelThreads(half, parallel_threshold);
+  if (threads_to_use >= 2) {
+    const basefold_pcs_internal::NtlThreadContextSnapshot ntl_ctx =
+        basefold_pcs_internal::CaptureNtlThreadContextSnapshot();
+    std::vector<typename Ctx::Elem> partial_sum_f0(
+        static_cast<std::size_t>(threads_to_use), ctx.Zero());
+    std::vector<typename Ctx::Elem> partial_sum_delta_f(
+        static_cast<std::size_t>(threads_to_use), ctx.Zero());
+
+#pragma omp parallel num_threads(threads_to_use)
+    {
+      basefold_pcs_internal::InitNtlThreadContext(ntl_ctx);
+      const int tid = omp_get_thread_num();
+      typename Ctx::Elem local_sum_f0 = ctx.Zero();
+      typename Ctx::Elem local_sum_delta_f = ctx.Zero();
+
+#pragma omp for schedule(static)
+      for (long mask = 0; mask < half; ++mask) {
+        const typename Ctx::Elem &f0 =
+            f_eval_table[static_cast<std::size_t>(mask)];
+        const typename Ctx::Elem &f1 =
+            f_eval_table[static_cast<std::size_t>(mask + half)];
+        const typename Ctx::Elem delta_f = ctx.Sub(f1, f0);
+        local_sum_f0 = ctx.Add(local_sum_f0, ctx.MulBase(f0, prefix[mask]));
+        local_sum_delta_f =
+            ctx.Add(local_sum_delta_f, ctx.MulBase(delta_f, prefix[mask]));
+      }
+
+      partial_sum_f0[static_cast<std::size_t>(tid)] = local_sum_f0;
+      partial_sum_delta_f[static_cast<std::size_t>(tid)] = local_sum_delta_f;
+    }
+
+    // Reduce in fixed thread order so proof bytes remain deterministic.
+    for (int tid = 0; tid < threads_to_use; ++tid) {
+      sum_f0 = ctx.Add(sum_f0, partial_sum_f0[static_cast<std::size_t>(tid)]);
+      sum_delta_f = ctx.Add(
+          sum_delta_f, partial_sum_delta_f[static_cast<std::size_t>(tid)]);
+    }
+  } else
+#endif
+  {
+    for (long mask = 0; mask < half; ++mask) {
+      const typename Ctx::Elem &f0 = f_eval_table[static_cast<std::size_t>(mask)];
+      const typename Ctx::Elem &f1 =
+          f_eval_table[static_cast<std::size_t>(mask + half)];
+      const typename Ctx::Elem delta_f = ctx.Sub(f1, f0);
+      sum_f0 = ctx.Add(sum_f0, ctx.MulBase(f0, prefix[mask]));
+      sum_delta_f = ctx.Add(sum_delta_f, ctx.MulBase(delta_f, prefix[mask]));
+    }
   }
 
   const typename Ctx::Elem scaled_sum_f0 = ctx.Mul(suffix_eq_prod, sum_f0);
@@ -821,51 +941,20 @@ void ReceiveChallengeSmall(const Ctx &ctx,
                                                    r_small));
 
   const long half = n / 2;
-  for (long i = 0; i < half; ++i) {
-    const typename Ctx::Elem &f0 = f_eval_table[static_cast<std::size_t>(i)];
-    const typename Ctx::Elem &f1 =
-        f_eval_table[static_cast<std::size_t>(i + half)];
-    const typename Ctx::Elem delta_f = ctx.Sub(f1, f0);
-    f_eval_table[static_cast<std::size_t>(i)] =
-        ctx.Add(f0, ctx.Mul(delta_f, r_small));
-  }
+  const long parallel_threshold =
+      basefold_pcs_internal::LoadEffectiveExtElementsPerThread();
+  basefold_pcs_internal::ForEachIndexMaybeParallel(
+      0, half, parallel_threshold, [&](long i) {
+        const typename Ctx::Elem &f0 =
+            f_eval_table[static_cast<std::size_t>(i)];
+        const typename Ctx::Elem &f1 =
+            f_eval_table[static_cast<std::size_t>(i + half)];
+        const typename Ctx::Elem delta_f = ctx.Sub(f1, f0);
+        f_eval_table[static_cast<std::size_t>(i)] =
+            ctx.Add(f0, ctx.Mul(delta_f, r_small));
+      });
   f_eval_table.resize(static_cast<std::size_t>(half));
   --cur_k;
-}
-
-std::vector<ZZ_pEX> Msg0CoeffsAtSuffixChallenges(
-    const vec_ZZ_pE &f_coeffs, long kappa, const std::vector<ZZ_pEX> &r_by_level,
-    const ZZ_pEX &extension_modulus) {
-  if (kappa < 0) {
-    LogicError("Msg0CoeffsAtSuffixChallenges: negative kappa");
-  }
-  const long d = static_cast<long>(r_by_level.size());
-  const long point_dim = kappa + d;
-  if (f_coeffs.length() != (1L << point_dim)) {
-    LogicError("Msg0CoeffsAtSuffixChallenges: f_coeffs length mismatch");
-  }
-
-  std::vector<ZZ_pEX> cur(static_cast<std::size_t>(f_coeffs.length()));
-  for (long i = 0; i < f_coeffs.length(); ++i) {
-    cur[static_cast<std::size_t>(i)] =
-        LiftBaseToExtension(f_coeffs[static_cast<std::size_t>(i)]);
-  }
-
-  long cur_len = static_cast<long>(cur.size());
-  for (long var = point_dim; var-- > kappa;) {
-    const long half = cur_len / 2;
-    const ZZ_pEX &r_var = r_by_level[static_cast<std::size_t>(var - kappa)];
-    for (long i = 0; i < half; ++i) {
-      cur[static_cast<std::size_t>(i)] = AddExtension(
-          cur[static_cast<std::size_t>(i)],
-          MulExtension(cur[static_cast<std::size_t>(i + half)], r_var,
-                       extension_modulus),
-          extension_modulus);
-    }
-    cur.resize(static_cast<std::size_t>(half));
-    cur_len = half;
-  }
-  return cur;
 }
 
 std::vector<ZZ_pEX> EncodeC0Extension(const std::vector<ZZ_pEX> &msg0_coeffs,
@@ -988,6 +1077,8 @@ class ExtensionSumcheckProver {
     prefix_eq_by_vars_.resize(static_cast<std::size_t>(d_));
     if (d_ > 0) {
       const FieldElement one = BaseRingOne();
+      const long parallel_threshold =
+          basefold_pcs_internal::LoadEffectiveExtElementsPerThread();
       prefix_eq_by_vars_[0].SetLength(1);
       prefix_eq_by_vars_[0][0] = one;
 
@@ -1000,11 +1091,12 @@ class ExtensionSumcheckProver {
         const long old = prev.length();
         prefix_eq_by_vars_[static_cast<std::size_t>(t)].SetLength(2 * old);
         FieldVec &cur = prefix_eq_by_vars_[static_cast<std::size_t>(t)];
-        for (long mask = 0; mask < old; ++mask) {
-          const FieldElement &base = prev[mask];
-          cur[mask] = base * factor0;
-          cur[mask + old] = base * factor1;
-        }
+        basefold_pcs_internal::ForEachIndexMaybeParallel(
+            0, old, parallel_threshold, [&](long mask) {
+              const FieldElement &base = prev[mask];
+              cur[mask] = base * factor0;
+              cur[mask + old] = base * factor1;
+            });
       }
     }
   }
@@ -1034,19 +1126,21 @@ class ExtensionSumcheckProver {
     suffix_eq_prod_generic_.swap(next_suffix);
 
     const long half = n / 2;
-    ZZ_pEX delta_f;
-    ZZ_pEX folded;
-    for (long i = 0; i < half; ++i) {
-      const ZZ_pEX &f0 = f_eval_table_generic_[static_cast<std::size_t>(i)];
-      const ZZ_pEX &f1 =
-          f_eval_table_generic_[static_cast<std::size_t>(i + half)];
-      delta_f = f1 - f0;
-      delta_f.normalize();
-      MulReducedExtensionInto(folded, delta_f, r_kminus1, mod_ctx);
-      folded += f0;
-      folded.normalize();
-      f_eval_table_generic_[static_cast<std::size_t>(i)].swap(folded);
-    }
+    const long parallel_threshold =
+        basefold_pcs_internal::LoadEffectiveExtElementsPerThread();
+    basefold_pcs_internal::ForEachIndexMaybeParallel(
+        0, half, parallel_threshold, [&](long i) {
+          const ZZ_pEX &f0 = f_eval_table_generic_[static_cast<std::size_t>(i)];
+          const ZZ_pEX &f1 =
+              f_eval_table_generic_[static_cast<std::size_t>(i + half)];
+          ZZ_pEX delta_f = f1 - f0;
+          delta_f.normalize();
+          ZZ_pEX folded;
+          MulReducedExtensionInto(folded, delta_f, r_kminus1, mod_ctx);
+          folded += f0;
+          folded.normalize();
+          f_eval_table_generic_[static_cast<std::size_t>(i)].swap(folded);
+        });
     f_eval_table_generic_.resize(static_cast<std::size_t>(half));
     --cur_k_;
   }
@@ -1085,22 +1179,76 @@ class ExtensionSumcheckProver {
     const FieldElement z_k_base = z_[static_cast<std::size_t>(k - 1)];
     const FieldElement factor0_base = one_base - z_k_base;
     const FieldElement delta_factor_base = z_k_base - factor0_base;
+    const long parallel_threshold =
+        basefold_pcs_internal::LoadEffectiveExtElementsPerThread();
 
     ZZ_pEX sum_f0 = ExtensionZero();
     ZZ_pEX sum_delta_f = ExtensionZero();
 
-    for (long mask = 0; mask < half; ++mask) {
-      const ZZ_pEX &f0 = f_eval_table_generic_[static_cast<std::size_t>(mask)];
-      const ZZ_pEX &f1 =
-          f_eval_table_generic_[static_cast<std::size_t>(mask + half)];
-      const ZZ_pEX delta_f = SubExtension(f1, f0, extension_modulus_);
+#if defined(BASEFOLD_USE_OPENMP)
+    const int threads_to_use = basefold_pcs_internal::ChooseElementParallelThreads(
+        half, parallel_threshold);
+    if (threads_to_use >= 2) {
+      const basefold_pcs_internal::NtlThreadContextSnapshot ntl_ctx =
+          basefold_pcs_internal::CaptureNtlThreadContextSnapshot();
+      std::vector<ZZ_pEX> partial_sum_f0(static_cast<std::size_t>(threads_to_use),
+                                         ExtensionZero());
+      std::vector<ZZ_pEX> partial_sum_delta_f(
+          static_cast<std::size_t>(threads_to_use), ExtensionZero());
 
-      sum_f0 = AddExtension(
-          sum_f0, MulExtensionByBaseConstant(f0, prefix[mask]),
-          extension_modulus_);
-      sum_delta_f = AddExtension(
-          sum_delta_f, MulExtensionByBaseConstant(delta_f, prefix[mask]),
-          extension_modulus_);
+#pragma omp parallel num_threads(threads_to_use)
+      {
+        basefold_pcs_internal::InitNtlThreadContext(ntl_ctx);
+        const int tid = omp_get_thread_num();
+        ZZ_pEX local_sum_f0 = ExtensionZero();
+        ZZ_pEX local_sum_delta_f = ExtensionZero();
+
+#pragma omp for schedule(static)
+        for (long mask = 0; mask < half; ++mask) {
+          const ZZ_pEX &f0 = f_eval_table_generic_[static_cast<std::size_t>(mask)];
+          const ZZ_pEX &f1 =
+              f_eval_table_generic_[static_cast<std::size_t>(mask + half)];
+          const ZZ_pEX delta_f = SubExtension(f1, f0, extension_modulus_);
+
+          local_sum_f0 = AddExtension(
+              local_sum_f0, MulExtensionByBaseConstant(f0, prefix[mask]),
+              extension_modulus_);
+          local_sum_delta_f = AddExtension(
+              local_sum_delta_f,
+              MulExtensionByBaseConstant(delta_f, prefix[mask]),
+              extension_modulus_);
+        }
+
+        partial_sum_f0[static_cast<std::size_t>(tid)].swap(local_sum_f0);
+        partial_sum_delta_f[static_cast<std::size_t>(tid)].swap(
+            local_sum_delta_f);
+      }
+
+      // Reduce in fixed thread order so proof bytes remain deterministic.
+      for (int tid = 0; tid < threads_to_use; ++tid) {
+        sum_f0 = AddExtension(sum_f0,
+                              partial_sum_f0[static_cast<std::size_t>(tid)],
+                              extension_modulus_);
+        sum_delta_f = AddExtension(
+            sum_delta_f, partial_sum_delta_f[static_cast<std::size_t>(tid)],
+            extension_modulus_);
+      }
+    } else
+#endif
+    {
+      for (long mask = 0; mask < half; ++mask) {
+        const ZZ_pEX &f0 = f_eval_table_generic_[static_cast<std::size_t>(mask)];
+        const ZZ_pEX &f1 =
+            f_eval_table_generic_[static_cast<std::size_t>(mask + half)];
+        const ZZ_pEX delta_f = SubExtension(f1, f0, extension_modulus_);
+
+        sum_f0 = AddExtension(
+            sum_f0, MulExtensionByBaseConstant(f0, prefix[mask]),
+            extension_modulus_);
+        sum_delta_f = AddExtension(
+            sum_delta_f, MulExtensionByBaseConstant(delta_f, prefix[mask]),
+            extension_modulus_);
+      }
     }
 
     // Factor the shared eq polynomial terms so the inner loop only does base
@@ -1134,6 +1282,25 @@ class ExtensionSumcheckProver {
       return;
     }
     ReceiveChallengeGenericState(r_kminus1);
+  }
+
+  long RemainingVars() const { return cur_k_; }
+
+  std::vector<ZZ_pEX> CurrentMonomialCoeffs() const {
+    if (small_ext_kind_ == SmallExtKind::kDeg2) {
+      const std::vector<Ext2Elem> coeffs_small =
+          MonomialCoeffsFromBooleanEvalTableSmall(
+              f_eval_table_ext2_, cur_k_, ext2_ctx_,
+              "ExtensionSumcheckProver::CurrentMonomialCoeffs");
+      std::vector<ZZ_pEX> out(coeffs_small.size());
+      for (std::size_t i = 0; i < coeffs_small.size(); ++i) {
+        out[i] = ext2_ctx_.ToPoly(coeffs_small[i]);
+      }
+      return out;
+    }
+    return MonomialCoeffsFromBooleanEvalTableExtension(
+        f_eval_table_generic_, cur_k_,
+        "ExtensionSumcheckProver::CurrentMonomialCoeffs");
   }
 
  private:
@@ -1236,6 +1403,137 @@ void ValidateExtensionPi0ConsistencyOrThrow(
   }
 }
 
+[[maybe_unused]] void ProverCommitRoundExtensionSmallNoValidate(
+    std::vector<Ext2Elem> &pi_i, const std::vector<Ext2Elem> &pi_ip1,
+    const Ext2Elem &alpha_i, long level_i, const FoldableCodeParams &params,
+    const Ext2Context &ext2_ctx,
+    const ExtensionCommitRoundPrecomputation *precomputation = nullptr) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->ext_prover_commit_round_ns : nullptr,
+                    prof ? &prof->ext_prover_commit_round_calls : nullptr);
+
+  const long n_i =
+      basefold_pcs_internal::CodewordLengthAtLevelNoValidate(params, level_i);
+  if (static_cast<long>(pi_ip1.size()) != 2 * n_i) {
+    LogicError(
+        "ProverCommitRoundExtensionSmallNoValidate: pi_ip1 has wrong length");
+  }
+  const Oracle &diag = params.diag_T[static_cast<std::size_t>(level_i)];
+  if (diag.length() != n_i) {
+    LogicError(
+        "ProverCommitRoundExtensionSmallNoValidate: diag_T length mismatch");
+  }
+  pi_i.resize(static_cast<std::size_t>(n_i));
+  if (n_i == 0) {
+    return;
+  }
+
+  const FieldElement one = BaseRingOne();
+  const FieldElement zeta_minus_one = params.zeta - one;
+  if (zeta_minus_one == 0) {
+    LogicError("ProverCommitRoundExtensionSmallNoValidate: zeta must not be 1");
+  }
+  const long parallel_threshold =
+      basefold_pcs_internal::LoadEffectiveExtElementsPerThread();
+  const FieldElement alpha_c0 = alpha_i.c0;
+  const FieldElement alpha_c1 = alpha_i.c1;
+
+  const ExtensionCommitRoundLevelPrecomputation *level_cache =
+      LookupExtensionCommitRoundLevelPrecomputation(precomputation, level_i, n_i);
+  if (level_cache != nullptr) {
+    const long inv_len = level_cache->inv_denoms.length();
+    if (inv_len == 1) {
+      const FieldElement &x1 = diag[0];
+      const FieldElement &inv_denom = level_cache->inv_denoms[0];
+      const Ext2LineLambda lambda =
+          BuildExt2LineLambda(alpha_c0, alpha_c1, x1, inv_denom);
+      basefold_pcs_internal::ForEachIndexMaybeParallel(
+          0, n_i, parallel_threshold, [&](long j) {
+            EvalLineAtReducedExt2WithLambdaInto(
+                pi_i[static_cast<std::size_t>(j)],
+                pi_ip1[static_cast<std::size_t>(j)],
+                pi_ip1[static_cast<std::size_t>(j + n_i)], lambda, ext2_ctx);
+          });
+      return;
+    }
+    if (inv_len == n_i) {
+      basefold_pcs_internal::ForEachIndexMaybeParallel(
+          0, n_i, parallel_threshold, [&](long j) {
+            const FieldElement &x1 = diag[static_cast<std::size_t>(j)];
+            const FieldElement &inv_denom =
+                level_cache->inv_denoms[static_cast<std::size_t>(j)];
+            const Ext2LineLambda lambda =
+                BuildExt2LineLambda(alpha_c0, alpha_c1, x1, inv_denom);
+            EvalLineAtReducedExt2WithLambdaInto(
+                pi_i[static_cast<std::size_t>(j)],
+                pi_ip1[static_cast<std::size_t>(j)],
+                pi_ip1[static_cast<std::size_t>(j + n_i)], lambda, ext2_ctx);
+          });
+      return;
+    }
+  }
+
+  const FieldElement first_t = diag[0];
+  bool all_equal = true;
+  for (long j = 1; j < n_i; ++j) {
+    if (diag[static_cast<std::size_t>(j)] != first_t) {
+      all_equal = false;
+      break;
+    }
+  }
+  if (all_equal) {
+    FieldElement inv_denom;
+    if (!basefold_pcs_internal::TryInvertBaseUnit(inv_denom,
+                                                  zeta_minus_one * first_t)) {
+      LogicError(
+          "ProverCommitRoundExtensionSmallNoValidate: denominator is not invertible");
+    }
+    const Ext2LineLambda lambda =
+        BuildExt2LineLambda(alpha_c0, alpha_c1, first_t, inv_denom);
+    basefold_pcs_internal::ForEachIndexMaybeParallel(
+        0, n_i, parallel_threshold, [&](long j) {
+          EvalLineAtReducedExt2WithLambdaInto(
+              pi_i[static_cast<std::size_t>(j)],
+              pi_ip1[static_cast<std::size_t>(j)],
+              pi_ip1[static_cast<std::size_t>(j + n_i)], lambda, ext2_ctx);
+        });
+    return;
+  }
+
+  std::vector<FieldElement> denoms(static_cast<std::size_t>(n_i));
+  basefold_pcs_internal::ForEachIndexMaybeParallel(
+      0, n_i, parallel_threshold, [&](long j) {
+        denoms[static_cast<std::size_t>(j)] =
+            zeta_minus_one * diag[static_cast<std::size_t>(j)];
+      });
+
+  std::vector<FieldElement> inv_denoms;
+  if (!basefold_pcs_internal::BatchInvertBaseUnits(inv_denoms, denoms)) {
+    inv_denoms.resize(static_cast<std::size_t>(n_i));
+    basefold_pcs_internal::ForEachIndexMaybeParallel(
+        0, n_i, parallel_threshold, [&](long j) {
+          if (!basefold_pcs_internal::TryInvertBaseUnit(
+                  inv_denoms[static_cast<std::size_t>(j)],
+                  denoms[static_cast<std::size_t>(j)])) {
+            LogicError(
+                "ProverCommitRoundExtensionSmallNoValidate: denominator is not invertible");
+          }
+        });
+  }
+
+  basefold_pcs_internal::ForEachIndexMaybeParallel(
+      0, n_i, parallel_threshold, [&](long j) {
+        const FieldElement &x1 = diag[static_cast<std::size_t>(j)];
+        const FieldElement &inv_denom = inv_denoms[static_cast<std::size_t>(j)];
+        const Ext2LineLambda lambda =
+            BuildExt2LineLambda(alpha_c0, alpha_c1, x1, inv_denom);
+        EvalLineAtReducedExt2WithLambdaInto(
+            pi_i[static_cast<std::size_t>(j)],
+            pi_ip1[static_cast<std::size_t>(j)],
+            pi_ip1[static_cast<std::size_t>(j + n_i)], lambda, ext2_ctx);
+      });
+}
+
 void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
                                           const std::vector<ZZ_pEX> &pi_ip1,
                                           const ZZ_pEX &alpha_i, long level_i,
@@ -1266,7 +1564,8 @@ void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
   if (zeta_minus_one == 0) {
     LogicError("ProverCommitRoundExtensionNoValidate: zeta must not be 1");
   }
-  constexpr long kParallelThreshold = 4096;
+  const long parallel_threshold =
+      basefold_pcs_internal::LoadEffectiveExtElementsPerThread();
   const NTL::ZZ_pEXModulus &mod_ctx = ExtensionModulusContextOrThrow(
       extension_modulus, "ProverCommitRoundExtensionNoValidate");
   const long ext_degree = ExtensionDegreeOrThrow(
@@ -1291,7 +1590,7 @@ void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
           use_ext2_kernel ? BuildExt2LineLambda(alpha_c0, alpha_c1, x1, inv_denom)
                           : Ext2LineLambda{};
       basefold_pcs_internal::ForEachIndexMaybeParallel(
-          0, n_i, kParallelThreshold, [&](long j) {
+          0, n_i, parallel_threshold, [&](long j) {
             if (use_ext2_kernel) {
               EvalLineAtReducedExt2WithLambdaInto(
                   pi_i[static_cast<std::size_t>(j)],
@@ -1309,7 +1608,7 @@ void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
     }
     if (inv_len == n_i) {
       basefold_pcs_internal::ForEachIndexMaybeParallel(
-          0, n_i, kParallelThreshold, [&](long j) {
+          0, n_i, parallel_threshold, [&](long j) {
             const FieldElement &x1 = diag[static_cast<std::size_t>(j)];
             const FieldElement &inv_denom =
                 level_cache->inv_denoms[static_cast<std::size_t>(j)];
@@ -1352,7 +1651,7 @@ void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
             ? BuildExt2LineLambda(alpha_c0, alpha_c1, first_t, inv_denom)
             : Ext2LineLambda{};
     basefold_pcs_internal::ForEachIndexMaybeParallel(
-        0, n_i, kParallelThreshold, [&](long j) {
+        0, n_i, parallel_threshold, [&](long j) {
           if (use_ext2_kernel) {
             EvalLineAtReducedExt2WithLambdaInto(
                 pi_i[static_cast<std::size_t>(j)],
@@ -1371,7 +1670,7 @@ void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
 
   std::vector<FieldElement> denoms(static_cast<std::size_t>(n_i));
   basefold_pcs_internal::ForEachIndexMaybeParallel(
-      0, n_i, kParallelThreshold, [&](long j) {
+      0, n_i, parallel_threshold, [&](long j) {
         denoms[static_cast<std::size_t>(j)] =
             zeta_minus_one * diag[static_cast<std::size_t>(j)];
       });
@@ -1380,7 +1679,7 @@ void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
   if (!basefold_pcs_internal::BatchInvertBaseUnits(inv_denoms, denoms)) {
     inv_denoms.resize(static_cast<std::size_t>(n_i));
     basefold_pcs_internal::ForEachIndexMaybeParallel(
-        0, n_i, kParallelThreshold, [&](long j) {
+        0, n_i, parallel_threshold, [&](long j) {
           if (!basefold_pcs_internal::TryInvertBaseUnit(
                   inv_denoms[static_cast<std::size_t>(j)],
                   denoms[static_cast<std::size_t>(j)])) {
@@ -1391,7 +1690,7 @@ void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
   }
 
   basefold_pcs_internal::ForEachIndexMaybeParallel(
-      0, n_i, kParallelThreshold, [&](long j) {
+      0, n_i, parallel_threshold, [&](long j) {
         const FieldElement &x1 = diag[static_cast<std::size_t>(j)];
         const FieldElement &inv_denom = inv_denoms[static_cast<std::size_t>(j)];
         if (use_ext2_kernel) {
@@ -1453,6 +1752,26 @@ Digest HashExtensionLeaf(long index, const ZZ_pEX &value,
   StoreU64BigEndian(payload.data() + encoded_len_pos, encoded_len);
 
   return HashDigest(payload.data(), payload.size(), "HashExtensionLeaf");
+}
+
+Digest HashExtensionLeafExt2(long index, const Ext2Elem &value,
+                             Bytes *scratch_payload = nullptr) {
+  Bytes local_payload;
+  Bytes &payload =
+      (scratch_payload != nullptr) ? *scratch_payload : local_payload;
+  payload.clear();
+  payload.push_back(static_cast<Byte>(0x30));
+  AppendU64(payload, static_cast<std::uint64_t>(index));
+
+  const std::size_t encoded_len_pos = payload.size();
+  AppendU64(payload, 0);
+  const std::size_t encoded_start = payload.size();
+  AppendSerializedExt2Element(payload, value, "HashExtensionLeafExt2");
+  const std::uint64_t encoded_len =
+      static_cast<std::uint64_t>(payload.size() - encoded_start);
+  StoreU64BigEndian(payload.data() + encoded_len_pos, encoded_len);
+
+  return HashDigest(payload.data(), payload.size(), "HashExtensionLeafExt2");
 }
 
 Digest HashExtensionNode(const Digest &left, const Digest &right) {
@@ -1528,6 +1847,53 @@ class ExtensionMerkleTree {
     return tree;
   }
 
+  static ExtensionMerkleTree Build(const std::vector<Ext2Elem> &oracle) {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->ext_merkle_tree_build_ns : nullptr,
+                      prof ? &prof->ext_merkle_tree_build_calls : nullptr);
+
+    if (oracle.empty()) {
+      LogicError("ExtensionMerkleTree::Build: oracle must be non-empty");
+    }
+
+    ExtensionMerkleTree tree;
+    tree.leaf_count_ = static_cast<long>(oracle.size());
+
+    Bytes leaf_payload;
+    leaf_payload.reserve(static_cast<std::size_t>(1 + 8 + 8) +
+                         static_cast<std::size_t>(8) +
+                         static_cast<std::size_t>(2) *
+                             MaxSerializedFieldElementSizeOrThrow(
+                                 "ExtensionMerkleTree::Build"));
+
+    std::vector<Digest> level(oracle.size());
+    for (long i = 0; i < tree.leaf_count_; ++i) {
+      level[static_cast<std::size_t>(i)] =
+          HashExtensionLeafExt2(i, oracle[static_cast<std::size_t>(i)],
+                                &leaf_payload);
+    }
+
+    tree.levels_.push_back(level);
+    while (level.size() > 1) {
+      if ((level.size() % 2U) == 1U) {
+        level.push_back(level.back());
+      }
+      tree.levels_.back() = level;
+
+      std::vector<Digest> next;
+      next.reserve(level.size() / 2U);
+      for (std::size_t i = 0; i < level.size(); i += 2U) {
+        next.push_back(HashExtensionNode(level[i], level[i + 1U]));
+      }
+      tree.levels_.push_back(next);
+      level = std::move(next);
+    }
+
+    tree.raw_root_ = tree.levels_.empty() ? HashExtensionRawRootEmpty()
+                                          : tree.levels_.back()[0];
+    return tree;
+  }
+
   MerkleRoot Root() const {
     return HashExtensionRootWithCount(leaf_count_, raw_root_);
   }
@@ -1557,6 +1923,40 @@ class ExtensionMerkleTree {
         multiproof_planner::BuildPlanFromSortedUnique(leaf_count_, unique);
     for (std::size_t i = 0; i < unique.size(); ++i) {
       proof.values[i] = oracle[static_cast<std::size_t>(unique[i])];
+    }
+    proof.sibling_hashes = multiproof_replay::CollectSiblingHashesForPlan(
+        plan, [&](std::size_t level_index, long sibling) {
+          return levels_[level_index][static_cast<std::size_t>(sibling)];
+        });
+    return proof;
+  }
+
+  ExtensionMerkleMultiproof OpenMany(
+      const std::vector<Ext2Elem> &oracle,
+      const std::vector<long> &queried_indices, const Ext2Context &ext2_ctx) const {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->ext_merkle_tree_open_ns : nullptr,
+                      prof ? &prof->ext_merkle_tree_open_calls : nullptr);
+
+    if (static_cast<long>(oracle.size()) != leaf_count_) {
+      LogicError("ExtensionMerkleTree::OpenMany: oracle length mismatch");
+    }
+    const std::vector<long> unique =
+        multiproof_planner::SortAndValidateIndicesOrThrow(
+            leaf_count_, queried_indices, "ExtensionMerkleTree::OpenMany");
+
+    ExtensionMerkleMultiproof proof;
+    proof.queried_indices = unique;
+    proof.values.resize(unique.size());
+    if (unique.empty()) {
+      return proof;
+    }
+
+    const LocalMultiproofPlan plan =
+        multiproof_planner::BuildPlanFromSortedUnique(leaf_count_, unique);
+    for (std::size_t i = 0; i < unique.size(); ++i) {
+      proof.values[i] =
+          ext2_ctx.ToPoly(oracle[static_cast<std::size_t>(unique[i])]);
     }
     proof.sibling_hashes = multiproof_replay::CollectSiblingHashesForPlan(
         plan, [&](std::size_t level_index, long sibling) {
@@ -1660,7 +2060,6 @@ ProveEvalWithExtensionChallengesFromCommittedTopOracleUnchecked(
   AbsorbChallengeConfig(transcript, challenge_cfg);
 
   proof.extension.h_by_level.resize(static_cast<std::size_t>(params.d));
-  std::vector<ZZ_pEX> r_by_level(static_cast<std::size_t>(params.d));
   const ExtensionCommitRoundPrecomputation *commit_round_precomputation =
       commit_artifacts.extension_commit_precomputation.levels.empty()
           ? nullptr
@@ -1690,7 +2089,6 @@ ProveEvalWithExtensionChallengesFromCommittedTopOracleUnchecked(
     const ZZ_pEX r_i_ext =
         SampleExtensionChallenge(transcript, "r/" + std::to_string(i),
                                  extension_modulus);
-    r_by_level[static_cast<std::size_t>(i)] = r_i_ext;
 
     const std::vector<ZZ_pEX> &upper_oracle =
         (i == params.d - 1) ? *top_ext_oracle
@@ -1716,8 +2114,21 @@ ProveEvalWithExtensionChallengesFromCommittedTopOracleUnchecked(
   proof.extension.pi0_codeword = ext_oracles[0];
 
   const long kappa = basefold_pcs_internal::Log2ExactPowerOfTwoLong(params.k0);
-  proof.extension.msg0_coeffs = Msg0CoeffsAtSuffixChallenges(
-      f_coeffs, kappa, r_by_level, extension_modulus);
+  if (sumcheck_ext.RemainingVars() != kappa) {
+    LogicError(
+        "BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked: internal sumcheck state mismatch");
+  }
+  {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->ext_msg0_coeffs_suffix_fold_ns : nullptr,
+                      prof ? &prof->ext_msg0_coeffs_suffix_fold_calls
+                           : nullptr);
+    proof.extension.msg0_coeffs = sumcheck_ext.CurrentMonomialCoeffs();
+  }
+  if (static_cast<long>(proof.extension.msg0_coeffs.size()) != params.k0) {
+    LogicError(
+        "BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked: internal msg0 length mismatch");
+  }
 
   proof.extension.base_top_query_multiproof = MerkleMultiproof{};
   proof.extension.query_multiproofs.resize(static_cast<std::size_t>(params.d));

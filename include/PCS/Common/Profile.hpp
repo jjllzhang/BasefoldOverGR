@@ -98,6 +98,9 @@ struct Profile {
   std::uint64_t ext_merkle_tree_open_ns = 0;
   std::uint64_t ext_merkle_tree_open_calls = 0;
 
+  std::uint64_t ext_msg0_coeffs_suffix_fold_ns = 0;
+  std::uint64_t ext_msg0_coeffs_suffix_fold_calls = 0;
+
   std::uint64_t ext_verify_query_merkle_ns = 0;
   std::uint64_t ext_verify_query_merkle_calls = 0;
 
@@ -188,11 +191,14 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
     const double ext_commit_ms = NsToMs(p.ext_prover_commit_round_ns);
     const double ext_merkle_build_ms = NsToMs(p.ext_merkle_tree_build_ns);
     const double ext_merkle_open_ms = NsToMs(p.ext_merkle_tree_open_ns);
+    const double ext_msg0_suffix_fold_ms =
+        NsToMs(p.ext_msg0_coeffs_suffix_fold_ns);
     const bool has_ext_prover_breakdown =
         (p.ext_sumcheck_init_calls + p.ext_sumcheck_current_poly_calls +
          p.ext_sumcheck_receive_challenge_calls +
          p.ext_prover_commit_round_calls + p.ext_merkle_tree_build_calls +
-         p.ext_merkle_tree_open_calls) > 0;
+         p.ext_merkle_tree_open_calls +
+         p.ext_msg0_coeffs_suffix_fold_calls) > 0;
 
     const std::uint64_t accounted_ns = p.encode_foldable_unchecked_ns +
                                       p.sumcheck_init_ns +
@@ -207,6 +213,7 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
                                       p.ext_prover_commit_round_ns +
                                       p.ext_merkle_tree_build_ns +
                                       p.ext_merkle_tree_open_ns +
+                                      p.ext_msg0_coeffs_suffix_fold_ns +
                                       p.z2k_backend_prove_ns +
                                       p.transcript_absorb_ns +
                                       p.transcript_challenge_ns;
@@ -254,6 +261,10 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
          << "  (calls " << p.ext_merkle_tree_build_calls << ")\n";
       os << "    ExtensionMerkleTree::Open:   " << ext_merkle_open_ms << " ms"
          << "  (calls " << p.ext_merkle_tree_open_calls << ")\n";
+      os << "    Msg0CoeffsAtSuffixChallenges:"
+         << ((ext_msg0_suffix_fold_ms < 10.0) ? "  " : " ")
+         << ext_msg0_suffix_fold_ms << " ms"
+         << "  (calls " << p.ext_msg0_coeffs_suffix_fold_calls << ")\n";
     }
     os << "    Other (total - above):       " << other_ms << " ms\n";
   }
