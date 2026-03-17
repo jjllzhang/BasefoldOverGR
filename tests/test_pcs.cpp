@@ -813,6 +813,76 @@ void TestPCS_EvalProof_ExtChallengeConfig_GR42() {
 
 }
 
+void TestPCS_EvalProof_ExtChallengeConfig_GF4_Cubic() {
+  testutil::PrintInfo("PCS: challenge-config path verifies over GF(4) with cubic extension");
+
+  const ZZ p = to_ZZ(2);
+  ZZ_pPush p_push(p);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush e_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::FoldableCodeParams params = BuildParamsGF4_k0_1(p, alpha);
+
+  vec_ZZ_pE f_coeffs;
+  f_coeffs.SetLength(basefold::MessageLength(params));
+  f_coeffs[0] = testutil::ConstZZpE(0);
+  f_coeffs[1] = testutil::ConstZZpE(1);
+  f_coeffs[2] = alpha;
+  f_coeffs[3] = alpha + testutil::ConstZZpE(1);
+
+  const std::vector<ZZ_pE> z = {alpha, alpha + testutil::ConstZZpE(1)};
+  const ZZ_pE y = basefold::EvalMultilinearMonomialCoeffs(f_coeffs, z);
+  const basefold::MerkleRoot commitment_root =
+      basefold::BaseFoldPCSCommit(f_coeffs, params);
+  const basefold::BaseFoldPCSCommitArtifacts commit_artifacts =
+      basefold::BaseFoldPCSBuildCommitArtifacts(f_coeffs, params);
+
+  basefold::BaseFoldPCSChallengeConfig cfg;
+  cfg.use_extension_challenges = true;
+  ZZ_pEX E;
+  SetCoeff(E, 0, testutil::ConstZZpE(1));
+  SetCoeff(E, 1, testutil::ConstZZpE(1));
+  SetCoeff(E, 3, testutil::ConstZZpE(1));
+  cfg.challenge_extension_modulus = E;
+
+  const long num_queries = 3;
+  const basefold::BaseFoldPCSEvalProof proof =
+      basefold::BaseFoldPCSProveEvalWithChallengeConfig(f_coeffs, z, y,
+                                                        num_queries, params, cfg);
+  const basefold::BaseFoldPCSEvalProof proof_from_committed =
+      basefold::BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracle(
+          f_coeffs, z, y, num_queries, params, commit_artifacts, cfg);
+  const basefold::BaseFoldPCSEvalProof proof_from_committed_unchecked =
+      basefold::BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked(
+          f_coeffs, z, y, num_queries, params, commit_artifacts, cfg);
+
+  CHECK(proof.extension.has_extension_payload);
+  CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      commitment_root, z, y, num_queries, proof, params, cfg));
+  CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      commitment_root, z, y, num_queries, proof_from_committed, params, cfg));
+  CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      commitment_root, z, y, num_queries, proof_from_committed_unchecked, params,
+      cfg));
+
+  basefold::FixedProofEncodingOptions encoding_options;
+  encoding_options.include_version_byte = true;
+  encoding_options.challenge_ext_degree = NTL::deg(cfg.challenge_extension_modulus);
+  CHECK_EQ(basefold::SerializeBaseFoldPCSEvalProofFixedBytes(
+               proof_from_committed, encoding_options),
+           basefold::SerializeBaseFoldPCSEvalProofFixedBytes(
+               proof_from_committed_unchecked, encoding_options));
+}
+
 void TestPCS_ProofSizeFixedWidth_GF4_HandCheck() {
   testutil::PrintInfo("PCS: fixed-width proof size matches hand calculation");
 
@@ -1605,6 +1675,7 @@ int main() {
     RUN_TEST(TestPCS_EvalProof_GR42);
     RUN_TEST(TestPCS_EvalProof_GR42_k0_2);
     RUN_TEST(TestPCS_EvalProof_ExtChallengeConfig_GF4);
+    RUN_TEST(TestPCS_EvalProof_ExtChallengeConfig_GF4_Cubic);
     RUN_TEST(TestPCS_EvalProof_ExtChallengeConfig_GR42);
     RUN_TEST(TestPCS_ProofSizeFixedWidth_GF4_HandCheck);
     RUN_TEST(TestPCS_ProofSizeFixedWidth_ExtensionWidthDerivation);
