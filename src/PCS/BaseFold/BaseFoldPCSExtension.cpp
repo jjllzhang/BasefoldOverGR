@@ -546,6 +546,11 @@ ZZ_pEX EvalLineAtExtension(const ZZ_pEX &x, const FieldElement &x1,
                                          extension_modulus);
 }
 
+struct Ext2LineLambda {
+  FieldElement c0;
+  FieldElement c1;
+};
+
 std::vector<ZZ_pEX> LiftOracleToExtension(const Oracle &oracle) {
   std::vector<ZZ_pEX> out(static_cast<std::size_t>(oracle.length()));
   for (long i = 0; i < oracle.length(); ++i) {
@@ -587,6 +592,245 @@ std::vector<ZZ_pEX> LiftFieldVecToExtension(const FieldVec &values) {
         LiftBaseToExtension(values[static_cast<std::size_t>(i)]);
   }
   return out;
+}
+
+enum class SmallExtKind {
+  kGeneric,
+  kDeg2,
+};
+
+struct Ext2Elem {
+  FieldElement c0;
+  FieldElement c1;
+};
+
+FieldElement BaseRingZero() {
+  FieldElement zero;
+  NTL::clear(zero);
+  return zero;
+}
+
+struct Ext2Context {
+  using Elem = Ext2Elem;
+
+  FieldElement m0;
+  FieldElement m1;
+
+  Elem Zero() const {
+    const FieldElement zero = BaseRingZero();
+    return {zero, zero};
+  }
+
+  Elem One() const {
+    Elem out = Zero();
+    out.c0 = BaseRingOne();
+    return out;
+  }
+
+  Elem LiftBase(const FieldElement &x) const {
+    Elem out = Zero();
+    out.c0 = x;
+    return out;
+  }
+
+  Elem FromReducedPoly(const ZZ_pEX &x) const {
+    Elem out = Zero();
+    out.c0 = NTL::coeff(x, 0);
+    out.c1 = NTL::coeff(x, 1);
+    return out;
+  }
+
+  ZZ_pEX ToPoly(const Elem &x) const {
+    ZZ_pEX out;
+    NTL::clear(out);
+    NTL::SetCoeff(out, 0, x.c0);
+    NTL::SetCoeff(out, 1, x.c1);
+    out.normalize();
+    return out;
+  }
+
+  Elem Add(const Elem &a, const Elem &b) const {
+    return {a.c0 + b.c0, a.c1 + b.c1};
+  }
+
+  Elem Sub(const Elem &a, const Elem &b) const {
+    return {a.c0 - b.c0, a.c1 - b.c1};
+  }
+
+  Elem MulBase(const Elem &a, const FieldElement &scalar) const {
+    if (scalar == 0) {
+      return Zero();
+    }
+    return {a.c0 * scalar, a.c1 * scalar};
+  }
+
+  Elem Mul(const Elem &a, const Elem &b) const {
+    const FieldElement p0 = a.c0 * b.c0;
+    const FieldElement p1 = a.c0 * b.c1 + a.c1 * b.c0;
+    const FieldElement p2 = a.c1 * b.c1;
+    return {p0 - p2 * m0, p1 - p2 * m1};
+  }
+
+  Elem EqFactorFromBase(const FieldElement &z_i, const Elem &x_i) const {
+    const FieldElement one = BaseRingOne();
+    const FieldElement factor0 = one - z_i;
+    const FieldElement delta_factor = z_i - factor0;
+    Elem out = MulBase(x_i, delta_factor);
+    out.c0 += factor0;
+    return out;
+  }
+};
+
+Ext2Context BuildExt2ContextOrThrow(const ZZ_pEX &extension_modulus,
+                                    const char *func_name) {
+  if (ExtensionDegreeOrThrow(extension_modulus, func_name) != 2) {
+    LogicError((std::string(func_name) + ": expected degree-2 modulus").c_str());
+  }
+  return {NTL::coeff(extension_modulus, 0), NTL::coeff(extension_modulus, 1)};
+}
+
+Ext2LineLambda BuildExt2LineLambda(const FieldElement &alpha_c0,
+                                   const FieldElement &alpha_c1,
+                                   const FieldElement &x1,
+                                   const FieldElement &inv_denom) {
+  return {(alpha_c0 - x1) * inv_denom, alpha_c1 * inv_denom};
+}
+
+void EvalLineAtReducedExt2WithLambdaInto(ZZ_pEX &out, const ZZ_pEX &y1,
+                                         const ZZ_pEX &y2,
+                                         const Ext2LineLambda &lambda,
+                                         const Ext2Context &ctx) {
+  const FieldElement y1_c0 = NTL::coeff(y1, 0);
+  const FieldElement y1_c1 = NTL::coeff(y1, 1);
+  const FieldElement delta_y0 = NTL::coeff(y2, 0) - y1_c0;
+  const FieldElement delta_y1 = NTL::coeff(y2, 1) - y1_c1;
+  const FieldElement delta_y1_lambda1 = delta_y1 * lambda.c1;
+
+  NTL::clear(out);
+  NTL::SetCoeff(out, 0,
+                y1_c0 + delta_y0 * lambda.c0 - delta_y1_lambda1 * ctx.m0);
+  NTL::SetCoeff(out, 1, y1_c1 + delta_y0 * lambda.c1 +
+                            delta_y1 * lambda.c0 - delta_y1_lambda1 * ctx.m1);
+  out.normalize();
+}
+
+template <typename Ctx>
+std::vector<typename Ctx::Elem> LiftFieldVecToSmallExtension(
+    const FieldVec &values, const Ctx &ctx) {
+  std::vector<typename Ctx::Elem> out(static_cast<std::size_t>(values.length()));
+  for (long i = 0; i < values.length(); ++i) {
+    out[static_cast<std::size_t>(i)] =
+        ctx.LiftBase(values[static_cast<std::size_t>(i)]);
+  }
+  return out;
+}
+
+template <typename Ctx>
+std::vector<typename Ctx::Elem> BooleanEvalTableFromMonomialCoeffsSmall(
+    std::vector<typename Ctx::Elem> coeffs, long k, const Ctx &ctx,
+    const char *func_name) {
+  if (k < 0) {
+    LogicError((std::string(func_name) + ": negative dimension").c_str());
+  }
+  if (static_cast<long>(coeffs.size()) != (1L << k)) {
+    LogicError((std::string(func_name) + ": length mismatch").c_str());
+  }
+  for (long bit = 0; bit < k; ++bit) {
+    const long step = 1L << bit;
+    for (long mask = 0; mask < static_cast<long>(coeffs.size()); ++mask) {
+      if (mask & step) {
+        coeffs[static_cast<std::size_t>(mask)] = ctx.Add(
+            coeffs[static_cast<std::size_t>(mask)],
+            coeffs[static_cast<std::size_t>(mask ^ step)]);
+      }
+    }
+  }
+  return coeffs;
+}
+
+template <typename Ctx>
+ExtensionQuadraticPoly CurrentPolynomialSmall(
+    const Ctx &ctx, const std::vector<typename Ctx::Elem> &f_eval_table,
+    const typename Ctx::Elem &suffix_eq_prod,
+    const std::vector<FieldVec> &prefix_eq_by_vars,
+    const std::vector<FieldElement> &z, long cur_k) {
+  if (cur_k <= 0) {
+    LogicError("CurrentPolynomialSmall: no variables");
+  }
+
+  const long k = cur_k;
+  const long n = static_cast<long>(f_eval_table.size());
+  if (n != (1L << k)) {
+    LogicError("CurrentPolynomialSmall: internal length mismatch");
+  }
+
+  const long half = 1L << (k - 1);
+  const FieldVec &prefix = prefix_eq_by_vars[static_cast<std::size_t>(k - 1)];
+  if (prefix.length() != half) {
+    LogicError("CurrentPolynomialSmall: prefix size mismatch");
+  }
+
+  const FieldElement one_base = BaseRingOne();
+  const FieldElement z_k_base = z[static_cast<std::size_t>(k - 1)];
+  const FieldElement factor0_base = one_base - z_k_base;
+  const FieldElement delta_factor_base = z_k_base - factor0_base;
+
+  typename Ctx::Elem sum_f0 = ctx.Zero();
+  typename Ctx::Elem sum_delta_f = ctx.Zero();
+  for (long mask = 0; mask < half; ++mask) {
+    const typename Ctx::Elem &f0 = f_eval_table[static_cast<std::size_t>(mask)];
+    const typename Ctx::Elem &f1 =
+        f_eval_table[static_cast<std::size_t>(mask + half)];
+    const typename Ctx::Elem delta_f = ctx.Sub(f1, f0);
+    sum_f0 = ctx.Add(sum_f0, ctx.MulBase(f0, prefix[mask]));
+    sum_delta_f = ctx.Add(sum_delta_f, ctx.MulBase(delta_f, prefix[mask]));
+  }
+
+  const typename Ctx::Elem scaled_sum_f0 = ctx.Mul(suffix_eq_prod, sum_f0);
+  const typename Ctx::Elem scaled_sum_delta_f =
+      ctx.Mul(suffix_eq_prod, sum_delta_f);
+
+  ExtensionQuadraticPoly out;
+  out.a0 = ctx.ToPoly(ctx.MulBase(scaled_sum_f0, factor0_base));
+  out.a1 = ctx.ToPoly(ctx.Add(
+      ctx.MulBase(scaled_sum_f0, delta_factor_base),
+      ctx.MulBase(scaled_sum_delta_f, factor0_base)));
+  out.a2 = ctx.ToPoly(ctx.MulBase(scaled_sum_delta_f, delta_factor_base));
+  return out;
+}
+
+template <typename Ctx>
+void ReceiveChallengeSmall(const Ctx &ctx,
+                           std::vector<typename Ctx::Elem> &f_eval_table,
+                           typename Ctx::Elem &suffix_eq_prod,
+                           const std::vector<FieldElement> &z, long &cur_k,
+                           const ZZ_pEX &r_kminus1) {
+  if (cur_k <= 0) {
+    LogicError("ReceiveChallengeSmall: no variables");
+  }
+
+  const long k = cur_k;
+  const long n = static_cast<long>(f_eval_table.size());
+  if (n != (1L << k)) {
+    LogicError("ReceiveChallengeSmall: internal length mismatch");
+  }
+
+  const typename Ctx::Elem r_small = ctx.FromReducedPoly(r_kminus1);
+  suffix_eq_prod =
+      ctx.Mul(suffix_eq_prod, ctx.EqFactorFromBase(z[static_cast<std::size_t>(k - 1)],
+                                                   r_small));
+
+  const long half = n / 2;
+  for (long i = 0; i < half; ++i) {
+    const typename Ctx::Elem &f0 = f_eval_table[static_cast<std::size_t>(i)];
+    const typename Ctx::Elem &f1 =
+        f_eval_table[static_cast<std::size_t>(i + half)];
+    const typename Ctx::Elem delta_f = ctx.Sub(f1, f0);
+    f_eval_table[static_cast<std::size_t>(i)] =
+        ctx.Add(f0, ctx.Mul(delta_f, r_small));
+  }
+  f_eval_table.resize(static_cast<std::size_t>(half));
+  --cur_k;
 }
 
 std::vector<ZZ_pEX> Msg0CoeffsAtSuffixChallenges(
@@ -665,11 +909,21 @@ class ExtensionSumcheckProver {
     }
     d_ = basefold_pcs_internal::Log2ExactPowerOfTwoLong(n);
     InitializePointAndPrefixProducts(z);
+    InitializeStorageKind();
 
+    if (small_ext_kind_ == SmallExtKind::kDeg2) {
+      std::vector<Ext2Elem> lifted_coeffs =
+          LiftFieldVecToSmallExtension(f_coeffs, ext2_ctx_);
+      f_eval_table_ext2_ = BooleanEvalTableFromMonomialCoeffsSmall(
+          std::move(lifted_coeffs), d_, ext2_ctx_,
+          "BooleanEvalTableFromMonomialCoeffsSmall<deg2>");
+      suffix_eq_prod_ext2_ = ext2_ctx_.One();
+      return;
+    }
     const std::vector<ZZ_pEX> lifted_coeffs = LiftFieldVecToExtension(f_coeffs);
-    f_eval_table_ = BooleanEvalTableFromMonomialCoeffsExtension(
+    f_eval_table_generic_ = BooleanEvalTableFromMonomialCoeffsExtension(
         lifted_coeffs, d_, extension_modulus_);
-    suffix_eq_prod_ = ExtensionOne();
+    suffix_eq_prod_generic_ = ExtensionOne();
   }
 
   ExtensionSumcheckProver(
@@ -695,11 +949,34 @@ class ExtensionSumcheckProver {
     }
 
     InitializePointAndPrefixProducts(z);
-    f_eval_table_ = LiftFieldVecToExtension(precomputation.f_eval_table);
-    suffix_eq_prod_ = ExtensionOne();
+    InitializeStorageKind();
+
+    if (small_ext_kind_ == SmallExtKind::kDeg2) {
+      f_eval_table_ext2_ =
+          LiftFieldVecToSmallExtension(precomputation.f_eval_table, ext2_ctx_);
+      suffix_eq_prod_ext2_ = ext2_ctx_.One();
+      return;
+    }
+    f_eval_table_generic_ = LiftFieldVecToExtension(precomputation.f_eval_table);
+    suffix_eq_prod_generic_ = ExtensionOne();
   }
 
  private:
+  void InitializeStorageKind() {
+    const long ext_degree = ExtensionDegreeOrThrow(
+        extension_modulus_, "ExtensionSumcheckProver");
+    if (ext_degree == 2) {
+      small_ext_kind_ = SmallExtKind::kDeg2;
+      ext2_ctx_ =
+          BuildExt2ContextOrThrow(extension_modulus_, "ExtensionSumcheckProver");
+      return;
+    }
+    // The degree-3 ExtSmall path is kept in-tree for possible future work, but
+    // it is not enabled by default because it did not show a consistent
+    // end-to-end speedup over the generic reduced ZZ_pEX implementation.
+    small_ext_kind_ = SmallExtKind::kGeneric;
+  }
+
   void InitializePointAndPrefixProducts(const std::vector<FieldElement> &z) {
     if (static_cast<long>(z.size()) != d_) {
       LogicError("ExtensionSumcheckProver: z dimension mismatch");
@@ -732,18 +1009,65 @@ class ExtensionSumcheckProver {
     }
   }
 
+  void ReceiveChallengeGenericState(const ZZ_pEX &r_kminus1) {
+    if (cur_k_ <= 0) {
+      LogicError("ExtensionSumcheckProver::ReceiveChallenge: no variables");
+    }
+
+    const long k = cur_k_;
+    const long n = static_cast<long>(f_eval_table_generic_.size());
+    if (n != (1L << k)) {
+      LogicError(
+          "ExtensionSumcheckProver::ReceiveChallenge: internal length mismatch");
+    }
+
+    // All operands here stay reduced modulo the fixed extension polynomial, so
+    // we can hoist the modulus context once per round and fold in-place without
+    // routing every operation through the generic checked helpers.
+    const NTL::ZZ_pEXModulus &mod_ctx = ExtensionModulusContextOrThrow(
+        extension_modulus_, "ExtensionSumcheckProver::ReceiveChallenge");
+
+    const ZZ_pEX eq = EqFactorExtensionFromBaseReduced(
+        z_[static_cast<std::size_t>(k - 1)], r_kminus1);
+    ZZ_pEX next_suffix;
+    MulReducedExtensionInto(next_suffix, suffix_eq_prod_generic_, eq, mod_ctx);
+    suffix_eq_prod_generic_.swap(next_suffix);
+
+    const long half = n / 2;
+    ZZ_pEX delta_f;
+    ZZ_pEX folded;
+    for (long i = 0; i < half; ++i) {
+      const ZZ_pEX &f0 = f_eval_table_generic_[static_cast<std::size_t>(i)];
+      const ZZ_pEX &f1 =
+          f_eval_table_generic_[static_cast<std::size_t>(i + half)];
+      delta_f = f1 - f0;
+      delta_f.normalize();
+      MulReducedExtensionInto(folded, delta_f, r_kminus1, mod_ctx);
+      folded += f0;
+      folded.normalize();
+      f_eval_table_generic_[static_cast<std::size_t>(i)].swap(folded);
+    }
+    f_eval_table_generic_.resize(static_cast<std::size_t>(half));
+    --cur_k_;
+  }
+
  public:
   ExtensionQuadraticPoly CurrentPolynomial() const {
     Profile *prof = ActiveProfile();
     ScopedTimer timer(prof ? &prof->ext_sumcheck_current_poly_ns : nullptr,
                       prof ? &prof->ext_sumcheck_current_poly_calls : nullptr);
 
+    if (small_ext_kind_ == SmallExtKind::kDeg2) {
+      return CurrentPolynomialSmall(ext2_ctx_, f_eval_table_ext2_,
+                                    suffix_eq_prod_ext2_, prefix_eq_by_vars_, z_,
+                                    cur_k_);
+    }
     if (cur_k_ <= 0) {
       LogicError("ExtensionSumcheckProver::CurrentPolynomial: no variables");
     }
 
     const long k = cur_k_;
-    const long n = static_cast<long>(f_eval_table_.size());
+    const long n = static_cast<long>(f_eval_table_generic_.size());
     if (n != (1L << k)) {
       LogicError(
           "ExtensionSumcheckProver::CurrentPolynomial: internal length mismatch");
@@ -766,8 +1090,9 @@ class ExtensionSumcheckProver {
     ZZ_pEX sum_delta_f = ExtensionZero();
 
     for (long mask = 0; mask < half; ++mask) {
-      const ZZ_pEX &f0 = f_eval_table_[static_cast<std::size_t>(mask)];
-      const ZZ_pEX &f1 = f_eval_table_[static_cast<std::size_t>(mask + half)];
+      const ZZ_pEX &f0 = f_eval_table_generic_[static_cast<std::size_t>(mask)];
+      const ZZ_pEX &f1 =
+          f_eval_table_generic_[static_cast<std::size_t>(mask + half)];
       const ZZ_pEX delta_f = SubExtension(f1, f0, extension_modulus_);
 
       sum_f0 = AddExtension(
@@ -782,9 +1107,9 @@ class ExtensionSumcheckProver {
     // scalar multiplies plus additions; the two extension multiplies happen
     // once after the reduction.
     const ZZ_pEX scaled_sum_f0 =
-        MulExtension(suffix_eq_prod_, sum_f0, extension_modulus_);
+        MulExtension(suffix_eq_prod_generic_, sum_f0, extension_modulus_);
     const ZZ_pEX scaled_sum_delta_f =
-        MulExtension(suffix_eq_prod_, sum_delta_f, extension_modulus_);
+        MulExtension(suffix_eq_prod_generic_, sum_delta_f, extension_modulus_);
 
     ExtensionQuadraticPoly out;
     out.a0 = MulExtensionByBaseConstant(scaled_sum_f0, factor0_base);
@@ -803,54 +1128,26 @@ class ExtensionSumcheckProver {
                       prof ? &prof->ext_sumcheck_receive_challenge_calls
                            : nullptr);
 
-    if (cur_k_ <= 0) {
-      LogicError("ExtensionSumcheckProver::ReceiveChallenge: no variables");
+    if (small_ext_kind_ == SmallExtKind::kDeg2) {
+      ReceiveChallengeSmall(ext2_ctx_, f_eval_table_ext2_, suffix_eq_prod_ext2_,
+                            z_, cur_k_, r_kminus1);
+      return;
     }
-
-    const long k = cur_k_;
-    const long n = static_cast<long>(f_eval_table_.size());
-    if (n != (1L << k)) {
-      LogicError(
-          "ExtensionSumcheckProver::ReceiveChallenge: internal length mismatch");
-    }
-
-    // All operands here stay reduced modulo the fixed extension polynomial, so
-    // we can hoist the modulus context once per round and fold in-place without
-    // routing every operation through the generic checked helpers.
-    const NTL::ZZ_pEXModulus &mod_ctx = ExtensionModulusContextOrThrow(
-        extension_modulus_, "ExtensionSumcheckProver::ReceiveChallenge");
-
-    const ZZ_pEX eq = EqFactorExtensionFromBaseReduced(
-        z_[static_cast<std::size_t>(k - 1)], r_kminus1);
-    ZZ_pEX next_suffix;
-    MulReducedExtensionInto(next_suffix, suffix_eq_prod_, eq, mod_ctx);
-    suffix_eq_prod_.swap(next_suffix);
-
-    const long half = n / 2;
-    ZZ_pEX delta_f;
-    ZZ_pEX folded;
-    for (long i = 0; i < half; ++i) {
-      const ZZ_pEX &f0 = f_eval_table_[static_cast<std::size_t>(i)];
-      const ZZ_pEX &f1 = f_eval_table_[static_cast<std::size_t>(i + half)];
-      delta_f = f1 - f0;
-      delta_f.normalize();
-      MulReducedExtensionInto(folded, delta_f, r_kminus1, mod_ctx);
-      folded += f0;
-      folded.normalize();
-      f_eval_table_[static_cast<std::size_t>(i)].swap(folded);
-    }
-    f_eval_table_.resize(static_cast<std::size_t>(half));
-    --cur_k_;
+    ReceiveChallengeGenericState(r_kminus1);
   }
 
  private:
   long d_ = 0;
   long cur_k_ = 0;
+  SmallExtKind small_ext_kind_ = SmallExtKind::kGeneric;
   ZZ_pEX extension_modulus_;
+  Ext2Context ext2_ctx_;
   std::vector<FieldElement> z_;
-  std::vector<ZZ_pEX> f_eval_table_;
+  std::vector<ZZ_pEX> f_eval_table_generic_;
+  std::vector<Ext2Elem> f_eval_table_ext2_;
   std::vector<FieldVec> prefix_eq_by_vars_;
-  ZZ_pEX suffix_eq_prod_;
+  ZZ_pEX suffix_eq_prod_generic_;
+  Ext2Elem suffix_eq_prod_ext2_;
 };
 
 bool CheckExtensionSumcheckRelations(
@@ -972,6 +1269,16 @@ void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
   constexpr long kParallelThreshold = 4096;
   const NTL::ZZ_pEXModulus &mod_ctx = ExtensionModulusContextOrThrow(
       extension_modulus, "ProverCommitRoundExtensionNoValidate");
+  const long ext_degree = ExtensionDegreeOrThrow(
+      extension_modulus, "ProverCommitRoundExtensionNoValidate");
+  const bool use_ext2_kernel = (ext_degree == 2);
+  const FieldElement alpha_c0 = NTL::coeff(alpha_i, 0);
+  const FieldElement alpha_c1 = NTL::coeff(alpha_i, 1);
+  Ext2Context ext2_ctx;
+  if (use_ext2_kernel) {
+    ext2_ctx = BuildExt2ContextOrThrow(extension_modulus,
+                                       "ProverCommitRoundExtensionNoValidate");
+  }
 
   const ExtensionCommitRoundLevelPrecomputation *level_cache =
       LookupExtensionCommitRoundLevelPrecomputation(precomputation, level_i, n_i);
@@ -980,13 +1287,23 @@ void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
     if (inv_len == 1) {
       const FieldElement &x1 = diag[0];
       const FieldElement &inv_denom = level_cache->inv_denoms[0];
+      const Ext2LineLambda lambda =
+          use_ext2_kernel ? BuildExt2LineLambda(alpha_c0, alpha_c1, x1, inv_denom)
+                          : Ext2LineLambda{};
       basefold_pcs_internal::ForEachIndexMaybeParallel(
           0, n_i, kParallelThreshold, [&](long j) {
-            ZZ_pEX delta_x;
-            EvalLineAtReducedExtensionWithInvDenomInto(
-                pi_i[static_cast<std::size_t>(j)], delta_x, alpha_i, x1,
-                pi_ip1[static_cast<std::size_t>(j)],
-                pi_ip1[static_cast<std::size_t>(j + n_i)], inv_denom, mod_ctx);
+            if (use_ext2_kernel) {
+              EvalLineAtReducedExt2WithLambdaInto(
+                  pi_i[static_cast<std::size_t>(j)],
+                  pi_ip1[static_cast<std::size_t>(j)],
+                  pi_ip1[static_cast<std::size_t>(j + n_i)], lambda, ext2_ctx);
+            } else {
+              ZZ_pEX delta_x;
+              EvalLineAtReducedExtensionWithInvDenomInto(
+                  pi_i[static_cast<std::size_t>(j)], delta_x, alpha_i, x1,
+                  pi_ip1[static_cast<std::size_t>(j)],
+                  pi_ip1[static_cast<std::size_t>(j + n_i)], inv_denom, mod_ctx);
+            }
           });
       return;
     }
@@ -994,12 +1311,22 @@ void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
       basefold_pcs_internal::ForEachIndexMaybeParallel(
           0, n_i, kParallelThreshold, [&](long j) {
             const FieldElement &x1 = diag[static_cast<std::size_t>(j)];
-            ZZ_pEX delta_x;
-            EvalLineAtReducedExtensionWithInvDenomInto(
-                pi_i[static_cast<std::size_t>(j)], delta_x, alpha_i, x1,
-                pi_ip1[static_cast<std::size_t>(j)],
-                pi_ip1[static_cast<std::size_t>(j + n_i)],
-                level_cache->inv_denoms[static_cast<std::size_t>(j)], mod_ctx);
+            const FieldElement &inv_denom =
+                level_cache->inv_denoms[static_cast<std::size_t>(j)];
+            if (use_ext2_kernel) {
+              const Ext2LineLambda lambda =
+                  BuildExt2LineLambda(alpha_c0, alpha_c1, x1, inv_denom);
+              EvalLineAtReducedExt2WithLambdaInto(
+                  pi_i[static_cast<std::size_t>(j)],
+                  pi_ip1[static_cast<std::size_t>(j)],
+                  pi_ip1[static_cast<std::size_t>(j + n_i)], lambda, ext2_ctx);
+            } else {
+              ZZ_pEX delta_x;
+              EvalLineAtReducedExtensionWithInvDenomInto(
+                  pi_i[static_cast<std::size_t>(j)], delta_x, alpha_i, x1,
+                  pi_ip1[static_cast<std::size_t>(j)],
+                  pi_ip1[static_cast<std::size_t>(j + n_i)], inv_denom, mod_ctx);
+            }
           });
       return;
     }
@@ -1020,13 +1347,24 @@ void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
       LogicError(
           "ProverCommitRoundExtensionNoValidate: denominator is not invertible");
     }
+    const Ext2LineLambda lambda =
+        use_ext2_kernel
+            ? BuildExt2LineLambda(alpha_c0, alpha_c1, first_t, inv_denom)
+            : Ext2LineLambda{};
     basefold_pcs_internal::ForEachIndexMaybeParallel(
         0, n_i, kParallelThreshold, [&](long j) {
-          ZZ_pEX delta_x;
-          EvalLineAtReducedExtensionWithInvDenomInto(
-              pi_i[static_cast<std::size_t>(j)], delta_x, alpha_i, first_t,
-              pi_ip1[static_cast<std::size_t>(j)],
-              pi_ip1[static_cast<std::size_t>(j + n_i)], inv_denom, mod_ctx);
+          if (use_ext2_kernel) {
+            EvalLineAtReducedExt2WithLambdaInto(
+                pi_i[static_cast<std::size_t>(j)],
+                pi_ip1[static_cast<std::size_t>(j)],
+                pi_ip1[static_cast<std::size_t>(j + n_i)], lambda, ext2_ctx);
+          } else {
+            ZZ_pEX delta_x;
+            EvalLineAtReducedExtensionWithInvDenomInto(
+                pi_i[static_cast<std::size_t>(j)], delta_x, alpha_i, first_t,
+                pi_ip1[static_cast<std::size_t>(j)],
+                pi_ip1[static_cast<std::size_t>(j + n_i)], inv_denom, mod_ctx);
+          }
         });
     return;
   }
@@ -1055,12 +1393,21 @@ void ProverCommitRoundExtensionNoValidate(std::vector<ZZ_pEX> &pi_i,
   basefold_pcs_internal::ForEachIndexMaybeParallel(
       0, n_i, kParallelThreshold, [&](long j) {
         const FieldElement &x1 = diag[static_cast<std::size_t>(j)];
-        ZZ_pEX delta_x;
-        EvalLineAtReducedExtensionWithInvDenomInto(
-            pi_i[static_cast<std::size_t>(j)], delta_x, alpha_i, x1,
-            pi_ip1[static_cast<std::size_t>(j)],
-            pi_ip1[static_cast<std::size_t>(j + n_i)],
-            inv_denoms[static_cast<std::size_t>(j)], mod_ctx);
+        const FieldElement &inv_denom = inv_denoms[static_cast<std::size_t>(j)];
+        if (use_ext2_kernel) {
+          const Ext2LineLambda lambda =
+              BuildExt2LineLambda(alpha_c0, alpha_c1, x1, inv_denom);
+          EvalLineAtReducedExt2WithLambdaInto(
+              pi_i[static_cast<std::size_t>(j)],
+              pi_ip1[static_cast<std::size_t>(j)],
+              pi_ip1[static_cast<std::size_t>(j + n_i)], lambda, ext2_ctx);
+        } else {
+          ZZ_pEX delta_x;
+          EvalLineAtReducedExtensionWithInvDenomInto(
+              pi_i[static_cast<std::size_t>(j)], delta_x, alpha_i, x1,
+              pi_ip1[static_cast<std::size_t>(j)],
+              pi_ip1[static_cast<std::size_t>(j + n_i)], inv_denom, mod_ctx);
+        }
       });
 }
 

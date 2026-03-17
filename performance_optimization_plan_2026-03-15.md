@@ -595,25 +595,104 @@ extension-challenge 后续方向：
 - `bench_basefold_pcs_prove --use-extension-challenges`
   - `prove-phase mean 37.177 ms -> 34.182 ms`
   - `ExtensionCommitRound 86.955 ms / 60 calls -> 72.676 ms / 60 calls`
-- 结论：EC8 是 extension 线里又一波大收益，直接把当前最大剩余桶压下去了。到这一步为止，`EC6 + EC7 + EC8` 已经把 extension sumcheck 与 commit round 的主要低风险优化都吃掉了；是否继续做 `EC9`，应取决于你是否真的长期固定在 `ext_deg=2` 工作负载上。
+- 结论：EC8 是 extension 线里又一波大收益，直接把当前最大剩余桶压下去了。到这一步为止，`EC6 + EC7 + EC8` 已经把 extension sumcheck 与 commit round 的主要低风险优化都吃掉了；后续若继续做 `EC9`，应以 `ext_deg=2/3` 的固定工作负载为前提，并接受这会明显增加原型代码复杂度。
 
-### EC9. `ext_deg=2` 热路径专门化
+### EC9. `ext_deg=2` 的 ExtSmall 热路径专门化（`deg=3` 试验已回退）
 
-状态：`pending`
+状态：`completed`
 
 目的：
-- 当主要 workload 固定在 `ext_deg=2` 时，进一步降低通用 `ZZ_pEX` helper 的常数开销。
+- 当主要 workload 固定在 `ext_deg=2` 时，利用固定小扩域层继续降低通用 `ZZ_pEX` helper 的常数开销；`ext_deg=3` 仅保留探索记录，不默认启用。
 
 主要范围：
 - `src/PCS/BaseFold/BaseFoldPCSExtension.cpp`
+- `tests/test_pcs.cpp`
 
-拟做内容：
-- 评估在 prover 热路径内部引入 degree-2 专门化表示，只在边界保留 `ZZ_pEX`。
-- 只在前面的 EC6~EC8 做完后再决定是否值得推进，避免过早把原型代码复杂化。
+本轮完成：
+- 当前代码只保留了 `ext_deg=2` 的内部 `Ext2Elem` / context 热路径；小扩域之外的 API / proof 边界仍保持 `ZZ_pEX`。
+- `ext_deg=3` 的所有 ExtSmall 运行时代码已从 active path 移除，当前默认回到 generic reduced `ZZ_pEX` 实现。
+- 已补一条 cubic extension challenge 回归，确保 `ext_deg=3` 的 challenge-config path 继续正确。
+- 已试过把同一层 ExtSmall 接进 extension commit round，但 headline benchmark 明显变慢；原因是当前接口下仍需在 round 内频繁做 `ZZ_pEX <-> ExtSmall` 转换，所以这一步已回退，没有保留在分支里。
+- 已试过一个更保守的 `deg=3` 混合路径：`CurrentPolynomial()` 继续走 Ext3，`ReceiveChallenge()` 回到 generic `ZZ_pEX` 再同步状态；这没有拉回 headline，主要因为双状态 init / 同步成本抵消了收益，所以也已回退。
+- 当前分支曾深挖 `deg=3` 的 `ReceiveChallenge()`：把“乘固定 `r`”改成 round-local 的 3x3 base-ring 线性变换，并对常见 `x^3 + m1*x + m0` 稀疏模多项式单独走快路径；这一步仍不碰 commit round。
+- 在这之后又补了一步更窄的 in-place/fused fold，去掉 `delta` / `folded_delta` 两个 `Ext3Elem` 临时对象；收益不大，但确认了剩余差距主要不是结构体拷贝，而是 cubic 乘法内核本身。
+- 由于 `ext_deg=3` 相对 generic baseline 没有稳定 headline 提升，这条运行时优化路径现已完全回退；当前代码默认只对 `ext_deg=2` 启用 ExtSmall。
+- 已在 extension commit round 上追加一轮只针对 `ext_deg=2` 的系数级专门化：保留 `ZZ_pEX` 存储边界，只在 `ProverCommitRoundExtensionNoValidate()` 内部把
+  `EvalLineAtReducedExtensionWithInvDenomInto(...)` 换成基于
+  `lambda = inv_denom * (alpha_i - x1)` 的二次扩域系数公式，避免每个 leaf
+  构造 `delta_x` 并走通用 `MulReducedExtensionInto(...)`。
 
 验收：
-- `bench_basefold_pcs_eval --use-extension-challenges` 与 `bench_basefold_pcs_prove --use-extension-challenges` 均有稳定收益。
-- 不破坏现有通用扩域路径。
+- `test_pcs` 继续通过。
+- 用同一组 release 参数分别比较 `ext_deg=2` 与 `ext_deg=3` 的 `bench_basefold_pcs_eval --use-extension-challenges` / `bench_basefold_pcs_prove --use-extension-challenges`。
+
+当前 release 对照（基于 `07160c7` 的同组参数：`GR(4,2), c=2, k0=1, d=12, queries=4, warmup=1, reps=5`）：
+- `ext_deg=2`
+  - `bench_basefold_pcs_eval --use-extension-challenges`
+    - `prove-phase mean 36.394 ms -> 34.755 ms`
+    - `ExtensionSumcheck total 47.710 ms / 5 reps -> 41.624 ms / 5 reps`
+    - `CurrentPolynomial 17.706 ms / 60 calls -> 13.970 ms / 60 calls`
+    - `ReceiveChallenge 24.365 ms / 60 calls -> 22.777 ms / 60 calls`
+  - `bench_basefold_pcs_prove --use-extension-challenges`
+    - `prove-phase mean 33.998 ms -> 33.068 ms`
+    - `ExtensionSumcheck total 39.168 ms / 5 reps -> 35.430 ms / 5 reps`
+- `ext_deg=3` 探索记录（`--ring-challenge-ext '1;1;0;1'`）
+  - `bench_basefold_pcs_eval --use-extension-challenges`
+    - `prove-phase mean 60.027 ms -> 60.890 ms`
+    - `ExtensionSumcheck total 78.451 ms / 5 reps -> 82.673 ms / 5 reps`
+    - `CurrentPolynomial 25.012 ms / 60 calls -> 21.520 ms / 60 calls`
+    - `ReceiveChallenge 47.768 ms / 60 calls -> 56.066 ms / 60 calls`
+  - `bench_basefold_pcs_prove --use-extension-challenges`
+    - `prove-phase mean 61.438 ms -> 64.107 ms`
+    - `ExtensionSumcheck total 73.913 ms / 5 reps -> 87.799 ms / 5 reps`
+- 结论：
+  - `ext_deg=2` 上，ExtSmall sumcheck 路径值得继续保留，headline 与 `ExtensionSumcheck` 桶都有稳定改善。
+  - `ext_deg=3` 上，`CurrentPolynomial()` 虽有改善，但 `ReceiveChallenge()` 退步更大，整体仍是负收益。
+  - 因此，EC9 当前只验证了“sumcheck 内部小扩域层对 `ext_deg=2` 值得继续”；`ext_deg=3` 的下一步若重启，应优先重写 `ReceiveChallenge()` 的 cubic kernel，而不是再试图把现有 commit round 直接接到 ExtSmall。
+
+本轮追加的 `ext_deg=2` commit round release 对照（同组参数，基于 `07160c7`）：
+- `bench_basefold_pcs_eval --use-extension-challenges --profile --warmup 1 --reps 5`
+  - `prove-phase mean 35.977 ms -> 30.220 ms`
+  - `ExtensionCommitRound 72.029 ms / 60 calls -> 49.271 ms / 60 calls`
+- `bench_basefold_pcs_prove --use-extension-challenges --profile --warmup 1 --reps 5`
+  - `prove-phase mean 34.787 ms -> 27.545 ms`
+  - `ExtensionCommitRound 74.309 ms / 60 calls -> 45.485 ms / 60 calls`
+- `bench_basefold_pcs_eval --use-extension-challenges --warmup 1 --reps 20`
+  - `prove-phase mean 36.650 ms -> 31.032 ms`
+- `bench_basefold_pcs_prove --use-extension-challenges --warmup 1 --reps 20`
+  - `prove-phase mean 34.345 ms -> 28.591 ms`
+- 结论：
+  - 这轮 commit round 专门化对 `ext_deg=2` 是明显收益，不是噪声；headline 在 eval / repeated-prove 上分别下降约 `15.3%` / `16.8%`。
+  - 到这一步，`EC9` 在当前“`ext_deg=2` 为主、`deg=3` 回退”的目标下可以视为完成。
+
+后续 `deg=3` 深挖结果（当前工作分支，仍基于同一组 release 参数）：
+- `bench_basefold_pcs_eval --use-extension-challenges`
+  - `prove-phase mean 60.027 ms -> 59.653 ms`
+  - `ExtensionSumcheck total 78.451 ms / 5 reps -> 74.869 ms / 5 reps`
+  - `CurrentPolynomial 25.012 ms / 60 calls -> 21.716 ms / 60 calls`
+  - `ReceiveChallenge 47.768 ms / 60 calls -> 48.023 ms / 60 calls`
+- `bench_basefold_pcs_prove --use-extension-challenges`
+  - `prove-phase mean 61.438 ms -> 63.636 ms`
+  - `ExtensionSumcheck total 73.913 ms / 5 reps -> 78.410 ms / 5 reps`
+  - `CurrentPolynomial 17.939 ms / 60 calls -> 15.818 ms / 60 calls`
+  - `ReceiveChallenge 49.641 ms / 60 calls -> 58.524 ms / 60 calls`
+- `bench_basefold_pcs_prove --use-extension-challenges` 无 profile、`reps=20`
+  - baseline `07160c7`: `62.585 ms`
+  - 当前工作分支: `63.233 ms`
+- 结论：
+  - 稀疏 cubic `ReceiveChallenge()` 内核曾把 `ext_deg=3` 的 `eval` 路径拉回正收益，并显著缓解了最初的退步。
+  - 但 repeated-prove 仍未完全追平 baseline；即便不带 profile，headline 仍慢约 `1.0%`。因此当前默认路径已取消 `deg=3` 优化，只保留这段实验记录供后续重启时参考。
+
+当前回退后的 release 对照（当前工作分支，`deg=3` 已恢复 generic path）：
+- `bench_basefold_pcs_eval --use-extension-challenges`
+  - `prove-phase mean 60.562 ms`
+- `bench_basefold_pcs_prove --use-extension-challenges`
+  - `prove-phase mean 61.756 ms`
+- `bench_basefold_pcs_prove --use-extension-challenges` 无 profile、`reps=20`
+  - baseline `07160c7`: `62.238 ms`
+  - 当前工作分支: `62.634 ms`
+- 结论：
+  - 回退后，`deg=3` repeated-prove headline 已经回到 baseline 附近，剩余差距约 `0.6%`，可以视作噪声带内的保守回退结果。
 
 ## 执行顺序
 
@@ -627,7 +706,7 @@ extension-challenge 后续方向：
 8. 若开始专门优化 extension-challenge，先完成 `EC1 -> EC2 -> EC3 -> EC4 -> EC5`
 9. extension 后续优化按 `EC6 -> EC7 -> EC8` 顺序推进
 10. `B2` 原始 scope 暂时后置；只有在 fallback/no-cache 路径重新变热时再做
-11. `EC9` 仅在 `ext_deg=2` 仍是主 workload 且 EC6~EC8 收益已吃完时再评估
+11. `EC9` 对 `ext_deg=2` 已完成；`ext_deg=3` 仅保留探索记录，后续若重启仍先看 `ReceiveChallenge()`
 
 ## 每轮变更后的固定检查
 
@@ -657,4 +736,4 @@ ctest --test-dir build-release --output-on-failure
 | EC6 | `CurrentPolynomial()` 因式重排 | Ext | completed | `BaseFoldPCSExtension.cpp` | `ExtensionSumcheck current` |
 | EC7 | `ReceiveChallenge()` in-place / modulus hoist | Ext | completed | `BaseFoldPCSExtension.cpp` | `ExtensionSumcheck receive` |
 | EC8 | commit round fused arithmetic kernel | Ext | completed | `BaseFoldPCSExtension.cpp` | `ExtensionCommitRound` |
-| EC9 | `ext_deg=2` 热路径专门化 | Ext | pending | `BaseFoldPCSExtension.cpp` | ext prove-phase mean |
+| EC9 | `ext_deg=2` ExtSmall 热路径专门化（`deg=3` 已回退） | Ext | completed | `BaseFoldPCSExtension.cpp`, `test_pcs.cpp` | ext prove-phase mean |
