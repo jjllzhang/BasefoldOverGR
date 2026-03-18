@@ -1,9 +1,3 @@
-#include <NTL/ZZ.h>
-#include <NTL/ZZ_p.h>
-#include <NTL/ZZ_pE.h>
-#include <NTL/ZZ_pEX.h>
-#include <NTL/ZZ_pX.h>
-
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -16,74 +10,11 @@
 #include <string>
 #include <vector>
 
-#include "bench_common_helpers.hpp"
-#include "GaloisRing/PrimitiveElement.hpp"
-#include "PCS/BaseFold/BaseFoldPCS.hpp"
-#include "PCS/BaseFold/ProofSize.hpp"
-#include "PCS/Common/Hash.hpp"
-#include "PCS/Common/Multilinear.hpp"
-#include "PCS/Common/Profile.hpp"
-
-using NTL::conv;
-using NTL::LogicError;
-using NTL::SetCoeff;
-using NTL::to_ZZ;
-using NTL::vec_ZZ_pE;
-using NTL::ZZ;
-using NTL::ZZ_p;
-using NTL::ZZ_pE;
-using NTL::ZZ_pEX;
-using NTL::ZZ_pEPush;
-using NTL::ZZ_pPush;
-using NTL::ZZ_pX;
+#include "bench_basefold_pcs_common.hpp"
 
 namespace {
 
-using basefold_bench_common::BuildZZpE;
-using basefold_bench_common::BuildZZpEX;
-using basefold_bench_common::BuildZZpX;
-using basefold_bench_common::ComputeStats;
-using basefold_bench_common::DeduceBasePrimeAndExponent;
-using basefold_bench_common::IsPowerOfTwoLong;
-using basefold_bench_common::Log2ExactPowerOfTwoLong;
-using basefold_bench_common::MakeDeterministicCoefficients;
-using basefold_bench_common::MakeDeterministicPoint;
-using basefold_bench_common::MsSince;
-using basefold_bench_common::NormalizeMod;
-using basefold_bench_common::ParseCoeffList;
-using basefold_bench_common::ParseInt;
-using basefold_bench_common::ParseLong;
-using basefold_bench_common::ParseNestedCoeffList;
-using basefold_bench_common::ParseU64OrDie;
-using basefold_bench_common::ParseZZ;
-using basefold_bench_common::Pow2Checked;
-using basefold_bench_common::Stats;
-using basefold_bench_common::ValidateMonic;
-
-struct ContextSpec {
-  std::string label;
-  ZZ scalar_modulus = ZZ(0);  // ZZ_p modulus (p for fields, p^s for rings)
-  ZZ base_prime = ZZ(0);      // optional: the prime p (only used by unit checks)
-  std::vector<ZZ> F_coeffs;     // extension modulus polynomial coefficients
-  std::vector<ZZ> zeta_coeffs;  // ζ element coefficients
-  // Coefficients for challenge extension modulus E(U), represented as
-  // "a0;a1;...;ad", where each ai is a ZZ_pE element written "c0,c1,...".
-  // Empty means "use default E(U) = U^2 + U + zeta".
-  std::vector<std::vector<ZZ>> challenge_ext_coeffs;
-};
-
-basefold::FoldableCodeParams BuildParams_k0_1(long c, long d, const ZZ &prime_p,
-                                             const ZZ_pE &zeta) {
-  return basefold_bench_common::BuildFoldableParamsK0Eq1(
-      c, d, prime_p, zeta, "BuildParams_k0_1");
-}
-
-basefold::FoldableCodeParams BuildParams_k0_pow2(long c, long k0, long d,
-                                                 const ZZ &prime_p,
-                                                 const ZZ_pE &zeta) {
-  return basefold_bench_common::BuildFoldableParamsK0Pow2(
-      c, k0, d, prime_p, zeta, "BuildParams_k0_pow2");
-}
+using namespace basefold_bench_pcs_common;
 
 struct BenchResult {
   Stats prove_phase;
@@ -95,17 +26,6 @@ struct BenchResult {
   basefold::Profile verifier_profile;
   bool has_profile = false;
 };
-
-std::uint64_t ComputeProofSizeBytes(
-    const basefold::BaseFoldPCSEvalProof &proof,
-    bool use_extension_challenges, long challenge_ext_degree) {
-  basefold::BaseFoldProofSizeOptions options;
-  options.include_version_byte = true;
-  if (use_extension_challenges || proof.extension.has_extension_payload) {
-    options.challenge_ext_degree = challenge_ext_degree;
-  }
-  return basefold::BaseFoldPCSEvalProofSizeBytes(proof, options);
-}
 
 BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
                              const std::vector<ZZ_pE> &z,
