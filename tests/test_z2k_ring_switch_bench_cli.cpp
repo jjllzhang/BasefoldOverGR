@@ -153,6 +153,30 @@ void TestRingSwitchBenchEval_HelpTextIsStable() {
       "TestRingSwitchBenchEval_HelpTextIsStable");
 }
 
+void TestRingSwitchBenchBackendEval_HelpTextIsStable() {
+  testutil::PrintInfo(
+      "Ring-switch bench CLI: backend eval --help prints stable usage anchors");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_backend_eval";
+  ExpectCommandSuccessContains(
+      exe, {"--help"},
+      {"bench_z2k_ring_switch_backend_eval", "--queries <int>",
+       "packed backend PCS"},
+      "TestRingSwitchBenchBackendEval_HelpTextIsStable");
+}
+
+void TestRingSwitchBenchOuterCommit_HelpTextIsStable() {
+  testutil::PrintInfo(
+      "Ring-switch bench CLI: outer commit --help prints stable usage anchors");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_outer_commit";
+  ExpectCommandSuccessContains(
+      exe, {"--help"},
+      {"bench_z2k_ring_switch_outer_commit", "--basis-mode <default|provided>",
+       "Headline time measures", "No backend PCS commit"},
+      "TestRingSwitchBenchOuterCommit_HelpTextIsStable");
+}
+
 void TestRingSwitchBenchOuterProve_HelpTextIsStable() {
   testutil::PrintInfo(
       "Ring-switch bench CLI: outer prove --help prints stable usage anchors");
@@ -181,6 +205,23 @@ void TestRingSwitchBenchCommit_DefaultPresetForGR2p16r64() {
       "TestRingSwitchBenchCommit_DefaultPresetForGR2p16r64");
 }
 
+void TestRingSwitchBenchOuterCommit_DefaultPresetForGR2p16r64() {
+  testutil::PrintInfo(
+      "Ring-switch bench CLI: outer commit smoke run prints stable result fields");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_outer_commit";
+  ExpectCommandSuccessContains(
+      exe,
+      {"--ell", "7", "--kappa", "6", "--warmup", "0", "--reps", "1",
+       "--ring-mod", "65536", "--ring-p", "2", "--ring-F", kRingF64,
+       "--ring-zeta", "0,1"},
+      {"[ring-switch outer commit]",
+       "basis mode default (bench-fixed commit-like preset)",
+       "default alpha preset poly", "default beta preset lower_16",
+       "outer commit mean", "backend input size"},
+      "TestRingSwitchBenchOuterCommit_DefaultPresetForGR2p16r64");
+}
+
 void TestRingSwitchBenchEval_DefaultPresetForGR2p32r64() {
   testutil::PrintInfo(
       "Ring-switch bench CLI: eval smoke run picks the GR(2^32,64) eval-like preset");
@@ -193,8 +234,26 @@ void TestRingSwitchBenchEval_DefaultPresetForGR2p32r64() {
        "--ring-F", kRingF64, "--ring-zeta", "0,1"},
       {"[ring-switch eval]", "basis mode default (bench-fixed eval-like preset)",
        "default alpha preset poly_dual", "default beta preset lower_16",
+       "outer commit mean", "backend commit mean", "commit total mean",
        "prove-phase mean", "verifier mean"},
       "TestRingSwitchBenchEval_DefaultPresetForGR2p32r64");
+}
+
+void TestRingSwitchBenchBackendEval_DefaultPresetForGR2p32r64() {
+  testutil::PrintInfo(
+      "Ring-switch bench CLI: backend eval smoke run prints stable result fields");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_backend_eval";
+  ExpectCommandSuccessContains(
+      exe,
+      {"--ell", "7", "--kappa", "6", "--queries", "2", "--warmup", "0",
+       "--reps", "1", "--ring-mod", "4294967296", "--ring-p", "2",
+       "--ring-F", kRingF64, "--ring-zeta", "0,1"},
+      {"[ring-switch backend eval]",
+       "basis mode default (bench-fixed eval-like preset)",
+       "backend commit mean", "prove-phase mean", "verifier mean",
+       "proof size"},
+      "TestRingSwitchBenchBackendEval_DefaultPresetForGR2p32r64");
 }
 
 void TestRingSwitchBenchEval_CheckedFlagAccepted() {
@@ -227,9 +286,13 @@ int main(int argc, char **argv) {
   g_executable_dir = DetectExecutableDir(argc > 0 ? argv[0] : nullptr);
   TestRingSwitchBenchCommit_HelpTextIsStable();
   TestRingSwitchBenchEval_HelpTextIsStable();
+  TestRingSwitchBenchBackendEval_HelpTextIsStable();
+  TestRingSwitchBenchOuterCommit_HelpTextIsStable();
   TestRingSwitchBenchOuterProve_HelpTextIsStable();
   TestRingSwitchBenchCommit_DefaultPresetForGR2p16r64();
+  TestRingSwitchBenchOuterCommit_DefaultPresetForGR2p16r64();
   TestRingSwitchBenchEval_DefaultPresetForGR2p32r64();
+  TestRingSwitchBenchBackendEval_DefaultPresetForGR2p32r64();
   TestRingSwitchBenchEval_CheckedFlagAccepted();
   TestRingSwitchBenchOuterProve_CheckedFlagAccepted();
 

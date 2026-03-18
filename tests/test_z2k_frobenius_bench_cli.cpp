@@ -179,8 +179,21 @@ void TestFrobeniusBenchEval_HelpTextIsStable() {
   ExpectCommandSuccessContains(
       exe, {"--help"},
       {"bench_z2k_frobenius_eval", "--queries <int>", "--checked",
-       "unchecked prover hot path", "serializer-backed bytes"},
+       "unchecked prover hot path", "commit split as outer commit + backend commit",
+       "serializer-backed bytes"},
       "TestFrobeniusBenchEval_HelpTextIsStable");
+}
+
+void TestFrobeniusBenchBackendEval_HelpTextIsStable() {
+  testutil::PrintInfo(
+      "Frobenius bench CLI: backend eval --help prints stable usage anchors");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_frobenius_backend_eval";
+  ExpectCommandSuccessContains(
+      exe, {"--help"},
+      {"bench_z2k_frobenius_backend_eval", "--queries <int>",
+       "packed backend PCS"},
+      "TestFrobeniusBenchBackendEval_HelpTextIsStable");
 }
 
 void TestFrobeniusBenchOuterCommit_HelpTextIsStable() {
@@ -191,7 +204,7 @@ void TestFrobeniusBenchOuterCommit_HelpTextIsStable() {
   ExpectCommandSuccessContains(
       exe, {"--help"},
       {"bench_z2k_frobenius_outer_commit", "--auto-zeta teich",
-       "No backend PCS commit"},
+       "Headline time measures", "No backend PCS commit"},
       "TestFrobeniusBenchOuterCommit_HelpTextIsStable");
 }
 
@@ -257,9 +270,49 @@ void TestFrobeniusBenchOuterCommit_SmokeRunPrintsStableFields() {
       exe, {"--warmup", "0", "--reps", "1", "--seed", "13"},
       {"[frobenius outer commit]", "hash backend",
        "basis mode bench-fixed preferred-normal",
-       "basis search distinct candidates", "basis score", "packing mean",
-       "commit  mean", "backend input size", "anti-opt checksum"},
+       "basis search distinct candidates", "basis score", "outer commit mean",
+       "backend input size", "anti-opt checksum"},
       "TestFrobeniusBenchOuterCommit_SmokeRunPrintsStableFields");
+}
+
+void TestFrobeniusBenchBackendEval_SmokeRunPrintsStableFieldsAndSizes() {
+  testutil::PrintInfo(
+      "Frobenius bench CLI: backend eval smoke run prints stable fields and sane proof sizes");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_frobenius_backend_eval";
+#if defined(__unix__) || defined(__APPLE__)
+  const CommandResult result =
+      RunCommandCapture(exe, {"--warmup", "0", "--reps", "1", "--queries", "2",
+                              "--seed", "41"});
+  CHECK_MSG(result.exited && result.exit_code == 0,
+            "TestFrobeniusBenchBackendEval_SmokeRunPrintsStableFieldsAndSizes: command failed with output:\n" +
+                result.output);
+  if (g_test_failure_count != 0) {
+    return;
+  }
+
+  const std::vector<std::string> needles = {
+      "[frobenius backend eval]", "hash backend",
+      "basis mode bench-fixed preferred-normal",
+      "basis search distinct candidates", "basis score",
+      "backend commit mean", "prove-phase mean", "verifier mean",
+      "proof size", "anti-opt checksum"};
+  for (const std::string &needle : needles) {
+    CHECK_MSG(result.output.find(needle) != std::string::npos,
+              "TestFrobeniusBenchBackendEval_SmokeRunPrintsStableFieldsAndSizes: missing output needle '" +
+                  needle + "' in:\n" + result.output);
+  }
+  if (g_test_failure_count != 0) {
+    return;
+  }
+
+  const std::uint64_t proof_bytes =
+      ExtractByteCountFromOutput(result.output, "proof size");
+  CHECK_GT(proof_bytes, 0U);
+#else
+  testutil::PrintInfo(
+      "TestFrobeniusBenchBackendEval_SmokeRunPrintsStableFieldsAndSizes: skipped subprocess assertion on this platform");
+#endif
 }
 
 void TestFrobeniusBenchEval_SmokeRunPrintsStableFieldsAndSizes() {
@@ -280,10 +333,11 @@ void TestFrobeniusBenchEval_SmokeRunPrintsStableFieldsAndSizes() {
   const std::vector<std::string> needles = {
       "[frobenius eval]", "hash backend",
       "basis mode bench-fixed preferred-normal",
-      "basis search distinct candidates", "basis score", "prove-phase mean",
-      "outer prover mean", "backend prover mean", "verifier mean",
-      "outer verifier mean", "backend verifier mean", "outer proof size",
-      "proof size", "anti-opt checksum"};
+      "basis search distinct candidates", "basis score",
+      "outer commit mean", "backend commit mean", "commit total mean",
+      "prove-phase mean", "outer prover mean", "backend prover mean",
+      "verifier mean", "outer verifier mean", "backend verifier mean",
+      "outer proof size", "proof size", "anti-opt checksum"};
   for (const std::string &needle : needles) {
     CHECK_MSG(result.output.find(needle) != std::string::npos,
               "TestFrobeniusBenchEval_SmokeRunPrintsStableFieldsAndSizes: missing output needle '" +
@@ -326,7 +380,9 @@ void TestFrobeniusBenchEval_HardcodedPresetForGR2P32_64() {
 
   const std::vector<std::string> needles = {
       "[frobenius eval]", "basis mode bench-hardcoded preferred-normal",
-      "basis preset eval-like (a0=1, a1=1, exponent=8)", "proof size",
+      "basis preset eval-like (a0=1, a1=1, exponent=8)",
+      "outer commit mean", "backend commit mean", "commit total mean",
+      "proof size",
       "anti-opt checksum"};
   for (const std::string &needle : needles) {
     CHECK_MSG(result.output.find(needle) != std::string::npos,
@@ -448,12 +504,14 @@ int main(int argc, char **argv) {
 
   RUN_TEST(TestFrobeniusBenchCommit_HelpTextIsStable);
   RUN_TEST(TestFrobeniusBenchEval_HelpTextIsStable);
+  RUN_TEST(TestFrobeniusBenchBackendEval_HelpTextIsStable);
   RUN_TEST(TestFrobeniusBenchOuterCommit_HelpTextIsStable);
   RUN_TEST(TestFrobeniusBenchOuterProve_HelpTextIsStable);
   RUN_TEST(TestFrobeniusBenchOuterVerify_HelpTextIsStable);
   RUN_TEST(TestFrobeniusBenchCommit_SmokeRunPrintsStableFields);
   RUN_TEST(TestFrobeniusBenchCommit_HardcodedPresetForGR2P16_64);
   RUN_TEST(TestFrobeniusBenchOuterCommit_SmokeRunPrintsStableFields);
+  RUN_TEST(TestFrobeniusBenchBackendEval_SmokeRunPrintsStableFieldsAndSizes);
   RUN_TEST(TestFrobeniusBenchEval_SmokeRunPrintsStableFieldsAndSizes);
   RUN_TEST(TestFrobeniusBenchEval_HardcodedPresetForGR2P32_64);
   RUN_TEST(TestFrobeniusBenchEval_CheckedFlagAccepted);

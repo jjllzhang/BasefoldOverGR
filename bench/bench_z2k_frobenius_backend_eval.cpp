@@ -1,135 +1,132 @@
-#include <NTL/ZZ.h>
-#include <NTL/ZZ_p.h>
-#include <NTL/ZZ_pE.h>
-#include <NTL/ZZ_pX.h>
-
+#include <chrono>
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
 #include <string>
 #include <vector>
 
-#include "Compiler/Z2k/RingSwitchPCS.hpp"
+#include "PCS/Common/Multilinear.hpp"
 #include "bench_z2k_frobenius_common.hpp"
-
-using NTL::ZZ;
-using NTL::ZZ_pE;
-using NTL::ZZ_pEPush;
-using NTL::ZZ_pPush;
-using NTL::ZZ_pX;
-using NTL::to_ZZ;
-using NTL::vec_ZZ_pE;
 
 namespace {
 
-using basefold_bench_z2k_frobenius_common::BuildFrobeniusBenchSetupResult;
-using basefold_bench_z2k_frobenius_common::BuildZZpE;
-using basefold_bench_z2k_frobenius_common::BuildZZpX;
-using basefold_bench_z2k_frobenius_common::ComputeStats;
-using basefold_bench_z2k_frobenius_common::ContextSpec;
-using basefold_bench_z2k_frobenius_common::FrobeniusBenchCalibrationMode;
-using basefold_bench_z2k_frobenius_common::MakeDeterministicBaseRingTable;
-using basefold_bench_z2k_frobenius_common::MsSince;
-using basefold_bench_z2k_frobenius_common::PackedVectorFixedBytesOrThrow;
-using basefold_bench_z2k_frobenius_common::ParseCoeffList;
-using basefold_bench_z2k_frobenius_common::ParseInt;
-using basefold_bench_z2k_frobenius_common::ParseLong;
-using basefold_bench_z2k_frobenius_common::ParseU64OrDie;
-using basefold_bench_z2k_frobenius_common::ParseZZ;
-using basefold_bench_z2k_frobenius_common::PrintFrobeniusBasisSummary;
-using basefold_bench_z2k_frobenius_common::Pow2Checked;
-using basefold_bench_z2k_frobenius_common::Stats;
-using basefold_bench_z2k_frobenius_common::ValidateMonic;
+using namespace basefold_bench_z2k_frobenius_common;
 
 struct BenchResult {
   Stats commit;
-  std::uint64_t backend_input_bytes = 0;
-  double backend_input_kb = 0.0;
+  Stats prove;
+  Stats verify;
+  std::uint64_t proof_size_bytes = 0;
+  double proof_size_kb = 0.0;
   std::uint64_t anti_opt_checksum = 0;
 };
 
-BenchResult RunCommitBenchmark(const basefold::FrobeniusPCSParams &params,
-                               const vec_ZZ_pE &t_table, int warmup,
-                               int reps) {
+BenchResult RunBackendEvalBenchmark(const basefold::Z2kPCSBackendHandle &backend,
+                                    const vec_ZZ_pE &packed_monomial_coeffs,
+                                    const std::vector<ZZ_pE> &z_backend,
+                                    const ZZ_pE &claimed_y, long num_queries,
+                                    int warmup, int reps) {
   if (warmup < 0) {
-    NTL::LogicError("RunCommitBenchmark: warmup must be >= 0");
+    NTL::LogicError("RunBackendEvalBenchmark: warmup must be >= 0");
   }
   if (reps <= 0) {
-    NTL::LogicError("RunCommitBenchmark: reps must be > 0");
+    NTL::LogicError("RunBackendEvalBenchmark: reps must be > 0");
+  }
+  if (num_queries < 0) {
+    NTL::LogicError("RunBackendEvalBenchmark: num_queries must be >= 0");
   }
 
   std::vector<double> commit_ms;
+  std::vector<double> prove_ms;
+  std::vector<double> verify_ms;
   commit_ms.reserve(static_cast<std::size_t>(reps));
+  prove_ms.reserve(static_cast<std::size_t>(reps));
+  verify_ms.reserve(static_cast<std::size_t>(reps));
 
   std::uint64_t anti_opt_checksum = 0;
-  std::uint64_t backend_input_bytes = 0;
-  const vec_ZZ_pE packed_table =
-      basefold::PackZ2kTableToFrobeniusGREvals(params, t_table);
-  const vec_ZZ_pE packed_monomial =
-      basefold::BooleanHypercubeTableToMonomialCoeffs(packed_table);
+  std::uint64_t proof_size_bytes = 0;
   for (int iter = -warmup; iter < reps; ++iter) {
     const auto t0 = std::chrono::steady_clock::now();
-    const basefold::FrobeniusPCSOuterCommitArtifacts outer_artifacts =
-        basefold::FrobeniusPCSBuildOuterCommitArtifacts(params, t_table);
+    const basefold::Z2kPCSBackendCommitArtifacts commit_artifacts =
+        basefold::Z2kPCSBackendBuildCommitArtifacts(backend, packed_monomial_coeffs);
     const auto t1 = std::chrono::steady_clock::now();
 
-    if (outer_artifacts.t_packed_table != packed_table ||
-        outer_artifacts.t_packed_monomial_coeffs != packed_monomial) {
-      NTL::LogicError("RunCommitBenchmark: outer commit artifacts mismatch");
+    const auto t2 = std::chrono::steady_clock::now();
+    const basefold::Z2kPCSBackendEvalProof proof = basefold::Z2kPCSBackendProveEval(
+        backend, packed_monomial_coeffs, z_backend, claimed_y, num_queries,
+        &commit_artifacts);
+    const auto t3 = std::chrono::steady_clock::now();
+
+    proof_size_bytes = basefold::Z2kPCSBackendEvalProofSizeBytes(backend, proof);
+
+    const auto t4 = std::chrono::steady_clock::now();
+    const bool ok = basefold::Z2kPCSBackendVerifyEval(
+        backend, commit_artifacts.commitment, z_backend, claimed_y, num_queries,
+        proof);
+    const auto t5 = std::chrono::steady_clock::now();
+    if (!ok) {
+      NTL::LogicError("RunBackendEvalBenchmark: verification failed");
     }
 
-    backend_input_bytes =
-        PackedVectorFixedBytesOrThrow(outer_artifacts.t_packed_monomial_coeffs);
-    anti_opt_checksum ^= backend_input_bytes;
-    if (outer_artifacts.t_packed_monomial_coeffs.length() > 0) {
-      anti_opt_checksum ^= static_cast<std::uint64_t>(
-          outer_artifacts.t_packed_monomial_coeffs[0] != ZZ_pE(0));
+    anti_opt_checksum ^= proof_size_bytes;
+    anti_opt_checksum ^= static_cast<std::uint64_t>(ok);
+    if (!commit_artifacts.commitment.empty()) {
+      anti_opt_checksum ^= static_cast<std::uint64_t>(commit_artifacts.commitment[0]);
     }
 
     if (iter >= 0) {
       commit_ms.push_back(MsSince(t0, t1));
+      prove_ms.push_back(MsSince(t2, t3));
+      verify_ms.push_back(MsSince(t4, t5));
     }
   }
 
   BenchResult out;
   out.commit = ComputeStats(commit_ms);
-  out.backend_input_bytes = backend_input_bytes;
-  out.backend_input_kb = static_cast<double>(backend_input_bytes) / 1024.0;
+  out.prove = ComputeStats(prove_ms);
+  out.verify = ComputeStats(verify_ms);
+  out.proof_size_bytes = proof_size_bytes;
+  out.proof_size_kb = static_cast<double>(proof_size_bytes) / 1024.0;
   out.anti_opt_checksum = anti_opt_checksum;
   return out;
 }
 
-void PrintResult(long c, long ell, long kappa, int warmup, int reps,
-                 const basefold_bench_z2k_frobenius_common::FrobeniusBenchBasisSummary
-                     &basis_summary,
+void PrintResult(long c, long ell, long kappa, long queries, int warmup,
+                 int reps, const FrobeniusBenchBasisSummary &basis_summary,
                  const BenchResult &result) {
-  std::cout << "\n[frobenius outer commit]"
+  std::cout << "\n[frobenius backend eval]"
             << " c=" << c << " ell=" << ell << " kappa=" << kappa
-            << " ell'=" << (ell - kappa) << " warmup=" << warmup
-            << " reps=" << reps << "\n";
+            << " ell'=" << (ell - kappa) << " queries=" << queries
+            << " warmup=" << warmup << " reps=" << reps << "\n";
   std::cout << std::fixed << std::setprecision(3);
   std::cout << "  hash backend " << basefold::SelectedHashBackendName() << "\n";
   PrintFrobeniusBasisSummary(std::cout, basis_summary);
-  std::cout << "  outer commit mean " << result.commit.mean_ms << " ms  (min "
+  std::cout << "  backend commit mean " << result.commit.mean_ms << " ms  (min "
             << result.commit.min_ms << ", max " << result.commit.max_ms
             << ")\n";
-  std::cout << "  backend input size " << result.backend_input_kb << " KB  ("
-            << result.backend_input_bytes << " B)\n";
+  std::cout << "  prove-phase mean " << result.prove.mean_ms << " ms  (min "
+            << result.prove.min_ms << ", max " << result.prove.max_ms
+            << ")\n";
+  std::cout << "  verifier mean " << result.verify.mean_ms << " ms  (min "
+            << result.verify.min_ms << ", max " << result.verify.max_ms
+            << ")\n";
+  std::cout << "  proof size  " << result.proof_size_kb << " KB  ("
+            << result.proof_size_bytes << " B)\n";
   std::cout << "  anti-opt checksum " << result.anti_opt_checksum << "\n";
 }
 
 void PrintHelp() {
   std::cout
-      << "bench_z2k_frobenius_outer_commit\n\n"
+      << "bench_z2k_frobenius_backend_eval\n\n"
       << "Usage:\n"
-      << "  bench_z2k_frobenius_outer_commit [--c <int>] [--ell <int>] [--kappa <int>]\n"
-      << "                                   [--warmup <int>] [--reps <int>] [--seed <u64>]\n"
-      << "                                   [--auto-zeta teich]\n"
+      << "  bench_z2k_frobenius_backend_eval [--c <int>] [--ell <int>] [--kappa <int>]\n"
+      << "                                   [--queries <int>] [--warmup <int>] [--reps <int>]\n"
+      << "                                   [--seed <u64>] [--auto-zeta teich]\n"
       << "                                   [--ring-mod <decimal-int>] [--ring-p <decimal-int>]\n"
       << "                                   [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
       << "Notes:\n"
-      << "  Headline time measures FrobeniusPCSBuildOuterCommitArtifacts only.\n"
-      << "  No backend PCS commit is executed inside the timed region.\n";
+      << "  This bench measures only the packed backend PCS over GR(2^k,2^kappa) with ell' = ell-kappa.\n"
+      << "  Packing and compiler outer proof work are excluded from all timed regions.\n";
 }
 
 }  // namespace
@@ -138,9 +135,10 @@ int main(int argc, char **argv) {
   long c = 4;
   long ell = 3;
   long kappa = 1;
+  long queries = 2;
   int warmup = 1;
   int reps = 3;
-  std::uint64_t seed = 0x5eed1234ULL;
+  std::uint64_t seed = 0x5eed5678ULL;
   bool auto_zeta_teich = false;
 
   ContextSpec spec;
@@ -175,6 +173,11 @@ int main(int argc, char **argv) {
     } else if (arg == "--kappa") {
       if (!ParseLong(need_value("--kappa"), kappa)) {
         std::cerr << "Invalid --kappa\n";
+        return 2;
+      }
+    } else if (arg == "--queries") {
+      if (!ParseLong(need_value("--queries"), queries)) {
+        std::cerr << "Invalid --queries\n";
         return 2;
       }
     } else if (arg == "--warmup") {
@@ -216,8 +219,8 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (c <= 0 || ell <= 0 || kappa < 0 || kappa > ell || warmup < 0 ||
-      reps <= 0) {
+  if (c <= 0 || ell <= 0 || kappa < 0 || kappa > ell || queries < 0 ||
+      warmup < 0 || reps <= 0) {
     std::cerr << "Invalid benchmark parameters\n";
     return 2;
   }
@@ -244,21 +247,25 @@ int main(int argc, char **argv) {
     }
 
     const auto setup = BuildFrobeniusBenchSetupResult(
-        FrobeniusBenchCalibrationMode::kOuterCommit, c, ell, kappa, spec, F,
-        zeta);
+        FrobeniusBenchCalibrationMode::kEval, c, ell, kappa, spec, F, zeta);
     const basefold::FrobeniusPCSParams &params = setup.params;
     const vec_ZZ_pE t_table =
         MakeDeterministicBaseRingTable(Pow2Checked(ell), seed);
-    const BenchResult result =
-        RunCommitBenchmark(params, t_table, warmup, reps);
-    PrintResult(c, ell, kappa, warmup, reps, setup.basis_summary, result);
+    const basefold::FrobeniusPCSOuterCommitArtifacts outer_commit_artifacts =
+        basefold::FrobeniusPCSBuildOuterCommitArtifacts(params, t_table);
+    const std::vector<ZZ_pE> z_backend =
+        MakeDeterministicPoint(params.ell_prime, seed ^ 0xabcddcbaULL);
+    const ZZ_pE claimed_y = basefold::EvalMultilinearMonomialCoeffs(
+        outer_commit_artifacts.t_packed_monomial_coeffs, z_backend);
+
+    const BenchResult result = RunBackendEvalBenchmark(
+        params.backend, outer_commit_artifacts.t_packed_monomial_coeffs,
+        z_backend, claimed_y, queries, warmup, reps);
+    PrintResult(c, ell, kappa, queries, warmup, reps, setup.basis_summary,
+                result);
+    return 0;
   } catch (const std::exception &e) {
     std::cerr << "Error: " << e.what() << "\n";
-    return 1;
-  } catch (...) {
-    std::cerr << "Error: unknown exception\n";
-    return 1;
+    return 2;
   }
-
-  return 0;
 }

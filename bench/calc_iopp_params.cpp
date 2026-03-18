@@ -58,8 +58,8 @@ struct CalcResult {
   long double base = 0;
   bool has_finite_l_iopp = false;
   bool has_finite_l_pcs = false;
-  std::uint64_t l_min_iopp = 0;
-  std::uint64_t l_min_pcs = 0; // recommended: satisfies PCS and thus IOPP
+  std::uint64_t l_min_iopp = 0; // default recommendation: satisfies IOPP
+  std::uint64_t l_min_pcs = 0;  // stricter PCS-safe choice
   long double target_2_minus_lambda = 0;
   long double iopp_budget = 0; // 2^-lambda - 2d/(gamma^3*q)
   long double pcs_budget = 0;  // 2^-lambda - 2d/(gamma^3*q) - 2d/q
@@ -103,7 +103,7 @@ void PrintUsage(const char *argv0) {
       << "  --gamma <real>      Slack gamma in (0,1) (default: "
          "1/(10*max(1,d)))\n"
       << "  --auto-gamma        Search gamma automatically to minimize "
-         "l_min_for_PCS\n"
+         "l_min_for_IOPP\n"
       << "  --gamma-min <real>  Auto-search lower bound (default: 1e-9)\n"
       << "  --gamma-max <real>  Auto-search upper bound (default: 0.99)\n"
       << "  --gamma-steps <int> Auto-search budget (default: 4000)\n"
@@ -121,7 +121,7 @@ void PrintUsage(const char *argv0) {
          "1, and 3*delta - gamma*d < Delta_Cd\n"
       << "  l_iopp from: 2d/(gamma^3*q) + base^l <= 2^-lambda\n"
       << "  l_pcs  from: 2d/q + 2d/(gamma^3*q) + base^l <= 2^-lambda\n"
-      << "  recommended l = l_pcs\n";
+      << "  default recommended l = l_iopp\n";
 }
 
 long long ParseInt(const std::string &s, const char *name) {
@@ -422,12 +422,14 @@ bool BetterAny(const CalcResult &lhs, long double lhs_gamma,
   return lhs_gamma < rhs_gamma;
 }
 
-bool BetterFeasible(const CalcResult &lhs, long double lhs_gamma,
-                    const CalcResult &rhs, long double rhs_gamma) {
-  if (lhs.l_min_pcs != rhs.l_min_pcs)
-    return lhs.l_min_pcs < rhs.l_min_pcs;
-  if (lhs.pcs_bound_at_l_pcs != rhs.pcs_bound_at_l_pcs) {
-    return lhs.pcs_bound_at_l_pcs < rhs.pcs_bound_at_l_pcs;
+bool BetterDefault(const CalcResult &lhs, long double lhs_gamma,
+                   const CalcResult &rhs, long double rhs_gamma) {
+  if (lhs.l_min_iopp != rhs.l_min_iopp)
+    return lhs.l_min_iopp < rhs.l_min_iopp;
+  const long double lhs_iopp_bound = lhs.iopp_first_term + lhs.second_term_iopp;
+  const long double rhs_iopp_bound = rhs.iopp_first_term + rhs.second_term_iopp;
+  if (lhs_iopp_bound != rhs_iopp_bound) {
+    return lhs_iopp_bound < rhs_iopp_bound;
   }
   return lhs_gamma < rhs_gamma;
 }
@@ -580,9 +582,9 @@ CalcResult Compute(const CliArgs &args) {
     g_max = args.gamma_max.value_or(0.99L);
   }
 
-  bool have_feasible = false;
-  CalcResult best_feasible;
-  long double best_feasible_gamma = 0.0L;
+  bool have_default_feasible = false;
+  CalcResult best_default;
+  long double best_default_gamma = 0.0L;
   bool have_any = false;
   CalcResult best_any;
   long double best_any_gamma = 0.0L;
@@ -596,12 +598,12 @@ CalcResult Compute(const CliArgs &args) {
       best_any_gamma = gamma;
       have_any = true;
     }
-    if (cur.has_finite_l_pcs &&
-        (!have_feasible ||
-         BetterFeasible(cur, gamma, best_feasible, best_feasible_gamma))) {
-      best_feasible = cur;
-      best_feasible_gamma = gamma;
-      have_feasible = true;
+    if (cur.has_finite_l_iopp &&
+        (!have_default_feasible ||
+         BetterDefault(cur, gamma, best_default, best_default_gamma))) {
+      best_default = cur;
+      best_default_gamma = gamma;
+      have_default_feasible = true;
     }
   };
 
@@ -637,13 +639,13 @@ CalcResult Compute(const CliArgs &args) {
 
   std::vector<long long> ranked_indices;
   ranked_indices.reserve(static_cast<std::size_t>(coarse_samples.size()));
-  const bool rank_feasible = have_feasible;
+  const bool rank_default_feasible = have_default_feasible;
   for (long long i = 0; i < static_cast<long long>(coarse_samples.size());
        ++i) {
     const CalcResult &cur = coarse_samples[static_cast<std::size_t>(i)].result;
     if (!IsValidPoint(cur))
       continue;
-    if (rank_feasible && !cur.has_finite_l_pcs)
+    if (rank_default_feasible && !cur.has_finite_l_iopp)
       continue;
     ranked_indices.push_back(i);
   }
@@ -663,9 +665,9 @@ CalcResult Compute(const CliArgs &args) {
                   coarse_samples[static_cast<std::size_t>(lhs_idx)];
               const GammaPoint &rhs =
                   coarse_samples[static_cast<std::size_t>(rhs_idx)];
-              if (rank_feasible) {
-                return BetterFeasible(lhs.result, lhs.gamma, rhs.result,
-                                      rhs.gamma);
+              if (rank_default_feasible) {
+                return BetterDefault(lhs.result, lhs.gamma, rhs.result,
+                                     rhs.gamma);
               }
               return BetterAny(lhs.result, lhs.gamma, rhs.result, rhs.gamma);
             });
@@ -747,9 +749,9 @@ CalcResult Compute(const CliArgs &args) {
           if (!IsValidPoint(cur))
             continue;
 
-          if (cur.has_finite_l_pcs) {
+          if (cur.has_finite_l_iopp) {
             if (!local_have_feasible ||
-                BetterFeasible(cur, gamma, best_local, best_local_gamma)) {
+                BetterDefault(cur, gamma, best_local, best_local_gamma)) {
               best_local = cur;
               best_local_gamma = gamma;
               best_local_idx = i;
@@ -792,12 +794,13 @@ CalcResult Compute(const CliArgs &args) {
     }
   }
 
-  CalcResult out =
-      have_feasible
-          ? ComputeAtGamma(args, pre, q, best_feasible_gamma, args.show_levels)
-          : ComputeAtGamma(args, pre, q, best_any_gamma, args.show_levels);
+  CalcResult out = have_default_feasible
+                       ? ComputeAtGamma(args, pre, q, best_default_gamma,
+                                        args.show_levels)
+                       : ComputeAtGamma(args, pre, q, best_any_gamma,
+                                        args.show_levels);
   out.gamma_auto = true;
-  out.gamma_auto_feasible = have_feasible;
+  out.gamma_auto_feasible = have_default_feasible;
   out.gamma_search_min = g_min;
   out.gamma_search_max = g_max;
   out.gamma_search_steps = args.gamma_steps;
@@ -853,16 +856,22 @@ void PrintResult(const CliArgs &args, const CalcResult &out) {
             << out.pcs_budget << "\n";
 
   if (out.has_finite_l_iopp) {
-    std::cout << "  l_min_iopp_only = " << out.l_min_iopp
-              << "  (base^l=" << out.second_term_iopp << ")\n";
+    std::cout << "  l_min_for_IOPP  = " << out.l_min_iopp
+              << "  (default; base^l=" << out.second_term_iopp << ")\n";
+    std::cout << "Bounds at l = l_min_for_IOPP (ignoring negl(lambda)):\n";
+    std::cout << "  IOPP <= 2d/(gamma^3*q) + base^l\n";
+    std::cout << "       = " << out.iopp_first_term << " + "
+              << out.second_term_iopp << " = "
+              << (out.iopp_first_term + out.second_term_iopp) << "\n";
   } else {
-    std::cout << "  l_min_iopp_only = N/A (no finite l)\n";
+    std::cout << "  l_min_for_IOPP  = N/A (no finite l)\n";
   }
 
   if (out.has_finite_l_pcs) {
     std::cout << "  l_min_for_PCS   = " << out.l_min_pcs
-              << "  (recommended; also ensures IOPP)\n";
-    std::cout << "  base^l(PCS-safe) = " << out.second_term_pcs << "\n\n";
+              << "  (PCS-safe stricter choice)\n";
+    std::cout << "  base^l(PCS-safe) = " << out.second_term_pcs << "\n";
+    std::cout << "\n";
     std::cout << "Bounds at l = l_min_for_PCS (ignoring negl(lambda)):\n";
     std::cout << "  IOPP <= 2d/(gamma^3*q) + base^l\n";
     std::cout << "       = " << out.iopp_first_term << " + "
@@ -878,7 +887,7 @@ void PrintResult(const CliArgs &args, const CalcResult &out) {
                  "2^-lambda.\n";
     if (out.gamma_auto && !out.gamma_auto_feasible) {
       std::cout << "Auto-search result: no feasible gamma found in the search "
-                   "range.\n";
+                   "range for the default IOPP objective.\n";
     }
     std::cout << "Adjust gamma / c / q (or extension-challenge domain) to "
                  "increase budget(pcs).\n";

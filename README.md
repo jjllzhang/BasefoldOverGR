@@ -544,27 +544,37 @@ case:
 
 ### One-Command Reproduction (`c=4`, `lambda=128`)
 
-The repo includes sweep script `scripts/run_release_c4_lambda128.sh`. By default it runs 14 contexts over `d=3..29` and writes outputs to `results/release_c4_lambda128_sweep_<RUN_ID>/` (`RUN_ID` defaults to `<timestamp>_pid<pid>`).
+The repo includes sweep script `scripts/run_release_c4_lambda128.sh`. By default it runs the `basefold_release` suite over 14 contexts and `d=3..29`, and writes outputs to `results/release_c4_lambda128_sweep_<RUN_ID>/` (`RUN_ID` defaults to `<timestamp>_pid<pid>`).
 
 ```bash
 scripts/run_release_c4_lambda128.sh
 
 # Run one context with a smaller d range
 CONTEXTS=field-prime128-ext D_MIN=10 D_MAX=20 scripts/run_release_c4_lambda128.sh
+
+# Run compiler full-eval rows only
+RUN_SUITE=compiler_eval CONTEXTS=ring-gr-2p16-64-ext \
+COMPILER_KAPPA=6 COMPILER_ELL_MIN=9 COMPILER_ELL_MAX=12 \
+scripts/run_release_c4_lambda128.sh
 ```
 
 See `bench/exp_params_release_c4_lambda128.md` for context and parameter details.
 
 Default output directory contains:
 
-- `results.csv`: structured aggregate rows for each `(context, d)`.
+- `backend_eval_results.csv`: BaseFold release table. It records
+  `bench_basefold_pcs_commit + bench_basefold_pcs_eval` only, one row per
+  `(family=basefold, context, d)`.
+- `compiler_eval_results.csv`: unified compiler full-eval table for ring
+  contexts, one row per compiler eval point.
 - `RESULTS.md`: markdown table for quick inspection.
-- `logs/*.log`: raw logs from `calc_iopp_params`, `bench_basefold_pcs_commit`, and `bench_basefold_pcs_eval`.
+- `logs/*.log`: raw logs from `calc_iopp_params`, `bench_basefold_pcs_commit`,
+  `bench_basefold_pcs_eval`, and `bench_z2k_*_eval`.
 
-Current `results.csv` header:
+Current `backend_eval_results.csv` header:
 
 ```text
-context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_ms,prove_phase_mean_ms,verifier_mean_ms,proof_size_kb,proof_size_bytes,status,error
+family,context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_ms,prove_phase_mean_ms,verifier_mean_ms,proof_size_kb,proof_size_bytes,status,error
 ```
 
 Common columns:
@@ -572,13 +582,27 @@ Common columns:
 - `poly_dim`: message/truth-table size `k_d = k0*2^d` (so under the default
   `k0=1`, this is just `2^d`).
 - `gamma`: slack parameter selected by `calc_iopp_params --auto-gamma`.
-- `queries`: recommended query count (`l_min_for_PCS`).
-- `proof_size_kb/proof_size_bytes`: exact fixed-width proof payload size
-  reported by `bench_basefold_pcs_eval`, omitting transcript-recoverable
-  indices/challenges (KiB / bytes).
-- Current release sweeps do not populate these columns from a separate
-  formula-only benchmark binary.
+- `queries`: release-mode default query count (`l_min_for_IOPP`).
+- `family=basefold`: `commit_mean_ms` comes from `bench_basefold_pcs_commit`;
+  `prove_phase_mean_ms`, `verifier_mean_ms`, and proof size come from
+  `bench_basefold_pcs_eval`.
 - `status,error`: per-point success status and error message (if any).
+
+Supplemental compiler CSVs:
+
+- `compiler_eval_results.csv` stores one row per ring-context
+  `(family, context, ell)` and reports the full compiler eval split:
+  `outer/backend/total` for commit, prover, and verifier, plus both outer and
+  total proof sizes. Here `d = ell-kappa`, `ell' = d`, and `poly_dim = 2^ell`.
+- `family=frobenius` rows for `GR(2^2,r)` contexts are intentionally not run in
+  the script; those rows are emitted with `status=disabled_gr2p2_context`.
+- The current compiler bench binaries still build the BaseFold backend with
+  `k0=1` only. When `K0 != 1`, the supplemental rows are emitted with
+  `status=unsupported_k0`.
+- Ring contexts whose extension degree is not a power of two (for example the
+  162-degree GR contexts) are emitted with
+  `status=unsupported_context_degree`. The script also requires the selected
+  ring context to satisfy `deg(F) = 2^COMPILER_KAPPA`.
 
 ### Result Files and Plotting
 
@@ -596,9 +620,9 @@ python3 scripts/plot_benchmark_results.py \
   'results-legacy/results-GR(2^16;128).csv' \
   --prefix compare_f2_256_vs_gr2p16_128
 
-# Plot directly from one sweep's results.csv
+# Plot directly from one sweep's backend_eval_results.csv
 python3 scripts/plot_benchmark_results.py \
-  results/release_c4_lambda128_sweep_<RUN_ID>/results.csv \
+  results/release_c4_lambda128_sweep_<RUN_ID>/backend_eval_results.csv \
   --prefix sweep_run
 ```
 
@@ -610,9 +634,9 @@ python3 scripts/plot_benchmark_results.py \
 - `delta < J_gamma(J_gamma(Delta_Cd))` (strict inequality).
 - Implementation choice: for fixed `gamma`, select `delta` as close as possible to the feasible upper bound under all constraints (`delta < J_gamma(J_gamma(Delta_Cd))`, `0 < 1-delta+gamma*d < 1`, `3*delta-gamma*d < Delta_Cd`), to minimize the resulting query count.
 - Distinguishes and reports:
-  - `l_min_iopp_only`: satisfying `2d/(gamma^3 q) + (1-delta+gamma*d)^l <= 2^-lambda`.
-  - `l_min_for_PCS` (recommended): satisfying `2d/q + 2d/(gamma^3 q) + (1-delta+gamma*d)^l <= 2^-lambda`.
-- Supports `--auto-gamma`: searches `gamma` to minimize `l_min_for_PCS` under fixed `c,d,k0,lambda,q`.
+  - `l_min_for_IOPP` (default): satisfying `2d/(gamma^3 q) + (1-delta+gamma*d)^l <= 2^-lambda`.
+  - `l_min_for_PCS` (PCS-safe stricter choice): satisfying `2d/q + 2d/(gamma^3 q) + (1-delta+gamma*d)^l <= 2^-lambda`.
+- Supports `--auto-gamma`: searches `gamma` to minimize `l_min_for_IOPP` under fixed `c,d,k0,lambda,q`.
 - Search implementation: precomputes `Delta_Cd` once, then runs coarse-to-fine adaptive search over `gamma`.
 
 Examples:
@@ -627,7 +651,7 @@ Examples:
 # Show per-level recurrence details (ell_i, t_i)
 ./build-release/calc_iopp_params --d 16 --c 16 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --gamma 0.00625 --show-levels
 
-# Auto-select gamma (objective: minimize l_min_for_PCS)
+# Auto-select gamma (objective: minimize l_min_for_IOPP)
 ./build-release/calc_iopp_params --d 20 --c 16 --k0 1 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --auto-gamma
 
 # Optional: constrain search range and search budget

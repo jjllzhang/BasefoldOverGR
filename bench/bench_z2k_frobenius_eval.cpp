@@ -46,6 +46,9 @@ using basefold_bench_z2k_frobenius_common::Stats;
 using basefold_bench_z2k_frobenius_common::ValidateMonic;
 
 struct BenchResult {
+  Stats commit_outer;
+  Stats commit_backend;
+  Stats commit_total;
   Stats prove_total;
   Stats prove_outer;
   Stats prove_backend;
@@ -78,9 +81,15 @@ BenchResult RunEvalBenchmark(const basefold::FrobeniusPCSParams &params,
   std::vector<double> prove_total_ms;
   std::vector<double> prove_outer_ms;
   std::vector<double> prove_backend_ms;
+  std::vector<double> commit_outer_ms;
+  std::vector<double> commit_backend_ms;
+  std::vector<double> commit_total_ms;
   std::vector<double> verify_total_ms;
   std::vector<double> verify_outer_ms;
   std::vector<double> verify_backend_ms;
+  commit_outer_ms.reserve(static_cast<std::size_t>(reps));
+  commit_backend_ms.reserve(static_cast<std::size_t>(reps));
+  commit_total_ms.reserve(static_cast<std::size_t>(reps));
   prove_total_ms.reserve(static_cast<std::size_t>(reps));
   prove_outer_ms.reserve(static_cast<std::size_t>(reps));
   prove_backend_ms.reserve(static_cast<std::size_t>(reps));
@@ -93,8 +102,23 @@ BenchResult RunEvalBenchmark(const basefold::FrobeniusPCSParams &params,
   std::uint64_t proof_size_bytes = 0;
 
   for (int iter = -warmup; iter < reps; ++iter) {
-    const basefold::FrobeniusPCSCommitArtifacts commit_artifacts =
-        basefold::FrobeniusPCSBuildCommitArtifacts(params, t_table);
+    const auto c0 = std::chrono::steady_clock::now();
+    const basefold::FrobeniusPCSOuterCommitArtifacts outer_commit_artifacts =
+        basefold::FrobeniusPCSBuildOuterCommitArtifacts(params, t_table);
+    const auto c1 = std::chrono::steady_clock::now();
+
+    const auto c2 = std::chrono::steady_clock::now();
+    const basefold::Z2kPCSBackendCommitArtifacts backend_commit_artifacts =
+        basefold::Z2kPCSBackendBuildCommitArtifacts(
+            params.backend, outer_commit_artifacts.t_packed_monomial_coeffs);
+    const auto c3 = std::chrono::steady_clock::now();
+
+    basefold::FrobeniusPCSCommitArtifacts commit_artifacts;
+    commit_artifacts.t_packed_table = outer_commit_artifacts.t_packed_table;
+    commit_artifacts.t_packed_monomial_coeffs =
+        outer_commit_artifacts.t_packed_monomial_coeffs;
+    commit_artifacts.backend_commit_artifacts = backend_commit_artifacts;
+    commit_artifacts.commitment = backend_commit_artifacts.commitment;
 
     basefold::Profile prover_prof;
     basefold::Profile verifier_prof;
@@ -134,6 +158,9 @@ BenchResult RunEvalBenchmark(const basefold::FrobeniusPCSParams &params,
     const double prove_total = MsSince(t0, t1);
     const double prove_backend =
         basefold::NsToMs(prover_prof.z2k_backend_prove_ns);
+    const double commit_outer = MsSince(c0, c1);
+    const double commit_backend = MsSince(c2, c3);
+    const double commit_total = commit_outer + commit_backend;
     const double verify_total = MsSince(t2, t3);
     const double verify_backend =
         basefold::NsToMs(verifier_prof.z2k_backend_verify_ns);
@@ -148,6 +175,9 @@ BenchResult RunEvalBenchmark(const basefold::FrobeniusPCSParams &params,
     }
 
     if (iter >= 0) {
+      commit_outer_ms.push_back(commit_outer);
+      commit_backend_ms.push_back(commit_backend);
+      commit_total_ms.push_back(commit_total);
       prove_total_ms.push_back(prove_total);
       prove_outer_ms.push_back(prove_outer);
       prove_backend_ms.push_back(prove_backend);
@@ -158,6 +188,9 @@ BenchResult RunEvalBenchmark(const basefold::FrobeniusPCSParams &params,
   }
 
   BenchResult out;
+  out.commit_outer = ComputeStats(commit_outer_ms);
+  out.commit_backend = ComputeStats(commit_backend_ms);
+  out.commit_total = ComputeStats(commit_total_ms);
   out.prove_total = ComputeStats(prove_total_ms);
   out.prove_outer = ComputeStats(prove_outer_ms);
   out.prove_backend = ComputeStats(prove_backend_ms);
@@ -185,6 +218,15 @@ void PrintResult(long c, long ell, long kappa, long queries, int warmup,
   std::cout << std::fixed << std::setprecision(3);
   std::cout << "  hash backend " << basefold::SelectedHashBackendName() << "\n";
   PrintFrobeniusBasisSummary(std::cout, basis_summary);
+  std::cout << "  outer commit mean " << result.commit_outer.mean_ms
+            << " ms  (min " << result.commit_outer.min_ms << ", max "
+            << result.commit_outer.max_ms << ")\n";
+  std::cout << "  backend commit mean " << result.commit_backend.mean_ms
+            << " ms  (min " << result.commit_backend.min_ms << ", max "
+            << result.commit_backend.max_ms << ")\n";
+  std::cout << "  commit total mean " << result.commit_total.mean_ms
+            << " ms  (min " << result.commit_total.min_ms << ", max "
+            << result.commit_total.max_ms << ")\n";
   std::cout << "  prove-phase mean " << result.prove_total.mean_ms << " ms  (min "
             << result.prove_total.min_ms << ", max "
             << result.prove_total.max_ms << ")\n";
@@ -220,7 +262,7 @@ void PrintHelp() {
       << "                           [--ring-mod <decimal-int>] [--ring-p <decimal-int>]\n"
       << "                           [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
       << "Notes:\n"
-      << "  Commit/artifact construction happens before timed prove, matching current bench_basefold_pcs_eval semantics.\n"
+      << "  This bench measures one full compiler eval run and reports commit split as outer commit + backend commit.\n"
       << "  Timed prove defaults to the unchecked prover hot path; pass --checked to include prover-side input and honest-witness self-checks.\n"
       << "  Outer prover/verifier times are total times with the backend prove/verify subcall removed.\n"
       << "  Proof size reports exact serializer-backed bytes for the public FrobeniusPCSEvalProof.\n";

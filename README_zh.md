@@ -468,39 +468,62 @@ artifact-driven verifier timing 的语义是：
 
 ### 一键复现实验（`c=4`, `lambda=128`）
 
-仓库内置 sweep 脚本 `scripts/run_release_c4_lambda128.sh`，默认会在 14 组上下文上遍历 `d=3..29`，并输出到 `results/release_c4_lambda128_sweep_<RUN_ID>/`（`RUN_ID` 默认形如 `<timestamp>_pid<pid>`）。
+仓库内置 sweep 脚本 `scripts/run_release_c4_lambda128.sh`，默认跑 `basefold_release` suite，在 14 组上下文上遍历 `d=3..29`，并输出到 `results/release_c4_lambda128_sweep_<RUN_ID>/`（`RUN_ID` 默认形如 `<timestamp>_pid<pid>`）。
 
 ```bash
 scripts/run_release_c4_lambda128.sh
 
 # 只跑单个 context + 较小维度区间
 CONTEXTS=field-prime128-ext D_MIN=10 D_MAX=20 scripts/run_release_c4_lambda128.sh
+
+# 只跑 compiler full eval
+RUN_SUITE=compiler_eval CONTEXTS=ring-gr-2p16-64-ext \
+COMPILER_KAPPA=6 COMPILER_ELL_MIN=9 COMPILER_ELL_MAX=12 \
+scripts/run_release_c4_lambda128.sh
 ```
 
 参数与上下文说明见 `bench/exp_params_release_c4_lambda128.md`。
 
 默认输出目录里会包含：
 
-- `results.csv`：每个 `(context, d)` 的结构化结果汇总。
+- `backend_eval_results.csv`：BaseFold release 表。只记录
+  `bench_basefold_pcs_commit + bench_basefold_pcs_eval`，每行一个
+  `(family=basefold, context, d)`。
+- `compiler_eval_results.csv`：统一的 compiler full-eval 表；每个 ring
+  compiler eval 点一行。
 - `RESULTS.md`：便于快速浏览的 markdown 表格。
-- `logs/*.log`：`calc_iopp_params`、`bench_basefold_pcs_commit`、`bench_basefold_pcs_eval` 的原始日志。
+- `logs/*.log`：`calc_iopp_params`、`bench_basefold_pcs_commit`、
+  `bench_basefold_pcs_eval`、`bench_z2k_*_eval` 的原始日志。
 
-`results.csv` 当前表头为：
+`backend_eval_results.csv` 当前表头为：
 
 ```text
-context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_ms,prove_phase_mean_ms,verifier_mean_ms,proof_size_kb,proof_size_bytes,status,error
+family,context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_ms,prove_phase_mean_ms,verifier_mean_ms,proof_size_kb,proof_size_bytes,status,error
 ```
 
 其中常用列含义：
 
 - `poly_dim`：消息/真值表长度 `k_d = k0*2^d`（默认 `k0=1` 时就是 `2^d`）。
 - `gamma`：`calc_iopp_params --auto-gamma` 选出的 slack 参数。
-- `queries`：推荐查询次数（即 `l_min_for_PCS`）。
-- `proof_size_kb/proof_size_bytes`：来自 `bench_basefold_pcs_eval` 的精确 payload 大小
-  （fixed-width counting 路径，省略 verifier 可从 transcript 重建的
-  indices/challenges，KiB / bytes）。
-- 当前 release sweep 不会再从单独的 formula-only benchmark 二进制填这两列。
+- `queries`：release 口径下默认采用的查询次数（即 `l_min_for_IOPP`）。
+- `family=basefold`：`commit_mean_ms` 来自 `bench_basefold_pcs_commit`；
+  `prove_phase_mean_ms`、`verifier_mean_ms`、proof size 来自
+  `bench_basefold_pcs_eval`。
 - `status,error`：该 `(context,d)` 点是否成功及失败原因（若有）。
+
+补充的 compiler csv：
+
+- `compiler_eval_results.csv`：每个 ring `(family, context, ell)` 一行，记录
+  full compiler eval 的 `outer/backend/total` commit、prove、verify 分解，
+  以及 outer/total proof size。这里脚本内部统一取 `d = ell-kappa`，
+  `ell' = d`，并把 `poly_dim` 记成 `2^ell`。
+- `family=frobenius` 且 context 属于 `GR(2^2,r)` 时，脚本不会实际执行该
+  bench，而是直接写 `status=disabled_gr2p2_context`。
+- 当前 compiler bench 二进制仍然只会构造 `k0=1` 的 BaseFold backend。
+  所以当 `K0 != 1` 时，补充行会记成 `status=unsupported_k0`。
+- 若 ring context 的扩张次数不是 2 的幂（例如 162 次 GR context），则补充行会记成
+  `status=unsupported_context_degree`。此外，脚本还要求所选 ring context
+  满足 `deg(F) = 2^COMPILER_KAPPA`。
 
 ### 结果文件与绘图
 
@@ -518,9 +541,9 @@ python3 scripts/plot_benchmark_results.py \
   'results-legacy/results-GR(2^16;128).csv' \
   --prefix compare_f2_256_vs_gr2p16_128
 
-# 直接使用某次 sweep 的 results.csv
+# 直接使用某次 sweep 的 backend_eval_results.csv
 python3 scripts/plot_benchmark_results.py \
-  results/release_c4_lambda128_sweep_<RUN_ID>/results.csv \
+  results/release_c4_lambda128_sweep_<RUN_ID>/backend_eval_results.csv \
   --prefix sweep_run
 ```
 
@@ -532,9 +555,9 @@ python3 scripts/plot_benchmark_results.py \
 - `delta < J_gamma(J_gamma(Delta_Cd))`（严格不等式）；
 - 实现策略：固定 `gamma` 时，在满足全部约束（`delta < J_gamma(J_gamma(Delta_Cd))`、`0 < 1-delta+gamma*d < 1`、`3*delta-gamma*d < Delta_Cd`）的可行区间内，取尽量接近上界的 `delta`，以减小查询数；
 - 计算并区分：
-  - `l_min_iopp_only`：满足 `2d/(gamma^3 q) + (1-delta+gamma*d)^l <= 2^-lambda`；
-  - `l_min_for_PCS`（推荐）：满足 `2d/q + 2d/(gamma^3 q) + (1-delta+gamma*d)^l <= 2^-lambda`。
-- 支持 `--auto-gamma`：在给定 `c,d,k0,lambda,q` 时自动搜索 `gamma`，目标最小化 `l_min_for_PCS`。
+  - `l_min_for_IOPP`（默认）：满足 `2d/(gamma^3 q) + (1-delta+gamma*d)^l <= 2^-lambda`；
+  - `l_min_for_PCS`（更严格的 PCS-safe 取值）：满足 `2d/q + 2d/(gamma^3 q) + (1-delta+gamma*d)^l <= 2^-lambda`。
+- 支持 `--auto-gamma`：在给定 `c,d,k0,lambda,q` 时自动搜索 `gamma`，目标最小化 `l_min_for_IOPP`。
 - 搜索实现：`Delta_Cd` 先预计算一次，再对 `gamma` 进行粗到细自适应搜索。
 
 示例：
@@ -549,7 +572,7 @@ python3 scripts/plot_benchmark_results.py \
 # 查看每一层递推细节（ell_i, t_i）
 ./build-release/calc_iopp_params --d 16 --c 16 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --gamma 0.00625 --show-levels
 
-# 自动选 gamma（目标：l_min_for_PCS 最小）
+# 自动选 gamma（目标：l_min_for_IOPP 最小）
 ./build-release/calc_iopp_params --d 20 --c 16 --k0 1 --lambda 128 --q 6277101735386680763835789423207666416102355444464034512896 --auto-gamma
 
 # 可选：限制搜索区间和搜索预算

@@ -6,19 +6,35 @@
 
 - 码率：`1/4`，即 `c=4`
 - 安全性：`lambda=128`
-- 多项式维度：`2^3` 到 `2^29`
+- BaseFold release 的多项式维度：`2^3` 到 `2^29`
   - 在 bench 参数中对应 `d=3..29`
-  - `results.csv` / `RESULTS.md` 里的 `poly_dim` 记录 `k_d = k0*2^d`
+  - 输出表里的 `poly_dim` 记录 `k_d = k0*2^d`
     （默认 `k0=1` 时，`poly_dim = 2^d`）
+- compiler suite 不再直接 sweep `d`
+  - `compiler_eval`：用户给 `COMPILER_KAPPA` 和 `COMPILER_ELL_MIN/MAX`
+  - 脚本内部统一算 `d = ell-kappa = ell'`
+  - compiler 表里的 `poly_dim` 记录源问题大小 `2^ell`
 - 构建：`Release`
 - 指标：
-  - `commit time`：`bench_basefold_pcs_commit` 的 `commit mean`
-  - `prover time`：`bench_basefold_pcs_eval` 的 `prove-phase mean`
-  - `verifier time`：`bench_basefold_pcs_eval` 的 `verifier mean`
-  - `proof size`：`bench_basefold_pcs_eval` 对真实 proof 走 fixed-width `CountingSink`
-    得到的精确 payload 大小（省略 verifier 可从 transcript 重建的
-    indices/challenges，如 `r_by_level`；输出 `proof_size_bytes` /
-    `proof_size_kb`）
+  - `family=basefold` 的 `commit time`：`bench_basefold_pcs_commit` 的 `commit mean`
+  - `family=basefold` 的 `prover/verifier/proof size`：`bench_basefold_pcs_eval`
+    的 `prove-phase mean` / `verifier mean` / fixed-width payload counting
+  - ring context 的 compiler full eval：`bench_z2k_*_eval`
+
+关于 compiler bench 的参数来源与限制：
+
+- `compiler_eval` 中，`compiler_kappa` 由脚本环境变量 `COMPILER_KAPPA`
+  显式给定，`compiler_ell` 在 `COMPILER_ELL_MIN..COMPILER_ELL_MAX` 上 sweep。
+- backend 侧维度统一按 `ell-kappa = d = ell'` 构造。
+- 脚本会检查当前 ring context 的扩张次数满足 `deg(F) = 2^compiler_kappa`。
+- 当前 ring-switch / Frobenius bench helper 仍然只构造 `k0=1` 的 BaseFold
+  backend；因此脚本里当 `K0 != 1` 时，会把 compiler 行记为
+  `unsupported_k0`。
+- 当前脚本会跳过所有 `GR(2^2,r)` context 上的 Frobenius compiler eval，
+  并把对应行记为 `disabled_gr2p2_context`；ring-switch 仍照常运行。
+- 若 ring context 的 `deg(F)` 不是 2 的幂，或者虽为 2 的幂但与
+  `COMPILER_KAPPA` 不匹配，则 compiler 行会记为
+  `unsupported_context_degree`。
 
 ## 2) 实验上下文（默认 `all` 共 14 组）
 
@@ -125,7 +141,7 @@
 并从输出解析：
 
 - `gamma`
-- `l_min_for_PCS`（作为该点的 `queries`）
+- `l_min_for_IOPP`（作为该点的 `queries`）
 
 说明：
 
@@ -140,11 +156,24 @@
 scripts/run_release_c4_lambda128.sh
 ```
 
+- 默认 suite：`RUN_SUITE=basefold_release`
+  - 运行 `calc_iopp_params`
+  - 写入 `family=basefold` 的 BaseFold `commit + eval`
+- 可选 suite：
+  - `RUN_SUITE=compiler_eval`：只跑 ring context 的 compiler full eval
+
 - 常用环境变量：
+  - `RUN_SUITE`：`basefold_release` / `compiler_eval`
   - `RUN_ID`：本次运行 ID（默认 `<timestamp>_pid<shell-pid>`），用于区分输出目录和（可选）构建目录
-  - `D_MIN` / `D_MAX`：维度区间（默认 `3..29`）
+  - `D_MIN` / `D_MAX`：只对 `basefold_release` 生效的维度区间（默认 `3..29`）
   - `K0`：基础消息维度 `k0`（默认 `1`，要求为 2 的幂）
-    - 输出中的 `poly_dim = k_d = K0*2^d`
+    - `backend_eval_results.csv` 中的 `poly_dim = k_d = K0*2^d`
+  - `COMPILER_KAPPA`：只对 `compiler_eval` 生效；要求为正整数
+  - `COMPILER_ELL_MIN` / `COMPILER_ELL_MAX`
+    - 只对 `compiler_eval` 生效
+    - 要求满足 `COMPILER_ELL_MIN >= COMPILER_KAPPA`
+    - 脚本内部按 `ell` sweep，并自动计算 `d = ell-kappa`
+    - `compiler_eval_results.csv` 里的 `poly_dim = 2^ell`
   - `CONTEXTS`：选择上下文，默认 `all`
     - 可选值：`field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162,field-prime64-ext,field-f2p64-ext,field-prime128-ext,field-f2p128-ext,field-f3p40-ext,field-f3p81-ext,ring-gr-2p16-64-ext,ring-gr-2p16-128-ext,ring-gr-2p2-64-ext,ring-gr-2p2-128-ext`
     - 示例：`CONTEXTS=field-prime128-ext` 或 `CONTEXTS=field-f2p128-ext,ring-gr-2p16-64-ext`
@@ -169,7 +198,9 @@ scripts/run_release_c4_lambda128.sh
   - `BUILD_DIR`：显式指定构建目录（优先级高于 `ISOLATE_BUILD_DIR`）
   - `CMD_TIMEOUT_SEC`：单条 bench 超时秒数（默认 `0`，即不超时）
   - `CONTINUE_ON_ERROR`：遇到某个点失败后是否继续（默认 `1`）
-  - `COMMIT_REPS` / `EVAL_REPS` / `SEED`
+  - `COMMIT_WARMUP` / `COMMIT_REPS`
+  - `EVAL_WARMUP` / `EVAL_REPS`
+  - `SEED`
 
 并发多实例建议（互不影响）：
 
@@ -183,18 +214,25 @@ ISOLATE_BUILD_DIR=1 CPU_PIN_MODE=slot RUN_SLOT=1 RUN_SLOTS_TOTAL=2 \
 CONTEXTS=ring-gr-2p16-128-ext scripts/run_release_c4_lambda128.sh
 ```
 
-说明：单个脚本内部仍按 `d` 串行推进；同一 `d` 下各 context 也串行执行。并行度主要来自单个 bench 进程内部线程；多脚本并发时建议使用上面的 CPU 分片与独立 build 目录。
+若并发的是 `compiler_eval`，请同时给出 `COMPILER_KAPPA` 和
+`COMPILER_ELL_MIN/MAX`。
+
+说明：`basefold_release` 在脚本内部按 `d` 串行推进；`compiler_eval`
+在脚本内部按 `ell` 串行推进，并统一使用 `d = ell-kappa`。并行度主要来自单个 bench 进程内部线程；多脚本并发时建议使用上面的 CPU 分片与独立 build 目录。
 
 ## 5) 输出
 
 脚本输出目录：`results/release_c4_lambda128_sweep_<RUN_ID>/`
 
-- 明细 csv：`results.csv`
-  - 每行一个 `(context, d)` 点，含 `poly_dim/gamma/queries/4项指标/status/error`
-  - 其中 `poly_dim = k_d = k0*2^d`
-  - 其中 `proof_size_bytes` / `proof_size_kb` 来自 `bench_basefold_pcs_eval` 对真实 proof
-    的 fixed-width payload counting 结果（省略 verifier 可重建的
-    indices/challenges）
+- `backend_eval_results.csv`
+  - 统一表；每行一个 `(family, context, d)` 点
+  - `family=basefold`：来自 `bench_basefold_pcs_commit + bench_basefold_pcs_eval`
+- `compiler_eval_results.csv`
+  - 仅对 ring context 生成；每行一个 `(family, context, ell)` 点
+  - 包含 full compiler eval 的 `outer/backend/total` commit、prove、verify
+    分解，以及 `outer_proof_size` / `proof_size`
+  - 对 `family=frobenius`，凡是 `GR(2^2,r)` context 都不会实际执行 bench，
+    而是直接写 `status=disabled_gr2p2_context`
 - 汇总 markdown：`RESULTS.md`
 - 原始日志：`logs/*.log`（来自 `calc_iopp_params`、`bench_basefold_pcs_commit`、
-  `bench_basefold_pcs_eval`）
+  `bench_basefold_pcs_eval`、`bench_z2k_*_eval`）
