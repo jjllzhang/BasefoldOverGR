@@ -61,7 +61,6 @@ D_MAX="${D_MAX:-29}"
 COMPILER_KAPPA="${COMPILER_KAPPA:-}"
 COMPILER_ELL_MIN="${COMPILER_ELL_MIN:-}"
 COMPILER_ELL_MAX="${COMPILER_ELL_MAX:-}"
-COMPILER_FAMILY="${COMPILER_FAMILY:-}"
 
 COMMIT_WARMUP="${COMMIT_WARMUP:-1}"
 COMMIT_REPS="${COMMIT_REPS:-3}"
@@ -424,28 +423,11 @@ case "$RUN_SUITE" in
     RUN_COMPILER_EVAL=1
     COMPILER_EVAL_FAMILY="frobenius"
     ;;
-  compiler_eval)
-    RUN_COMPILER_EVAL=1
-    ;;
   *)
-    echo "RUN_SUITE must be one of: basefold_release, compiler_eval_ring_switch, compiler_eval_frobenius, compiler_eval" >&2
+    echo "RUN_SUITE must be one of: basefold_release, compiler_eval_ring_switch, compiler_eval_frobenius" >&2
     exit 2
     ;;
 esac
-
-if (( RUN_COMPILER_EVAL )) && [[ -z "$COMPILER_EVAL_FAMILY" ]]; then
-  if [[ "$COMPILER_FAMILY" == "ring_switch" || "$COMPILER_FAMILY" == "frobenius" ]]; then
-    COMPILER_EVAL_FAMILY="$COMPILER_FAMILY"
-  else
-    echo "Set RUN_SUITE=compiler_eval_ring_switch or compiler_eval_frobenius (or keep RUN_SUITE=compiler_eval and set COMPILER_FAMILY=ring_switch|frobenius)." >&2
-    exit 2
-  fi
-fi
-
-if (( RUN_COMPILER_EVAL )) && [[ -n "$COMPILER_FAMILY" ]] && [[ "$COMPILER_FAMILY" != "$COMPILER_EVAL_FAMILY" ]]; then
-  echo "COMPILER_FAMILY=$COMPILER_FAMILY conflicts with RUN_SUITE-selected family $COMPILER_EVAL_FAMILY" >&2
-  exit 2
-fi
 
 if (( RUN_BASEFOLD_RELEASE )); then
   if ! [[ "$D_MIN" =~ ^[0-9]+$ && "$D_MAX" =~ ^[0-9]+$ ]]; then

@@ -168,8 +168,6 @@ scripts/run_release_c4_lambda128.sh
     - `basefold_release`
     - `compiler_eval_ring_switch`
     - `compiler_eval_frobenius`
-    - 兼容旧写法：`RUN_SUITE=compiler_eval`，但此时还需额外给
-      `COMPILER_FAMILY=ring_switch|frobenius`
   - `RUN_ID`：本次运行 ID（默认 `<timestamp>_pid<shell-pid>`），用于区分输出目录和（可选）构建目录
   - `D_MIN` / `D_MAX`：只对 `basefold_release` 生效的维度区间（默认 `3..29`）
   - `K0`：基础消息维度 `k0`（默认 `1`，要求为 2 的幂）
@@ -180,9 +178,6 @@ scripts/run_release_c4_lambda128.sh
     - 要求满足 `COMPILER_ELL_MIN >= COMPILER_KAPPA`
     - 脚本内部按 `ell` sweep，并自动计算 `d = ell-kappa`
     - `compiler_eval_results.csv` 里的 `poly_dim = 2^ell`
-  - `COMPILER_FAMILY`
-    - 仅在兼容旧写法 `RUN_SUITE=compiler_eval` 时使用
-    - 可选值：`ring_switch` / `frobenius`
   - `CONTEXTS`：选择上下文，默认 `all`
     - 可选值：`field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162,field-prime64-ext,field-f2p64-ext,field-prime128-ext,field-f2p128-ext,field-f3p40-ext,field-f3p81-ext,ring-gr-2p16-64-ext,ring-gr-2p16-128-ext,ring-gr-2p2-64-ext,ring-gr-2p2-128-ext`
     - 示例：`CONTEXTS=field-prime128-ext` 或 `CONTEXTS=field-f2p128-ext,ring-gr-2p16-64-ext`
@@ -224,8 +219,7 @@ CONTEXTS=ring-gr-2p16-128-ext scripts/run_release_c4_lambda128.sh
 ```
 
 若并发的是 compiler eval suite，请同时给出 `COMPILER_KAPPA` 和
-`COMPILER_ELL_MIN/MAX`；若用了兼容旧写法 `RUN_SUITE=compiler_eval`，
-还要额外给 `COMPILER_FAMILY`。
+`COMPILER_ELL_MIN/MAX`。
 
 说明：`basefold_release` 在脚本内部按 `d` 串行推进；compiler eval suite
 在脚本内部按 `ell` 串行推进，并统一使用 `d = ell-kappa`。单次运行只会执行一个 family（ring-switch 或 Frobenius）。并行度主要来自单个 bench 进程内部线程；多脚本并发时建议使用上面的 CPU 分片与独立 build 目录。
