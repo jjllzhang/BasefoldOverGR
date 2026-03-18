@@ -61,6 +61,7 @@ D_MAX="${D_MAX:-29}"
 COMPILER_KAPPA="${COMPILER_KAPPA:-}"
 COMPILER_ELL_MIN="${COMPILER_ELL_MIN:-}"
 COMPILER_ELL_MAX="${COMPILER_ELL_MAX:-}"
+COMPILER_FAMILY="${COMPILER_FAMILY:-}"
 
 COMMIT_WARMUP="${COMMIT_WARMUP:-1}"
 COMMIT_REPS="${COMMIT_REPS:-3}"
@@ -408,21 +409,43 @@ SELECTED_CONTEXT_COUNT=$((ENABLE_FIELD255 + ENABLE_RING2P16_162 + ENABLE_F2_256 
 mkdir -p "$OUT_DIR/logs"
 RUN_SUITE="${RUN_SUITE:-basefold_release}"
 
-if [[ "$RUN_SUITE" != "basefold_release" && "$RUN_SUITE" != "compiler_eval" ]]; then
-  echo "RUN_SUITE must be one of: basefold_release, compiler_eval" >&2
-  exit 2
-fi
-
 RUN_BASEFOLD_RELEASE=0
 RUN_COMPILER_EVAL=0
+COMPILER_EVAL_FAMILY=""
 case "$RUN_SUITE" in
   basefold_release)
     RUN_BASEFOLD_RELEASE=1
     ;;
+  compiler_eval_ring_switch)
+    RUN_COMPILER_EVAL=1
+    COMPILER_EVAL_FAMILY="ring_switch"
+    ;;
+  compiler_eval_frobenius)
+    RUN_COMPILER_EVAL=1
+    COMPILER_EVAL_FAMILY="frobenius"
+    ;;
   compiler_eval)
     RUN_COMPILER_EVAL=1
     ;;
+  *)
+    echo "RUN_SUITE must be one of: basefold_release, compiler_eval_ring_switch, compiler_eval_frobenius, compiler_eval" >&2
+    exit 2
+    ;;
 esac
+
+if (( RUN_COMPILER_EVAL )) && [[ -z "$COMPILER_EVAL_FAMILY" ]]; then
+  if [[ "$COMPILER_FAMILY" == "ring_switch" || "$COMPILER_FAMILY" == "frobenius" ]]; then
+    COMPILER_EVAL_FAMILY="$COMPILER_FAMILY"
+  else
+    echo "Set RUN_SUITE=compiler_eval_ring_switch or compiler_eval_frobenius (or keep RUN_SUITE=compiler_eval and set COMPILER_FAMILY=ring_switch|frobenius)." >&2
+    exit 2
+  fi
+fi
+
+if (( RUN_COMPILER_EVAL )) && [[ -n "$COMPILER_FAMILY" ]] && [[ "$COMPILER_FAMILY" != "$COMPILER_EVAL_FAMILY" ]]; then
+  echo "COMPILER_FAMILY=$COMPILER_FAMILY conflicts with RUN_SUITE-selected family $COMPILER_EVAL_FAMILY" >&2
+  exit 2
+fi
 
 if (( RUN_BASEFOLD_RELEASE )); then
   if ! [[ "$D_MIN" =~ ^[0-9]+$ && "$D_MAX" =~ ^[0-9]+$ ]]; then
@@ -437,11 +460,11 @@ fi
 
 if (( RUN_COMPILER_EVAL )); then
   if ! [[ "$COMPILER_KAPPA" =~ ^[1-9][0-9]*$ ]]; then
-    echo "COMPILER_KAPPA must be a positive integer when compiler_eval is enabled" >&2
+    echo "COMPILER_KAPPA must be a positive integer when compiler_eval suite is enabled" >&2
     exit 2
   fi
   if ! [[ "$COMPILER_ELL_MIN" =~ ^[0-9]+$ && "$COMPILER_ELL_MAX" =~ ^[0-9]+$ ]]; then
-    echo "COMPILER_ELL_MIN and COMPILER_ELL_MAX must be non-negative integers when compiler_eval is enabled" >&2
+    echo "COMPILER_ELL_MIN and COMPILER_ELL_MAX must be non-negative integers when compiler_eval suite is enabled" >&2
     exit 2
   fi
   if (( COMPILER_ELL_MIN < COMPILER_KAPPA )); then
@@ -464,10 +487,14 @@ BACKEND_EVAL_RESULT_CSV="$OUT_DIR/backend_eval_results.csv"
 RESULT_MD="$OUT_DIR/RESULTS.md"
 RUN_AT_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 BASEFOLD_RELEASE_SOURCE="family=basefold rows use bench_basefold_pcs_commit + bench_basefold_pcs_eval"
-RELEASE_QUERY_SOURCE="basefold_release/compiler_eval use calc_iopp_params and parse default l_min_for_IOPP"
-COMPILER_EVAL_SOURCE="family=ring_switch|frobenius rows use bench_z2k_*_eval with commit split"
+RELEASE_QUERY_SOURCE="basefold_release/compiler_eval* use calc_iopp_params and parse default l_min_for_IOPP"
+if (( RUN_COMPILER_EVAL )); then
+  COMPILER_EVAL_SOURCE="family=${COMPILER_EVAL_FAMILY} rows use bench_z2k_${COMPILER_EVAL_FAMILY}_eval with commit split"
+else
+  COMPILER_EVAL_SOURCE="n/a"
+fi
 BACKEND_EVAL_SOURCE="family=basefold rows use bench_basefold_pcs_commit + bench_basefold_pcs_eval only"
-COMPILER_EVAL_LAYOUT_SOURCE="compiler_eval rows use fixed COMPILER_KAPPA with ell range, derive d=ell-kappa, and record poly_dim=2^ell"
+COMPILER_EVAL_LAYOUT_SOURCE="compiler_eval_* rows use fixed COMPILER_KAPPA with ell range, derive d=ell-kappa, and record poly_dim=2^ell"
 COMPILER_BACKEND_SOURCE="current z2k compiler benches build BaseFold backend params with k0=1 only"
 
 cat > "$COMPILER_EVAL_RESULT_CSV" <<CSV
@@ -993,8 +1020,9 @@ resolve_compiler_context_metadata() {
 run_one_context_compiler_eval_ell() {
   local context_id="$1"
   local context_label="$2"
-  local compiler_ell="$3"
-  shift 3
+  local compiler_family="$3"
+  local compiler_ell="$4"
+  shift 4
   local -a bench_args=("$@")
 
   local compiler_kappa="$COMPILER_KAPPA"
@@ -1012,7 +1040,7 @@ run_one_context_compiler_eval_ell() {
 
   echo "  - ${context_label}: ell=${compiler_ell} (d=${d}, poly_dim=2^${compiler_ell}=${poly_dim})"
 
-  IFS=',' read -r precheck_status precheck_error < <(compiler_precheck "ring_switch" "$COMPILER_CONTEXT_EXTENSION_DEGREE" "$compiler_kappa" "$COMPILER_CONTEXT_SCALAR_MODULUS")
+  IFS=',' read -r precheck_status precheck_error < <(compiler_precheck "$compiler_family" "$COMPILER_CONTEXT_EXTENSION_DEGREE" "$compiler_kappa" "$COMPILER_CONTEXT_SCALAR_MODULUS")
   if [[ "$precheck_status" == "ok" ]]; then
     local calc_log="$OUT_DIR/logs/${prefix}_calc_iopp.log"
     if ! run_and_log "$calc_log" \
@@ -1034,8 +1062,7 @@ run_one_context_compiler_eval_ell() {
     fi
   fi
 
-  run_compiler_eval_row "ring_switch" "$context_id" "$context_label" "ring" "$d" "$poly_dim" "$gamma" "$release_queries" "$release_query_status" "$release_query_error" "$compiler_ell" "$d" "$compiler_kappa" "$COMPILER_CONTEXT_EXTENSION_DEGREE" "$COMPILER_CONTEXT_SCALAR_MODULUS" "${bench_args[@]}"
-  run_compiler_eval_row "frobenius" "$context_id" "$context_label" "ring" "$d" "$poly_dim" "$gamma" "$release_queries" "$release_query_status" "$release_query_error" "$compiler_ell" "$d" "$compiler_kappa" "$COMPILER_CONTEXT_EXTENSION_DEGREE" "$COMPILER_CONTEXT_SCALAR_MODULUS" "${bench_args[@]}"
+  run_compiler_eval_row "$compiler_family" "$context_id" "$context_label" "ring" "$d" "$poly_dim" "$gamma" "$release_queries" "$release_query_status" "$release_query_error" "$compiler_ell" "$d" "$compiler_kappa" "$COMPILER_CONTEXT_EXTENSION_DEGREE" "$COMPILER_CONTEXT_SCALAR_MODULUS" "${bench_args[@]}"
 }
 
 echo "[1/4] Configure Release build in: $BUILD_DIR"
@@ -1053,7 +1080,18 @@ if (( RUN_BASEFOLD_RELEASE )); then
   BUILD_TARGETS+=(bench_basefold_pcs_commit bench_basefold_pcs_eval)
 fi
 if (( RUN_COMPILER_EVAL )); then
-  BUILD_TARGETS+=(bench_z2k_ring_switch_eval bench_z2k_frobenius_eval)
+  case "$COMPILER_EVAL_FAMILY" in
+    ring_switch)
+      BUILD_TARGETS+=(bench_z2k_ring_switch_eval)
+      ;;
+    frobenius)
+      BUILD_TARGETS+=(bench_z2k_frobenius_eval)
+      ;;
+    *)
+      echo "Unknown compiler eval family: $COMPILER_EVAL_FAMILY" >&2
+      exit 1
+      ;;
+  esac
 fi
 
 echo "[2/4] Build required benchmarks/tools"
@@ -1068,7 +1106,7 @@ if (( RUN_BASEFOLD_RELEASE )); then
   echo "  basefold_release d in [$D_MIN, $D_MAX]"
 fi
 if (( RUN_COMPILER_EVAL )); then
-  echo "  compiler_eval ell in [$COMPILER_ELL_MIN, $COMPILER_ELL_MAX] with kappa=$COMPILER_KAPPA (d=ell-kappa)"
+  echo "  compiler_eval family=$COMPILER_EVAL_FAMILY ell in [$COMPILER_ELL_MIN, $COMPILER_ELL_MAX] with kappa=$COMPILER_KAPPA (d=ell-kappa)"
 fi
 
 if (( RUN_BASEFOLD_RELEASE )); then
@@ -1183,10 +1221,10 @@ fi
 
 if (( RUN_COMPILER_EVAL )); then
   for compiler_ell in $(seq "$COMPILER_ELL_MIN" "$COMPILER_ELL_MAX"); do
-    echo "[compiler_eval ell=$compiler_ell d=$((compiler_ell - COMPILER_KAPPA))]"
+    echo "[compiler_eval/$COMPILER_EVAL_FAMILY ell=$compiler_ell d=$((compiler_ell - COMPILER_KAPPA))]"
     if (( ENABLE_RING2P16_162 )); then
       run_one_context_compiler_eval_ell \
-        "ring-gr-2p16-162" "GR(2^16,162)" "$compiler_ell" \
+        "ring-gr-2p16-162" "GR(2^16,162)" "$COMPILER_EVAL_FAMILY" "$compiler_ell" \
         --ring-mod "$RING2P16_MOD" \
         --ring-p "$RING2P16_P" \
         --ring-F "$RING2P16_F" \
@@ -1194,7 +1232,7 @@ if (( RUN_COMPILER_EVAL )); then
     fi
     if (( ENABLE_RING2P2_162 )); then
       run_one_context_compiler_eval_ell \
-        "ring-gr-2p2-162" "GR(2^2,162)" "$compiler_ell" \
+        "ring-gr-2p2-162" "GR(2^2,162)" "$COMPILER_EVAL_FAMILY" "$compiler_ell" \
         --ring-mod "$RING2P2_MOD" \
         --ring-p "$RING2P2_P" \
         --ring-F "$RING2P2_F" \
@@ -1202,7 +1240,7 @@ if (( RUN_COMPILER_EVAL )); then
     fi
     if (( ENABLE_RING2P16_64_EXT )); then
       run_one_context_compiler_eval_ell \
-        "ring-gr-2p16-64-ext" "GR(2^16,64) (ext-challenge)" "$compiler_ell" \
+        "ring-gr-2p16-64-ext" "GR(2^16,64) (ext-challenge)" "$COMPILER_EVAL_FAMILY" "$compiler_ell" \
         --ring-mod "$RING2P16_MOD" \
         --ring-p "$RING2P16_P" \
         --ring-F "$RING_F_64" \
@@ -1210,7 +1248,7 @@ if (( RUN_COMPILER_EVAL )); then
     fi
     if (( ENABLE_RING2P16_128_EXT )); then
       run_one_context_compiler_eval_ell \
-        "ring-gr-2p16-128-ext" "GR(2^16,128) (ext-challenge)" "$compiler_ell" \
+        "ring-gr-2p16-128-ext" "GR(2^16,128) (ext-challenge)" "$COMPILER_EVAL_FAMILY" "$compiler_ell" \
         --ring-mod "$RING2P16_MOD" \
         --ring-p "$RING2P16_P" \
         --ring-F "$RING_F_128" \
@@ -1218,7 +1256,7 @@ if (( RUN_COMPILER_EVAL )); then
     fi
     if (( ENABLE_RING2P2_64_EXT )); then
       run_one_context_compiler_eval_ell \
-        "ring-gr-2p2-64-ext" "GR(2^2,64) (ext-challenge)" "$compiler_ell" \
+        "ring-gr-2p2-64-ext" "GR(2^2,64) (ext-challenge)" "$COMPILER_EVAL_FAMILY" "$compiler_ell" \
         --ring-mod "$RING2P2_MOD" \
         --ring-p "$RING2P2_P" \
         --ring-F "$RING_F_64" \
@@ -1226,7 +1264,7 @@ if (( RUN_COMPILER_EVAL )); then
     fi
     if (( ENABLE_RING2P2_128_EXT )); then
       run_one_context_compiler_eval_ell \
-        "ring-gr-2p2-128-ext" "GR(2^2,128) (ext-challenge)" "$compiler_ell" \
+        "ring-gr-2p2-128-ext" "GR(2^2,128) (ext-challenge)" "$COMPILER_EVAL_FAMILY" "$compiler_ell" \
         --ring-mod "$RING2P2_MOD" \
         --ring-p "$RING2P2_P" \
         --ring-F "$RING_F_128" \
@@ -1251,9 +1289,11 @@ echo "[4/4] Build markdown summary"
     echo "- basefold_d_range: n/a"
   fi
   if (( RUN_COMPILER_EVAL )); then
+    echo "- compiler_eval_family: $COMPILER_EVAL_FAMILY"
     echo "- compiler_eval_kappa: $COMPILER_KAPPA"
-    echo "- compiler_eval_ell_range: [$COMPILER_ELL_MIN, $COMPILER_ELL_MAX] (compiler_eval rows use d=ell-kappa and poly_dim=2^ell)"
+    echo "- compiler_eval_ell_range: [$COMPILER_ELL_MIN, $COMPILER_ELL_MAX] (compiler_eval/${COMPILER_EVAL_FAMILY} rows use d=ell-kappa and poly_dim=2^ell)"
   else
+    echo "- compiler_eval_family: n/a"
     echo "- compiler_eval_kappa: n/a"
     echo "- compiler_eval_ell_range: n/a"
   fi

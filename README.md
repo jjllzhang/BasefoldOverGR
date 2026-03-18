@@ -552,8 +552,13 @@ scripts/run_release_c4_lambda128.sh
 # Run one context with a smaller d range
 CONTEXTS=field-prime128-ext D_MIN=10 D_MAX=20 scripts/run_release_c4_lambda128.sh
 
-# Run compiler full-eval rows only
-RUN_SUITE=compiler_eval CONTEXTS=ring-gr-2p16-64-ext \
+# Run ring-switch compiler full-eval rows only
+RUN_SUITE=compiler_eval_ring_switch CONTEXTS=ring-gr-2p16-64-ext \
+COMPILER_KAPPA=6 COMPILER_ELL_MIN=9 COMPILER_ELL_MAX=12 \
+scripts/run_release_c4_lambda128.sh
+
+# Run Frobenius compiler full-eval rows only
+RUN_SUITE=compiler_eval_frobenius CONTEXTS=ring-gr-2p16-64-ext \
 COMPILER_KAPPA=6 COMPILER_ELL_MIN=9 COMPILER_ELL_MAX=12 \
 scripts/run_release_c4_lambda128.sh
 ```
@@ -565,8 +570,8 @@ Default output directory contains:
 - `backend_eval_results.csv`: BaseFold release table. It records
   `bench_basefold_pcs_commit + bench_basefold_pcs_eval` only, one row per
   `(family=basefold, context, d)`.
-- `compiler_eval_results.csv`: unified compiler full-eval table for ring
-  contexts, one row per compiler eval point.
+- `compiler_eval_results.csv`: compiler full-eval table for the selected ring
+  family (`ring_switch` or `frobenius`), one row per compiler eval point.
 - `RESULTS.md`: markdown table for quick inspection.
 - `logs/*.log`: raw logs from `calc_iopp_params`, `bench_basefold_pcs_commit`,
   `bench_basefold_pcs_eval`, and `bench_z2k_*_eval`.
@@ -590,10 +595,12 @@ Common columns:
 
 Supplemental compiler CSVs:
 
-- `compiler_eval_results.csv` stores one row per ring-context
+- `compiler_eval_results.csv` stores one row per selected ring-family point
   `(family, context, ell)` and reports the full compiler eval split:
   `outer/backend/total` for commit, prover, and verifier, plus both outer and
   total proof sizes. Here `d = ell-kappa`, `ell' = d`, and `poly_dim = 2^ell`.
+- Each run chooses exactly one compiler family via
+  `RUN_SUITE=compiler_eval_ring_switch` or `RUN_SUITE=compiler_eval_frobenius`.
 - `family=frobenius` rows for `GR(2^2,r)` contexts are intentionally not run in
   the script; those rows are emitted with `status=disabled_gr2p2_context`.
 - The current compiler bench binaries still build the BaseFold backend with

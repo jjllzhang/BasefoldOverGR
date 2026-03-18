@@ -476,8 +476,13 @@ scripts/run_release_c4_lambda128.sh
 # 只跑单个 context + 较小维度区间
 CONTEXTS=field-prime128-ext D_MIN=10 D_MAX=20 scripts/run_release_c4_lambda128.sh
 
-# 只跑 compiler full eval
-RUN_SUITE=compiler_eval CONTEXTS=ring-gr-2p16-64-ext \
+# 只跑 ring-switch compiler full eval
+RUN_SUITE=compiler_eval_ring_switch CONTEXTS=ring-gr-2p16-64-ext \
+COMPILER_KAPPA=6 COMPILER_ELL_MIN=9 COMPILER_ELL_MAX=12 \
+scripts/run_release_c4_lambda128.sh
+
+# 只跑 Frobenius compiler full eval
+RUN_SUITE=compiler_eval_frobenius CONTEXTS=ring-gr-2p16-64-ext \
 COMPILER_KAPPA=6 COMPILER_ELL_MIN=9 COMPILER_ELL_MAX=12 \
 scripts/run_release_c4_lambda128.sh
 ```
@@ -489,8 +494,8 @@ scripts/run_release_c4_lambda128.sh
 - `backend_eval_results.csv`：BaseFold release 表。只记录
   `bench_basefold_pcs_commit + bench_basefold_pcs_eval`，每行一个
   `(family=basefold, context, d)`。
-- `compiler_eval_results.csv`：统一的 compiler full-eval 表；每个 ring
-  compiler eval 点一行。
+- `compiler_eval_results.csv`：所选 ring family（`ring_switch` 或
+  `frobenius`）的 compiler full-eval 表；每个 compiler eval 点一行。
 - `RESULTS.md`：便于快速浏览的 markdown 表格。
 - `logs/*.log`：`calc_iopp_params`、`bench_basefold_pcs_commit`、
   `bench_basefold_pcs_eval`、`bench_z2k_*_eval` 的原始日志。
@@ -513,10 +518,14 @@ family,context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit
 
 补充的 compiler csv：
 
-- `compiler_eval_results.csv`：每个 ring `(family, context, ell)` 一行，记录
-  full compiler eval 的 `outer/backend/total` commit、prove、verify 分解，
+- `compiler_eval_results.csv`：每个选定 family 的 ring
+  `(family, context, ell)` 一行，记录 full compiler eval 的
+  `outer/backend/total` commit、prove、verify 分解，
   以及 outer/total proof size。这里脚本内部统一取 `d = ell-kappa`，
   `ell' = d`，并把 `poly_dim` 记成 `2^ell`。
+- 每次运行只会选一个 compiler family：
+  `RUN_SUITE=compiler_eval_ring_switch` 或
+  `RUN_SUITE=compiler_eval_frobenius`。
 - `family=frobenius` 且 context 属于 `GR(2^2,r)` 时，脚本不会实际执行该
   bench，而是直接写 `status=disabled_gr2p2_context`。
 - 当前 compiler bench 二进制仍然只会构造 `k0=1` 的 BaseFold backend。
