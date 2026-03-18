@@ -76,6 +76,26 @@ def _parse_float(raw: str | None) -> float | None:
     return value
 
 
+def _parse_positive_int(raw: str | None) -> int | None:
+    if raw is None:
+        return None
+    raw = raw.strip()
+    if not raw or raw == "-":
+        return None
+    if not re.fullmatch(r"[1-9][0-9]*", raw):
+        return None
+    return int(raw)
+
+
+def _log2_power_of_two(raw: str | None) -> int | None:
+    value = _parse_positive_int(raw)
+    if value is None:
+        return None
+    if value & (value - 1):
+        raise ValueError(f"poly_dim must be a power of two, got {value}")
+    return value.bit_length() - 1
+
+
 _EXT_CHALLENGE_MARKER_RE = re.compile(
     r"\s*\(\s*ext(?:ension)?[- ]challenge\s*\)\s*",
     flags=re.IGNORECASE,
@@ -138,7 +158,7 @@ def load_series_from_csv(csv_path: Path, metric_keys: Iterable[str]) -> SeriesDa
         if not reader.fieldnames:
             raise ValueError(f"CSV has no header: {csv_path}")
 
-        for row in reader:
+        for row_index, row in enumerate(reader, start=2):
             status = (row.get("status") or "ok").strip().lower()
             if status not in ("ok", "success", ""):
                 continue
@@ -147,10 +167,14 @@ def load_series_from_csv(csv_path: Path, metric_keys: Iterable[str]) -> SeriesDa
             if label:
                 labels.add(label)
 
-            poly_dim = _parse_float(row.get("poly_dim"))
-            if poly_dim is None or poly_dim <= 0:
+            try:
+                x_value = _log2_power_of_two(row.get("poly_dim"))
+            except ValueError as exc:
+                raise ValueError(
+                    f"{csv_path}:{row_index}: invalid poly_dim: {exc}"
+                ) from exc
+            if x_value is None:
                 continue
-            x_value = math.log2(poly_dim)
 
             for metric_key in metric_keys:
                 raw_value = None
