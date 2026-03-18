@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot benchmark metrics vs d from one or more benchmark CSV files."""
+"""Plot benchmark metrics vs log2(poly_dim) from one or more benchmark CSV files."""
 
 from __future__ import annotations
 
@@ -46,17 +46,17 @@ METRIC_CATALOG = {
     "commit": MetricSpec(
         key="commit_mean_ms",
         y_label="Commit time (ms)",
-        output_tag="commit_time_vs_d",
+        output_tag="commit_time_vs_log2_poly_dim",
     ),
     "prover": MetricSpec(
         key="prove_phase_mean_ms",
         y_label="Prover time (ms)",
-        output_tag="prover_time_vs_d",
+        output_tag="prover_time_vs_log2_poly_dim",
     ),
     "verifier": MetricSpec(
         key="verifier_mean_ms",
         y_label="Verifier time (ms)",
-        output_tag="verifier_time_vs_d",
+        output_tag="verifier_time_vs_log2_poly_dim",
     ),
 }
 
@@ -147,13 +147,10 @@ def load_series_from_csv(csv_path: Path, metric_keys: Iterable[str]) -> SeriesDa
             if label:
                 labels.add(label)
 
-            d = _parse_float(row.get("d"))
-            if d is None:
-                poly_dim = _parse_float(row.get("poly_dim"))
-                if poly_dim is not None and poly_dim > 0:
-                    d = math.log2(poly_dim)
-            if d is None:
+            poly_dim = _parse_float(row.get("poly_dim"))
+            if poly_dim is None or poly_dim <= 0:
                 continue
+            x_value = math.log2(poly_dim)
 
             for metric_key in metric_keys:
                 raw_value = None
@@ -163,7 +160,7 @@ def load_series_from_csv(csv_path: Path, metric_keys: Iterable[str]) -> SeriesDa
                         break
                 metric_value = _parse_float(raw_value)
                 if metric_value is not None:
-                    metric_values[metric_key][d].append(metric_value)
+                    metric_values[metric_key][x_value].append(metric_value)
 
     points_by_metric: Dict[str, List[Tuple[float, float]]] = {}
     for metric_key, by_d in metric_values.items():
@@ -174,7 +171,7 @@ def load_series_from_csv(csv_path: Path, metric_keys: Iterable[str]) -> SeriesDa
     return SeriesData(label=_series_label(csv_path, labels), points_by_metric=points_by_metric)
 
 
-def plot_metric_vs_d(
+def plot_metric_vs_log2_poly_dim(
     series_list: Sequence[SeriesData], metric: MetricSpec, output_path: Path
 ) -> None:
     fig, ax = plt.subplots(figsize=(8, 5))
@@ -217,7 +214,7 @@ def plot_metric_vs_d(
         plt.close(fig)
         raise ValueError(f"No valid data for metric '{metric.key}'")
 
-    ax.set_xlabel("log2(# of polynomial dimensions)")
+    ax.set_xlabel("log2(poly_dim)")
     ax.set_ylabel(metric.y_label)
     ax.grid(True, linestyle="--", alpha=0.4)
 
@@ -272,7 +269,7 @@ def plot_benchmark_metrics(
         "proof_size": MetricSpec(
             key=proof_size_column,
             y_label="Proof size (KB)",
-            output_tag="proof_size_vs_d",
+            output_tag="proof_size_vs_log2_poly_dim",
         ),
     }
     metric_order = list(metric_catalog.keys())
@@ -284,7 +281,7 @@ def plot_benchmark_metrics(
     output_paths: List[Path] = []
     for metric in metrics:
         output_path = output_dir / f"{output_prefix}_{metric.output_tag}.png"
-        plot_metric_vs_d(series_list, metric, output_path)
+        plot_metric_vs_log2_poly_dim(series_list, metric, output_path)
         output_paths.append(output_path)
 
     return output_paths
@@ -293,7 +290,7 @@ def plot_benchmark_metrics(
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Plot commit/prover/verifier/proof-size vs d from one or more benchmark CSV files."
+            "Plot commit/prover/verifier/proof-size vs log2(poly_dim) from one or more benchmark CSV files."
         )
     )
     parser.add_argument("inputs", nargs="+", help="Input CSV file paths.")
