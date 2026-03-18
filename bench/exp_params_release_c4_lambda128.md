@@ -234,7 +234,7 @@ CONTEXTS=ring-gr-2p16-128-ext scripts/run_release_c4_lambda128.sh
 - `compiler_eval_results.csv`
   - 仅对 ring context 生成；每行一个所选 family 的 `(family, context, ell)` 点
   - 包含 full compiler eval 的 `outer/backend/total` commit、prove、verify
-    分解，以及 `outer_proof_size` / `proof_size`
+    分解，以及 `outer_proof_size` / `total_proof_size`
   - 对 `family=frobenius`，凡是 `GR(2^2,r)` context 都不会实际执行 bench，
     而是直接写 `status=disabled_gr2p2_context`
 - 汇总 markdown：`RESULTS.md`

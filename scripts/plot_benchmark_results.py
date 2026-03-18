@@ -131,6 +131,10 @@ def load_series_from_csv(csv_path: Path, metric_keys: Iterable[str]) -> SeriesDa
     labels: set[str] = set()
     metric_aliases = {
         "prove_phase_mean_ms": ("prove_phase_mean_ms", "prover_mean_ms"),
+        "proof_size_kb": ("proof_size_kb", "total_proof_size_kb"),
+        "proof_size_bytes": ("proof_size_bytes", "total_proof_size_bytes"),
+        "total_proof_size_kb": ("total_proof_size_kb", "proof_size_kb"),
+        "total_proof_size_bytes": ("total_proof_size_bytes", "proof_size_bytes"),
     }
 
     with csv_path.open("r", encoding="utf-8", newline="") as handle:
@@ -313,7 +317,10 @@ def _parse_args() -> argparse.Namespace:
         "--communication-column",
         dest="proof_size_column",
         default="proof_size_kb",
-        help="Column to use for proof size (default: proof_size_kb).",
+        help=(
+            "Column to use for proof size "
+            "(default: proof_size_kb; also auto-falls back to total_proof_size_kb)."
+        ),
     )
     parser.add_argument(
         "--metrics",

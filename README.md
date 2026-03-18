@@ -109,7 +109,7 @@ The full environment-variable reference and supported context list are in [bench
 Each run writes:
 
 - `backend_eval_results.csv`: BaseFold release rows from `bench_basefold_pcs_commit` and `bench_basefold_pcs_eval`
-- `compiler_eval_results.csv`: compiler-eval rows for the selected family (`ring_switch` or `frobenius`)
+- `compiler_eval_results.csv`: compiler-eval rows for the selected family (`ring_switch` or `frobenius`), including `outer_proof_size_*` and `total_proof_size_*`
 - `RESULTS.md`: markdown summary table
 - `logs/*.log`: raw logs for `calc_iopp_params` and benchmark binaries
 

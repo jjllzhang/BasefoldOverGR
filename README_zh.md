@@ -109,7 +109,7 @@ scripts/run_release_c4_lambda128.sh
 每次运行会输出：
 
 - `backend_eval_results.csv`：来自 `bench_basefold_pcs_commit` 和 `bench_basefold_pcs_eval` 的 BaseFold release 行
-- `compiler_eval_results.csv`：所选 family（`ring_switch` 或 `frobenius`）的 compiler-eval 行
+- `compiler_eval_results.csv`：所选 family（`ring_switch` 或 `frobenius`）的 compiler-eval 行，包含 `outer_proof_size_*` 和 `total_proof_size_*`
 - `RESULTS.md`：markdown 汇总表
 - `logs/*.log`：`calc_iopp_params` 和 bench 二进制的原始日志
 
