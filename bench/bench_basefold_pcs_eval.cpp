@@ -47,15 +47,17 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
   basefold::ResetProfile(prover_prof);
   basefold::ResetProfile(verifier_prof);
 
+  const basefold::BaseFoldPCSCommitArtifacts commit_artifacts =
+      basefold::BaseFoldPCSBuildCommitArtifactsUnchecked(f_coeffs, params);
+  const basefold::MerkleRoot &commitment_root = commit_artifacts.root_d;
+
   std::uint64_t anti_opt_checksum = 0;
   std::uint64_t proof_size_bytes_last = 0;
   double proof_size_kb_last = 0.0;
+  basefold::BaseFoldPCSEvalProof last_proof;
+  bool have_last_proof = false;
 
   for (int iter = -warmup; iter < reps; ++iter) {
-    const basefold::BaseFoldPCSCommitArtifacts commit_artifacts =
-        basefold::BaseFoldPCSBuildCommitArtifactsUnchecked(f_coeffs, params);
-    const basefold::MerkleRoot &commitment_root = commit_artifacts.root_d;
-
     const auto t0 = std::chrono::steady_clock::now();
     const basefold::BaseFoldPCSEvalProof proof = [&] {
       if (enable_profile && iter >= 0) {
@@ -94,11 +96,6 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
     }();
     const auto t1 = std::chrono::steady_clock::now();
 
-    const std::uint64_t proof_size_bytes = ComputeProofSizeBytes(
-        proof, challenge_cfg != nullptr, challenge_ext_degree);
-    const double proof_size_kb =
-        static_cast<double>(proof_size_bytes) / 1024.0;
-
     const auto t2 = std::chrono::steady_clock::now();
     bool ok = false;
     if (enable_profile && iter >= 0) {
@@ -125,11 +122,19 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
     anti_opt_checksum ^= static_cast<std::uint64_t>(ok);
 
     if (iter >= 0) {
+      if (iter == reps - 1) {
+        last_proof = proof;
+        have_last_proof = true;
+      }
       prove_phase_ms.push_back(MsSince(t0, t1));
       verifier_ms.push_back(MsSince(t2, t3));
-      proof_size_bytes_last = proof_size_bytes;
-      proof_size_kb_last = proof_size_kb;
     }
+  }
+
+  if (have_last_proof) {
+    proof_size_bytes_last = ComputeProofSizeBytes(
+        last_proof, challenge_cfg != nullptr, challenge_ext_degree);
+    proof_size_kb_last = static_cast<double>(proof_size_bytes_last) / 1024.0;
   }
 
   BenchResult out;

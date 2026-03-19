@@ -112,14 +112,14 @@ Acceptance criteria:
 
 ### Phase 1: Setup / Precompute Boundary Cleanup
 
-Status: `[ ]`
+Status: `[x]`
 
 Tasks:
 
-- `[ ]` Audit the six target benchmarks and move all non-message-dependent preparation outside timed regions.
-- `[ ]` Ensure setup-heavy work is done once per process or once per benchmark run, not once per repetition.
-- `[ ]` If a benchmark still needs per-repetition artifact construction only for timing decomposition, construct only the minimum hot-path artifacts being measured.
-- `[ ]` Keep proof size computation and reporting outside timed regions.
+- `[x]` Audit the six target benchmarks and move all non-message-dependent preparation outside timed regions.
+- `[x]` Ensure setup-heavy work is done once per process or once per benchmark run, not once per repetition.
+- `[x]` If a benchmark still needs per-repetition artifact construction only for timing decomposition, construct only the minimum hot-path artifacts being measured.
+- `[x]` Keep proof size computation and reporting outside timed regions.
 
 Acceptance criteria:
 
@@ -337,8 +337,14 @@ Fill this section as work lands.
 ### Phase 1
 
 - Before:
+- `bench_basefold_pcs_eval` still rebuilt `BaseFoldPCSCommitArtifactsUnchecked(...)` once per repetition even though it depended only on the fixed benchmark fixture.
+- Eval benches still recomputed serializer-backed proof sizes on every repetition, even though proof size is reported only once and is not part of any timed metric.
 - After:
+- `bench_basefold_pcs_eval` now constructs the committed top-oracle artifacts once per benchmark run and reuses them across all measured repetitions.
+- `bench_basefold_pcs_eval`, `bench_z2k_ring_switch_eval`, and `bench_z2k_frobenius_eval` now compute proof size once from the last measured proof, after the timed repetitions have finished.
+- Compiler eval benches keep per-repetition outer/backend commit construction only where it is the metric being reported, and otherwise reuse loop-local bookkeeping objects.
 - Notes:
+- No commit-benchmark timing contract changed in this phase; ring-switch and Frobenius commit/eval loops were left with only the explicit split metrics plus anti-optimization bookkeeping.
 
 ### Phase 2
 

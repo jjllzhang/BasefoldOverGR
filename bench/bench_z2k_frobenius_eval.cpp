@@ -100,6 +100,10 @@ BenchResult RunEvalBenchmark(const basefold::FrobeniusPCSParams &params,
   std::uint64_t anti_opt_checksum = 0;
   std::uint64_t outer_proof_size_bytes = 0;
   std::uint64_t proof_size_bytes = 0;
+  basefold::Profile prover_prof;
+  basefold::Profile verifier_prof;
+  basefold::FrobeniusPCSEvalProof last_proof;
+  bool have_last_proof = false;
 
   for (int iter = -warmup; iter < reps; ++iter) {
     const auto c0 = std::chrono::steady_clock::now();
@@ -120,8 +124,6 @@ BenchResult RunEvalBenchmark(const basefold::FrobeniusPCSParams &params,
     commit_artifacts.backend_commit_artifacts = backend_commit_artifacts;
     commit_artifacts.commitment = backend_commit_artifacts.commitment;
 
-    basefold::Profile prover_prof;
-    basefold::Profile verifier_prof;
     basefold::ResetProfile(prover_prof);
     basefold::ResetProfile(verifier_prof);
 
@@ -138,10 +140,6 @@ BenchResult RunEvalBenchmark(const basefold::FrobeniusPCSParams &params,
       }
     }
     const auto t1 = std::chrono::steady_clock::now();
-
-    outer_proof_size_bytes =
-        basefold::FrobeniusPCSOuterProofSizeBytes(params, proof);
-    proof_size_bytes = basefold::FrobeniusPCSEvalProofSizeBytes(params, proof);
 
     const auto t2 = std::chrono::steady_clock::now();
     bool ok = false;
@@ -166,13 +164,16 @@ BenchResult RunEvalBenchmark(const basefold::FrobeniusPCSParams &params,
     const double verify_outer = std::max(0.0, verify_total - verify_backend);
 
     anti_opt_checksum ^= static_cast<std::uint64_t>(ok);
-    anti_opt_checksum ^= proof_size_bytes;
     if (!commit_artifacts.commitment.empty()) {
       anti_opt_checksum ^=
           static_cast<std::uint64_t>(commit_artifacts.commitment[0]);
     }
 
     if (iter >= 0) {
+      if (iter == reps - 1) {
+        last_proof = proof;
+        have_last_proof = true;
+      }
       commit_outer_ms.push_back(commit_outer);
       commit_backend_ms.push_back(commit_backend);
       commit_total_ms.push_back(commit_total);
@@ -183,6 +184,13 @@ BenchResult RunEvalBenchmark(const basefold::FrobeniusPCSParams &params,
       verify_outer_ms.push_back(verify_outer);
       verify_backend_ms.push_back(verify_backend);
     }
+  }
+
+  if (have_last_proof) {
+    outer_proof_size_bytes =
+        basefold::FrobeniusPCSOuterProofSizeBytes(params, last_proof);
+    proof_size_bytes =
+        basefold::FrobeniusPCSEvalProofSizeBytes(params, last_proof);
   }
 
   BenchResult out;
