@@ -8,29 +8,20 @@
 
 namespace basefold {
 
-void ResetVerifierQueryParallelConfigFromEnv() {
-  basefold_pcs_internal::MutableVerifierQueryParallelConfig() =
-      basefold_pcs_internal::ParseVerifierQueryParallelConfigFromEnv();
-}
+namespace {
 
-void SetVerifierQueryParallelConfig(const VerifierQueryParallelConfig &cfg) {
-  basefold_pcs_internal::MutableVerifierQueryParallelConfig() = cfg;
-}
-
-VerifierQueryParallelConfig GetVerifierQueryParallelConfig() {
-  return basefold_pcs_internal::LoadVerifierQueryParallelConfig();
-}
-
-bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
-                           const std::vector<FieldElement> &z,
-                           const FieldElement &claimed_y, long num_queries,
-                           const BaseFoldPCSEvalProof &proof,
-                           const FoldableCodeParams &params) {
+bool BaseFoldPCSVerifyEvalInternal(const MerkleRoot &commitment_C,
+                                   const std::vector<FieldElement> &z,
+                                   const FieldElement &claimed_y,
+                                   long num_queries,
+                                   const BaseFoldPCSEvalProof &proof,
+                                   const FoldableCodeParams &params,
+                                   bool checked_path) {
   Profile *prof = ActiveProfile();
-  ScopedTimer timer(prof ? &prof->pcs_verify_ns : nullptr,
-                    prof ? &prof->pcs_verify_calls : nullptr);
+  if (checked_path) {
+    basefold_pcs_internal::ValidateParamsOrThrow(params);
+  }
 
-  basefold_pcs_internal::ValidateParamsOrThrow(params);
   if (!basefold_pcs_internal::IsPowerOfTwoLong(params.k0)) {
     return false;
   }
@@ -265,6 +256,46 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
 
   return basefold_pcs_internal::VerifyQueriesMaybeParallel(num_queries, prof,
                                                            verify_one_query);
+}
+
+}  // namespace
+
+void ResetVerifierQueryParallelConfigFromEnv() {
+  basefold_pcs_internal::MutableVerifierQueryParallelConfig() =
+      basefold_pcs_internal::ParseVerifierQueryParallelConfigFromEnv();
+}
+
+void SetVerifierQueryParallelConfig(const VerifierQueryParallelConfig &cfg) {
+  basefold_pcs_internal::MutableVerifierQueryParallelConfig() = cfg;
+}
+
+VerifierQueryParallelConfig GetVerifierQueryParallelConfig() {
+  return basefold_pcs_internal::LoadVerifierQueryParallelConfig();
+}
+
+bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
+                           const std::vector<FieldElement> &z,
+                           const FieldElement &claimed_y, long num_queries,
+                           const BaseFoldPCSEvalProof &proof,
+                           const FoldableCodeParams &params) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->pcs_verify_ns : nullptr,
+                    prof ? &prof->pcs_verify_calls : nullptr);
+  return BaseFoldPCSVerifyEvalInternal(commitment_C, z, claimed_y, num_queries,
+                                       proof, params, /*checked_path=*/true);
+}
+
+bool BaseFoldPCSVerifyEvalUnchecked(const MerkleRoot &commitment_C,
+                                    const std::vector<FieldElement> &z,
+                                    const FieldElement &claimed_y,
+                                    long num_queries,
+                                    const BaseFoldPCSEvalProof &proof,
+                                    const FoldableCodeParams &params) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->pcs_verify_ns : nullptr,
+                    prof ? &prof->pcs_verify_calls : nullptr);
+  return BaseFoldPCSVerifyEvalInternal(commitment_C, z, claimed_y, num_queries,
+                                       proof, params, /*checked_path=*/false);
 }
 
 }  // namespace basefold

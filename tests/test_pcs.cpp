@@ -316,6 +316,8 @@ void TestPCS_EvalProof_GF4() {
   CHECK(static_cast<long>(proof.query_multiproofs.size()) == params.d + 1);
   CHECK(basefold::BaseFoldPCSVerifyEval(commitment_root, z, y, num_queries,
                                         proof, params));
+  CHECK(basefold::BaseFoldPCSVerifyEvalUnchecked(commitment_root, z, y,
+                                                 num_queries, proof, params));
   CHECK(basefold::BaseFoldPCSVerifyEval(commitment_root, z, y, num_queries,
                                         proof_from_committed, params));
   CHECK(basefold::BaseFoldPCSVerifyEval(commitment_root, z, y, num_queries,
@@ -334,16 +336,23 @@ void TestPCS_EvalProof_GF4() {
   }
   CHECK(basefold::BaseFoldPCSVerifyEval(commitment_root, z, y, num_queries,
                                         proof_without_indices, params));
+  CHECK(basefold::BaseFoldPCSVerifyEvalUnchecked(commitment_root, z, y,
+                                                 num_queries,
+                                                 proof_without_indices, params));
 
   const ZZ_pE y_bad = y + testutil::ConstZZpE(1);
   CHECK(!basefold::BaseFoldPCSVerifyEval(commitment_root, z, y_bad, num_queries,
                                          proof, params));
+  CHECK(!basefold::BaseFoldPCSVerifyEvalUnchecked(
+      commitment_root, z, y_bad, num_queries, proof, params));
 
   basefold::BaseFoldPCSEvalProof proof_tampered = proof;
   CHECK(proof_tampered.query_multiproofs[0].values.length() > 0);
   proof_tampered.query_multiproofs[0].values[0] += testutil::ConstZZpE(1);
   CHECK(!basefold::BaseFoldPCSVerifyEval(commitment_root, z, y, num_queries,
                                          proof_tampered, params));
+  CHECK(!basefold::BaseFoldPCSVerifyEvalUnchecked(
+      commitment_root, z, y, num_queries, proof_tampered, params));
 }
 
 void TestPCS_PaperAPI_GF4() {
@@ -611,9 +620,14 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
 
   CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
       commitment_root, z, y, num_queries, proof, params, cfg));
+  CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfigUnchecked(
+      commitment_root, z, y, num_queries, proof, params, cfg));
   CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
       commitment_root, z, y, num_queries, proof_from_committed, params, cfg));
   CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      commitment_root, z, y, num_queries, proof_from_committed_unchecked, params,
+      cfg));
+  CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfigUnchecked(
       commitment_root, z, y, num_queries, proof_from_committed_unchecked, params,
       cfg));
   CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
@@ -638,6 +652,8 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
     multiproof.queried_indices.clear();
   }
   CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      commitment_root, z, y, num_queries, proof_without_metadata, params, cfg));
+  CHECK(basefold::BaseFoldPCSVerifyEvalWithChallengeConfigUnchecked(
       commitment_root, z, y, num_queries, proof_without_metadata, params, cfg));
 
   CHECK(!basefold::BaseFoldPCSVerifyEval(commitment_root, z, y, num_queries,
@@ -677,6 +693,8 @@ void TestPCS_EvalProof_ExtChallengeConfig_GF4() {
   NTL::SetCoeff(proof_ext_tampered.extension.query_multiproofs[0].values[0], 1,
                 coeff1);
   CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+      commitment_root, z, y, num_queries, proof_ext_tampered, params, cfg));
+  CHECK(!basefold::BaseFoldPCSVerifyEvalWithChallengeConfigUnchecked(
       commitment_root, z, y, num_queries, proof_ext_tampered, params, cfg));
 
   basefold::BaseFoldPCSEvalProof proof_top_tampered = proof;
@@ -1001,6 +1019,8 @@ void TestPCS_ProofFixedWidthRoundTrip_GF4() {
   CHECK(!decoded.extension.has_extension_payload);
   CHECK(basefold::BaseFoldPCSVerifyEval(commitment_root, z, y, num_queries,
                                         decoded, params));
+  CHECK(basefold::BaseFoldPCSVerifyEvalUnchecked(commitment_root, z, y,
+                                                 num_queries, decoded, params));
 }
 
 void TestPCS_ProofFixedWidthRoundTrip_ExtChallenge_GF4() {

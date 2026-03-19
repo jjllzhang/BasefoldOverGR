@@ -101,18 +101,18 @@ BenchResult RunEvalBenchmark(const vec_ZZ_pE &f_coeffs,
     if (enable_profile && iter >= 0) {
       basefold::ProfileGuard guard(&verifier_prof);
       ok = (challenge_cfg != nullptr)
-               ? basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+               ? basefold::BaseFoldPCSVerifyEvalWithChallengeConfigUnchecked(
                      commitment_root, z, y, num_queries, proof, params,
                      *challenge_cfg)
-               : basefold::BaseFoldPCSVerifyEval(commitment_root, z, y,
-                                                 num_queries, proof, params);
+               : basefold::BaseFoldPCSVerifyEvalUnchecked(
+                     commitment_root, z, y, num_queries, proof, params);
     } else {
       ok = (challenge_cfg != nullptr)
-               ? basefold::BaseFoldPCSVerifyEvalWithChallengeConfig(
+               ? basefold::BaseFoldPCSVerifyEvalWithChallengeConfigUnchecked(
                      commitment_root, z, y, num_queries, proof, params,
                      *challenge_cfg)
-               : basefold::BaseFoldPCSVerifyEval(commitment_root, z, y,
-                                                 num_queries, proof, params);
+               : basefold::BaseFoldPCSVerifyEvalUnchecked(
+                     commitment_root, z, y, num_queries, proof, params);
     }
     const auto t3 = std::chrono::steady_clock::now();
 
@@ -214,8 +214,10 @@ void PrintHelp() {
       << "  then --field-zeta/--ring-zeta are ignored.\n\n"
       << "  With --use-extension-challenges, prove/verify uses the extension-challenge\n"
       << "  path in BaseFoldPCSChallengeConfig.\n"
-      << "  The benchmark assumes honest inputs and records the measured verifier call\n"
-      << "  without adding extra benchmark-driver consistency checks.\n"
+      << "  Timed verify defaults to the unchecked verifier hot path with trusted\n"
+      << "  params.\n"
+      << "  The benchmark assumes honest inputs and records the measured verifier\n"
+      << "  call without adding extra benchmark-driver consistency checks.\n"
       << "  --field-challenge-ext / --ring-challenge-ext use ';' to separate ZZ_pE\n"
       << "  coefficients and ',' for each ZZ_pE coefficient polynomial.\n"
       << "  Example: '0,1;1;1' means E(U)=x + U + U^2.\n\n"

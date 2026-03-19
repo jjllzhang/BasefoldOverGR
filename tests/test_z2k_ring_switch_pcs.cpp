@@ -1077,6 +1077,8 @@ void TestBaseFoldBackendAdapter_Smoke() {
 
   CHECK(basefold::Z2kPCSBackendVerifyEval(backend, commitment, z, y,
                                           /*num_queries=*/3, proof));
+  CHECK(basefold::Z2kPCSBackendVerifyEvalUnchecked(
+      backend, commitment, z, y, /*num_queries=*/3, proof));
   CHECK_GT(basefold::Z2kPCSBackendEvalProofSizeBytes(backend, proof), 0U);
 }
 
@@ -2394,6 +2396,40 @@ void TestRingSwitchBuildCommitArtifacts_CachesPackedRepresentations() {
            direct_backend_commitment);
 }
 
+void TestRingSwitchOuterCommitArtifacts_CheckedAndUncheckedAgree() {
+  testutil::PrintInfo(
+      "Ring-switch WP3: checked and unchecked outer commit artifacts agree on honest inputs");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::RingSwitchPCSParams params =
+      BuildRingSwitchParamsGR42(/*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
+  const vec_ZZ_pE t_table =
+      BuildBaseRingCoeffVector({3, 1, 0, 2, 1, 2, 3, 0});
+
+  const basefold::RingSwitchPCSOuterCommitArtifacts checked_artifacts =
+      basefold::RingSwitchPCSBuildOuterCommitArtifacts(params, t_table);
+  const basefold::RingSwitchPCSOuterCommitArtifacts unchecked_artifacts =
+      basefold::RingSwitchPCSBuildOuterCommitArtifactsUnchecked(params, t_table);
+
+  CHECK_EQ(checked_artifacts.t_packed_table, unchecked_artifacts.t_packed_table);
+  CHECK_EQ(checked_artifacts.t_packed_monomial_coeffs,
+           unchecked_artifacts.t_packed_monomial_coeffs);
+}
+
 void TestRingSwitchProveEvalFromCommitArtifacts_HonestProofIsSelfConsistent() {
   testutil::PrintInfo("Ring-switch WP4: artifact-backed prove path yields a self-consistent honest proof");
 
@@ -2487,6 +2523,9 @@ void TestRingSwitchProveEvalFromCommitArtifacts_HonestProofIsSelfConsistent() {
   CHECK_EQ(final_claim, proof.t_star * g_star);
 
   CHECK(basefold::Z2kPCSBackendVerifyEval(
+      params.backend, artifacts.commitment, trace.rprime_suffix, proof.t_star,
+      /*num_queries=*/2, proof.backend_proof));
+  CHECK(basefold::Z2kPCSBackendVerifyEvalUnchecked(
       params.backend, artifacts.commitment, trace.rprime_suffix, proof.t_star,
       /*num_queries=*/2, proof.backend_proof));
 }
@@ -3542,6 +3581,7 @@ int main() {
     RUN_TEST(TestBuildRingSwitchComponentTensor_RejectsWrongSuffixDimension);
     RUN_TEST(TestRingSwitchCommit_MatchesDirectBackendCommit);
     RUN_TEST(TestRingSwitchBuildCommitArtifacts_CachesPackedRepresentations);
+    RUN_TEST(TestRingSwitchOuterCommitArtifacts_CheckedAndUncheckedAgree);
     RUN_TEST(TestRingSwitchProveEvalFromCommitArtifacts_HonestProofIsSelfConsistent);
     RUN_TEST(TestRingSwitchProveEval_DirectAndArtifactPathsAgreeOnOuterMessages);
     RUN_TEST(TestRingSwitchVerifyEval_AcceptsHonestProof);

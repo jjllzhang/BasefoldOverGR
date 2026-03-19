@@ -50,7 +50,7 @@ Current defaults:
 - `K0=1`
 - `LAMBDA=128`
 - `COMMIT_WARMUP=1`, `COMMIT_REPS=3`
-- `EVAL_WARMUP=1`, `EVAL_REPS=3`
+- `EVAL_WARMUP=1`, `EVAL_REPS=3` (shared eval-loop warmup/reps for prove + verify)
 - `BENCH_THREADS=8`
 
 ### Run One BaseFold Context with a Smaller `d` Range

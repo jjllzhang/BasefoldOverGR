@@ -138,6 +138,20 @@ bool BaseFoldBackendVerifyEval(const MerkleRoot &commitment,
                                params);
 }
 
+bool BaseFoldBackendVerifyEvalUnchecked(const MerkleRoot &commitment,
+                                        const std::vector<FieldElement> &z,
+                                        const FieldElement &claimed_y,
+                                        long num_queries,
+                                        const void *backend_proof,
+                                        const void *backend_params) {
+  const FoldableCodeParams &params = AsBaseFoldParams(
+      backend_params, "BaseFoldBackendVerifyEvalUnchecked");
+  const BaseFoldPCSEvalProof &proof =
+      AsBaseFoldEvalProof(backend_proof, "BaseFoldBackendVerifyEvalUnchecked");
+  return BaseFoldPCSVerifyEvalUnchecked(commitment, z, claimed_y, num_queries,
+                                        proof, params);
+}
+
 Bytes BaseFoldBackendSerializeEvalProof(
     const void *backend_proof,
     const Z2kPCSBackendProofEncodingOptions &options) {
@@ -169,6 +183,7 @@ const Z2kPCSBackendVTable kBaseFoldBackendVTable = {
     &BaseFoldBackendCommitmentFromArtifacts,
     &BaseFoldBackendProveEval,
     &BaseFoldBackendVerifyEval,
+    &BaseFoldBackendVerifyEvalUnchecked,
     &BaseFoldBackendSerializeEvalProof,
     &BaseFoldBackendEvalProofSizeBytes,
 };

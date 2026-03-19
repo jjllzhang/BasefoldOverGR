@@ -1216,6 +1216,20 @@ MerkleRoot RingSwitchPCSCommit(const RingSwitchPCSParams &params,
 RingSwitchPCSOuterCommitArtifacts RingSwitchPCSBuildOuterCommitArtifacts(
     const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table) {
   ValidateRingSwitchPCSParamsOrThrow(params);
+  const long expected_length = Pow2LongOrThrow(
+      params.ell,
+      "RingSwitchPCSBuildOuterCommitArtifacts: ell is too large for long");
+  if (t_table.length() != expected_length) {
+    LogicError(
+        "RingSwitchPCSBuildOuterCommitArtifacts: t_table length must equal 2^ell");
+  }
+  ValidateBaseRingVectorOrThrow(
+      t_table, "t_table", "RingSwitchPCSBuildOuterCommitArtifacts");
+  return RingSwitchPCSBuildOuterCommitArtifactsUnchecked(params, t_table);
+}
+
+RingSwitchPCSOuterCommitArtifacts RingSwitchPCSBuildOuterCommitArtifactsUnchecked(
+    const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table) {
   const PackedCommitInputs packed = BuildPackedCommitInputs(params, t_table);
 
   RingSwitchPCSOuterCommitArtifacts out;
@@ -1329,8 +1343,31 @@ bool RingSwitchPCSVerifyEval(const RingSwitchPCSParams &params,
                              const FieldElement &claimed_s, long num_queries,
                              const RingSwitchPCSEvalProof &proof) {
   ValidateRingSwitchPCSParamsOrThrow(params);
-  return RingSwitchPCSVerifyEvalUnchecked(params, commitment, z, claimed_s,
-                                          num_queries, proof);
+  if (!HasExpectedEvalProofShape(params, proof) ||
+      !HasCompatibleBackendEvalSubproof(params, proof.backend_proof)) {
+    return false;
+  }
+
+  RingSwitchPCSOuterEvalProof outer_proof;
+  outer_proof.s_by_u = proof.s_by_u;
+  outer_proof.h_by_level = proof.h_by_level;
+  outer_proof.t_star = proof.t_star;
+
+  std::vector<FieldElement> rprime_suffix;
+  if (!VerifyOuterEvalAndMaybeRecoverSuffix(params, commitment, z, claimed_s,
+                                            num_queries, outer_proof,
+                                            &rprime_suffix)) {
+    return false;
+  }
+
+  {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->z2k_backend_verify_ns : nullptr,
+                      prof ? &prof->z2k_backend_verify_calls : nullptr);
+    return Z2kPCSBackendVerifyEval(params.backend, commitment, rprime_suffix,
+                                   proof.t_star, num_queries,
+                                   proof.backend_proof);
+  }
 }
 
 bool RingSwitchPCSVerifyEvalUnchecked(const RingSwitchPCSParams &params,
@@ -1360,9 +1397,9 @@ bool RingSwitchPCSVerifyEvalUnchecked(const RingSwitchPCSParams &params,
     Profile *prof = ActiveProfile();
     ScopedTimer timer(prof ? &prof->z2k_backend_verify_ns : nullptr,
                       prof ? &prof->z2k_backend_verify_calls : nullptr);
-    return Z2kPCSBackendVerifyEval(params.backend, commitment, rprime_suffix,
-                                   proof.t_star, num_queries,
-                                   proof.backend_proof);
+    return Z2kPCSBackendVerifyEvalUnchecked(
+        params.backend, commitment, rprime_suffix, proof.t_star, num_queries,
+        proof.backend_proof);
   }
 }
 

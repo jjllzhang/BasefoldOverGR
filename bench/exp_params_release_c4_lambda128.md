@@ -204,6 +204,8 @@ scripts/run_release_c4_lambda128.sh
   - `CONTINUE_ON_ERROR`：遇到某个点失败后是否继续（默认 `1`）
   - `COMMIT_WARMUP` / `COMMIT_REPS`
   - `EVAL_WARMUP` / `EVAL_REPS`
+    - 控制 `bench_basefold_pcs_eval` 与 `bench_z2k_*_eval` 的共享 `--warmup/--reps`
+    - 对 `bench_basefold_pcs_eval` 来说，这一组参数同时作用于 prove-phase 和 verifier 统计
   - `SEED`
 
 并发多实例建议（互不影响）：

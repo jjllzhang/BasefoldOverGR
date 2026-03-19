@@ -2164,21 +2164,23 @@ bool VerifyEvalWithExtensionChallenges(
     const MerkleRoot &commitment_C, const std::vector<FieldElement> &z,
     const FieldElement &claimed_y, long num_queries,
     const BaseFoldPCSEvalProof &proof, const FoldableCodeParams &params,
-    const BaseFoldPCSChallengeConfig &challenge_cfg) {
+    const BaseFoldPCSChallengeConfig &challenge_cfg, bool checked_path) {
   Profile *prof = ActiveProfile();
-  ScopedTimer timer(prof ? &prof->pcs_verify_ns : nullptr,
-                    prof ? &prof->pcs_verify_calls : nullptr);
-
   if (params.d == 0) {
-    return BaseFoldPCSVerifyEval(commitment_C, z, claimed_y, num_queries, proof,
-                                 params);
+    return checked_path
+               ? BaseFoldPCSVerifyEval(commitment_C, z, claimed_y, num_queries,
+                                       proof, params)
+               : BaseFoldPCSVerifyEvalUnchecked(commitment_C, z, claimed_y,
+                                                num_queries, proof, params);
   }
 
   const ZZ_pEX &extension_modulus = challenge_cfg.challenge_extension_modulus;
   ExtensionDegreeOrThrow(extension_modulus,
                          "VerifyEvalWithExtensionChallenges");
 
-  basefold_pcs_internal::ValidateParamsOrThrow(params);
+  if (checked_path) {
+    basefold_pcs_internal::ValidateParamsOrThrow(params);
+  }
   if (!basefold_pcs_internal::IsPowerOfTwoLong(params.k0)) {
     return false;
   }
@@ -2609,6 +2611,9 @@ bool BaseFoldPCSVerifyEvalWithChallengeConfig(
     const FieldElement &claimed_y, long num_queries,
     const BaseFoldPCSEvalProof &proof, const FoldableCodeParams &params,
     const BaseFoldPCSChallengeConfig &challenge_cfg) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->pcs_verify_ns : nullptr,
+                    prof ? &prof->pcs_verify_calls : nullptr);
   ValidateChallengeConfigOrThrow(challenge_cfg, params);
   if (!challenge_cfg.use_extension_challenges) {
     return BaseFoldPCSVerifyEval(commitment_C, z, claimed_y, num_queries, proof,
@@ -2616,7 +2621,24 @@ bool BaseFoldPCSVerifyEvalWithChallengeConfig(
   }
   return VerifyEvalWithExtensionChallenges(commitment_C, z, claimed_y,
                                            num_queries, proof, params,
-                                           challenge_cfg);
+                                           challenge_cfg, /*checked_path=*/true);
+}
+
+bool BaseFoldPCSVerifyEvalWithChallengeConfigUnchecked(
+    const MerkleRoot &commitment_C, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const BaseFoldPCSEvalProof &proof, const FoldableCodeParams &params,
+    const BaseFoldPCSChallengeConfig &challenge_cfg) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer timer(prof ? &prof->pcs_verify_ns : nullptr,
+                    prof ? &prof->pcs_verify_calls : nullptr);
+  if (!challenge_cfg.use_extension_challenges) {
+    return BaseFoldPCSVerifyEvalUnchecked(commitment_C, z, claimed_y,
+                                          num_queries, proof, params);
+  }
+  return VerifyEvalWithExtensionChallenges(commitment_C, z, claimed_y,
+                                           num_queries, proof, params,
+                                           challenge_cfg, /*checked_path=*/false);
 }
 
 }  // namespace basefold

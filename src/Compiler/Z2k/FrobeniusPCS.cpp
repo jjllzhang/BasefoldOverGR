@@ -1182,8 +1182,31 @@ bool FrobeniusPCSVerifyEval(const FrobeniusPCSParams &params,
                             const FieldElement &claimed_s, long num_queries,
                             const FrobeniusPCSEvalProof &proof) {
   ValidateFrobeniusPCSParamsOrThrow(params);
-  return FrobeniusPCSVerifyEvalUnchecked(params, commitment, z, claimed_s,
-                                         num_queries, proof);
+  if (!HasExpectedEvalProofShape(params, proof) ||
+      !HasCompatibleBackendEvalSubproof(params, proof.backend_proof)) {
+    return false;
+  }
+
+  FrobeniusPCSOuterEvalProof outer_proof;
+  outer_proof.s_by_i = proof.s_by_i;
+  outer_proof.h_by_level = proof.h_by_level;
+  outer_proof.t_star = proof.t_star;
+
+  std::vector<FieldElement> rprime_suffix;
+  if (!VerifyOuterEvalAndMaybeRecoverSuffix(params, commitment, z, claimed_s,
+                                            num_queries, outer_proof,
+                                            &rprime_suffix)) {
+    return false;
+  }
+
+  {
+    Profile *prof = ActiveProfile();
+    ScopedTimer timer(prof ? &prof->z2k_backend_verify_ns : nullptr,
+                      prof ? &prof->z2k_backend_verify_calls : nullptr);
+    return Z2kPCSBackendVerifyEval(params.backend, commitment, rprime_suffix,
+                                   proof.t_star, num_queries,
+                                   proof.backend_proof);
+  }
 }
 
 bool FrobeniusPCSVerifyEvalUnchecked(const FrobeniusPCSParams &params,
@@ -1213,9 +1236,9 @@ bool FrobeniusPCSVerifyEvalUnchecked(const FrobeniusPCSParams &params,
     Profile *prof = ActiveProfile();
     ScopedTimer timer(prof ? &prof->z2k_backend_verify_ns : nullptr,
                       prof ? &prof->z2k_backend_verify_calls : nullptr);
-    return Z2kPCSBackendVerifyEval(params.backend, commitment, rprime_suffix,
-                                   proof.t_star, num_queries,
-                                   proof.backend_proof);
+    return Z2kPCSBackendVerifyEvalUnchecked(
+        params.backend, commitment, rprime_suffix, proof.t_star, num_queries,
+        proof.backend_proof);
   }
 }
 

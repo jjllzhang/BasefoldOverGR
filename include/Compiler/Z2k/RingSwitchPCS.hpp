@@ -125,6 +125,14 @@ MerkleRoot RingSwitchPCSCommit(const RingSwitchPCSParams &params,
 RingSwitchPCSOuterCommitArtifacts RingSwitchPCSBuildOuterCommitArtifacts(
     const RingSwitchPCSParams &params, const NTL::vec_ZZ_pE &t_table);
 
+// Unchecked variant intended for benchmarking / hot paths with trusted params.
+//
+// Differences vs RingSwitchPCSBuildOuterCommitArtifacts:
+// - Does NOT validate params.
+// - Does NOT validate t_table length or base-ring shape.
+RingSwitchPCSOuterCommitArtifacts RingSwitchPCSBuildOuterCommitArtifactsUnchecked(
+    const RingSwitchPCSParams &params, const NTL::vec_ZZ_pE &t_table);
+
 RingSwitchPCSCommitArtifacts RingSwitchPCSBuildCommitArtifacts(
     const RingSwitchPCSParams &params, const NTL::vec_ZZ_pE &t_table);
 

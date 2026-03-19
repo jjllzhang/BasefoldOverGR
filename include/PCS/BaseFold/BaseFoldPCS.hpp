@@ -241,6 +241,18 @@ bool BaseFoldPCSVerifyEval(const MerkleRoot &commitment_C,
                            const BaseFoldPCSEvalProof &proof,
                            const FoldableCodeParams &params);
 
+// Unchecked verifier variant intended for benchmarking / hot paths with
+// trusted params.
+//
+// Differences vs BaseFoldPCSVerifyEval:
+// - Does NOT validate params.
+bool BaseFoldPCSVerifyEvalUnchecked(const MerkleRoot &commitment_C,
+                                    const std::vector<FieldElement> &z,
+                                    const FieldElement &claimed_y,
+                                    long num_queries,
+                                    const BaseFoldPCSEvalProof &proof,
+                                    const FoldableCodeParams &params);
+
 // Configurable entrypoints for challenge-domain experiments.
 //
 // - If `challenge_cfg.use_extension_challenges == false`, these forward to the
@@ -277,6 +289,18 @@ BaseFoldPCSProveEvalWithChallengeConfigFromCommittedTopOracleUnchecked(
     const BaseFoldPCSChallengeConfig &challenge_cfg);
 
 bool BaseFoldPCSVerifyEvalWithChallengeConfig(
+    const MerkleRoot &commitment_C, const std::vector<FieldElement> &z,
+    const FieldElement &claimed_y, long num_queries,
+    const BaseFoldPCSEvalProof &proof, const FoldableCodeParams &params,
+    const BaseFoldPCSChallengeConfig &challenge_cfg);
+
+// Unchecked verifier variant intended for benchmarking / hot paths with
+// trusted params.
+//
+// Differences vs BaseFoldPCSVerifyEvalWithChallengeConfig:
+// - Does NOT validate params.
+// - Does NOT validate the challenge config.
+bool BaseFoldPCSVerifyEvalWithChallengeConfigUnchecked(
     const MerkleRoot &commitment_C, const std::vector<FieldElement> &z,
     const FieldElement &claimed_y, long num_queries,
     const BaseFoldPCSEvalProof &proof, const FoldableCodeParams &params,

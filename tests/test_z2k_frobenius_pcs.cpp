@@ -1061,6 +1061,9 @@ void TestFrobeniusPCSProveEval_ProducesConsistentOuterProof() {
   CHECK(basefold::Z2kPCSBackendVerifyEval(
       params.backend, artifacts.commitment, trace.rprime_suffix, proof.t_star,
       /*num_queries=*/2, proof.backend_proof));
+  CHECK(basefold::Z2kPCSBackendVerifyEvalUnchecked(
+      params.backend, artifacts.commitment, trace.rprime_suffix, proof.t_star,
+      /*num_queries=*/2, proof.backend_proof));
 }
 
 void TestFrobeniusPCSProveEval_DirectAndArtifactPathsAgreeOnOuterMessages() {

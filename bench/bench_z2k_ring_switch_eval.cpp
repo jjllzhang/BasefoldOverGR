@@ -78,7 +78,8 @@ BenchResult RunEvalBenchmark(const basefold::RingSwitchPCSParams &params,
   for (int iter = -warmup; iter < reps; ++iter) {
     const auto c0 = std::chrono::steady_clock::now();
     const basefold::RingSwitchPCSOuterCommitArtifacts outer_commit_artifacts =
-        basefold::RingSwitchPCSBuildOuterCommitArtifacts(params, t_table);
+        basefold::RingSwitchPCSBuildOuterCommitArtifactsUnchecked(params,
+                                                                  t_table);
     const auto c1 = std::chrono::steady_clock::now();
 
     const auto c2 = std::chrono::steady_clock::now();

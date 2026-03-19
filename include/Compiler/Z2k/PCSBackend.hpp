@@ -49,6 +49,12 @@ struct Z2kPCSBackendVTable {
                       const FieldElement &claimed_y, long num_queries,
                       const void *backend_proof,
                       const void *backend_params) = nullptr;
+  bool (*verify_eval_unchecked)(const MerkleRoot &commitment,
+                                const std::vector<FieldElement> &z,
+                                const FieldElement &claimed_y,
+                                long num_queries,
+                                const void *backend_proof,
+                                const void *backend_params) = nullptr;
   Bytes (*serialize_eval_proof)(
       const void *backend_proof,
       const Z2kPCSBackendProofEncodingOptions &options) = nullptr;
@@ -103,6 +109,13 @@ bool Z2kPCSBackendVerifyEval(const Z2kPCSBackendHandle &backend,
                              const std::vector<FieldElement> &z,
                              const FieldElement &claimed_y, long num_queries,
                              const Z2kPCSBackendEvalProof &proof);
+
+bool Z2kPCSBackendVerifyEvalUnchecked(const Z2kPCSBackendHandle &backend,
+                                      const MerkleRoot &commitment,
+                                      const std::vector<FieldElement> &z,
+                                      const FieldElement &claimed_y,
+                                      long num_queries,
+                                      const Z2kPCSBackendEvalProof &proof);
 
 Bytes Z2kPCSBackendSerializeEvalProof(
     const Z2kPCSBackendHandle &backend, const Z2kPCSBackendEvalProof &proof,

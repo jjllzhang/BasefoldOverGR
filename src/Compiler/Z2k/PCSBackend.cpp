@@ -217,6 +217,23 @@ bool Z2kPCSBackendVerifyEval(const Z2kPCSBackendHandle &backend,
                                      backend.params.get());
 }
 
+bool Z2kPCSBackendVerifyEvalUnchecked(const Z2kPCSBackendHandle &backend,
+                                      const MerkleRoot &commitment,
+                                      const std::vector<FieldElement> &z,
+                                      const FieldElement &claimed_y,
+                                      long num_queries,
+                                      const Z2kPCSBackendEvalProof &proof) {
+  ValidateEvalProofOrThrow(backend, proof, "Z2kPCSBackendVerifyEvalUnchecked");
+  if (backend.vtable->verify_eval_unchecked != nullptr) {
+    return backend.vtable->verify_eval_unchecked(
+        commitment, z, claimed_y, num_queries, proof.payload.get(),
+        backend.params.get());
+  }
+  return backend.vtable->verify_eval(commitment, z, claimed_y, num_queries,
+                                     proof.payload.get(),
+                                     backend.params.get());
+}
+
 Bytes Z2kPCSBackendSerializeEvalProof(
     const Z2kPCSBackendHandle &backend, const Z2kPCSBackendEvalProof &proof,
     const Z2kPCSBackendProofEncodingOptions &options) {
