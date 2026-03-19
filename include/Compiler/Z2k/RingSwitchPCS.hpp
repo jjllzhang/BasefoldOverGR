@@ -190,12 +190,32 @@ bool RingSwitchPCSVerifyEval(const RingSwitchPCSParams &params,
                              const FieldElement &claimed_s, long num_queries,
                              const RingSwitchPCSEvalProof &proof);
 
+// Unchecked verifier variant intended for benchmarking / hot paths with
+// trusted params.
+//
+// Differences vs RingSwitchPCSVerifyEval:
+// - Does NOT validate params or basis data.
+bool RingSwitchPCSVerifyEvalUnchecked(
+    const RingSwitchPCSParams &params, const MerkleRoot &commitment,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const RingSwitchPCSEvalProof &proof);
+
 bool RingSwitchPCSVerifyOuterEval(const RingSwitchPCSParams &params,
                                   const MerkleRoot &commitment,
                                   const std::vector<FieldElement> &z,
                                   const FieldElement &claimed_s,
                                   long num_queries,
                                   const RingSwitchPCSOuterEvalProof &proof);
+
+// Unchecked verifier variant intended for benchmarking / hot paths with
+// trusted params.
+//
+// Differences vs RingSwitchPCSVerifyOuterEval:
+// - Does NOT validate params or basis data.
+bool RingSwitchPCSVerifyOuterEvalUnchecked(
+    const RingSwitchPCSParams &params, const MerkleRoot &commitment,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const RingSwitchPCSOuterEvalProof &proof);
 
 // Prover-local state produced by Commit and consumed by Prove.
 struct RingSwitchPCSCommittedWitness {
@@ -296,8 +316,8 @@ class RingSwitchPCSVerifier {
               const std::vector<FieldElement> &z,
               const FieldElement &claimed_s, long num_queries,
               const RingSwitchPCSEvalProof &proof) const {
-    return RingSwitchPCSVerifyEval(params_, commitment, z, claimed_s,
-                                   num_queries, proof);
+    return RingSwitchPCSVerifyEvalUnchecked(params_, commitment, z, claimed_s,
+                                            num_queries, proof);
   }
 
   const RingSwitchPCSParams &params() const { return params_; }
@@ -320,8 +340,9 @@ class RingSwitchPCSOuterVerifier {
               const std::vector<FieldElement> &z,
               const FieldElement &claimed_s, long num_queries,
               const RingSwitchPCSOuterEvalProof &proof) const {
-    return RingSwitchPCSVerifyOuterEval(params_, commitment, z, claimed_s,
-                                        num_queries, proof);
+    return RingSwitchPCSVerifyOuterEvalUnchecked(params_, commitment, z,
+                                                 claimed_s, num_queries,
+                                                 proof);
   }
 
   const RingSwitchPCSParams &params() const { return params_; }

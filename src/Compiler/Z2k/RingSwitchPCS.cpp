@@ -105,6 +105,27 @@ ZZ_pE BaseRingConstant(long value) {
   return BaseRingConstant(NTL::to_ZZ_p(value));
 }
 
+std::vector<ZZ_p> RecoverBasisCoordsUnchecked(const GaloisRingBasisData &basis,
+                                              const ZZ_pE &element) {
+  const long n = static_cast<long>(basis.dual_basis.size());
+  std::vector<ZZ_p> coords(static_cast<std::size_t>(n), ZZ_p(0));
+  for (long i = 0; i < n; ++i) {
+    coords[static_cast<std::size_t>(i)] =
+        TraceToBaseRing(basis.dual_basis[static_cast<std::size_t>(i)] * element);
+  }
+  return coords;
+}
+
+ZZ_pE ComposeFromBasisCoordsUnchecked(const std::vector<ZZ_pE> &basis,
+                                      const std::vector<ZZ_p> &coords) {
+  ZZ_pE out = ZZ_pE(0);
+  for (long i = 0; i < static_cast<long>(basis.size()); ++i) {
+    out += BaseRingConstant(coords[static_cast<std::size_t>(i)]) *
+           basis[static_cast<std::size_t>(i)];
+  }
+  return out;
+}
+
 std::vector<ZZ_pE> BuildActivePolynomialBasisOrThrow(const char *func_name) {
   if (!ZZ_pE::initialized()) {
     LogicError((std::string(func_name) +
@@ -219,6 +240,10 @@ struct PackedCommitInputs {
   vec_ZZ_pE t_packed_monomial_coeffs;
 };
 
+RingSwitchComponentTensor BuildRingSwitchComponentTensorInternal(
+    const RingSwitchPCSParams &params, const std::vector<ZZ_pE> &r_suffix,
+    bool materialize_r_evaluation_caches);
+
 void ValidateBasicIrreducibilityModTwoOrThrow(const ZZ_pX &extension_modulus,
                                               long expected_degree,
                                               const char *func_name) {
@@ -270,11 +295,10 @@ void AbsorbPublicInput(HashTranscript &transcript,
   transcript.AbsorbFieldElement(claimed_s);
 }
 
-void ValidateEvalInputsOrThrow(const RingSwitchPCSParams &params,
-                               const vec_ZZ_pE &t_table,
-                               const std::vector<FieldElement> &z,
-                               long num_queries, const char *func_name) {
-  ValidateRingSwitchPCSParamsOrThrow(params);
+void ValidateEvalInputsWithValidParamsOrThrow(
+    const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table,
+    const std::vector<FieldElement> &z, long num_queries,
+    const char *func_name) {
   const long expected_t_length = Pow2LongOrThrow(
       params.ell, (std::string(func_name) + ": ell is too large for long").c_str());
   if (t_table.length() != expected_t_length) {
@@ -291,10 +315,9 @@ void ValidateEvalInputsOrThrow(const RingSwitchPCSParams &params,
   }
 }
 
-void ValidateCommitArtifactsOrThrow(const RingSwitchPCSParams &params,
-                                    const RingSwitchPCSCommitArtifacts &artifacts,
-                                    const char *func_name) {
-  ValidateRingSwitchPCSParamsOrThrow(params);
+void ValidateCommitArtifactsWithValidParamsOrThrow(
+    const RingSwitchPCSParams &params,
+    const RingSwitchPCSCommitArtifacts &artifacts, const char *func_name) {
   const long expected_packed_length = Pow2LongOrThrow(
       params.ell_prime,
       (std::string(func_name) + ": ell_prime is too large for long").c_str());
@@ -315,11 +338,10 @@ void ValidateCommitArtifactsOrThrow(const RingSwitchPCSParams &params,
   }
 }
 
-void ValidateOuterCommitArtifactsOrThrow(
+void ValidateOuterCommitArtifactsWithValidParamsOrThrow(
     const RingSwitchPCSParams &params,
     const RingSwitchPCSOuterCommitArtifacts &artifacts,
     const char *func_name) {
-  ValidateRingSwitchPCSParamsOrThrow(params);
   const long expected_packed_length = Pow2LongOrThrow(
       params.ell_prime,
       (std::string(func_name) + ": ell_prime is too large for long").c_str());
@@ -376,9 +398,8 @@ std::vector<FieldElement> RecoverPartialEvaluationsFromSByU(
       static_cast<std::size_t>(basis_dimension));
   for (long u = 0; u < basis_dimension; ++u) {
     coeff_rows[static_cast<std::size_t>(u)] =
-        RecoverBasisCoordsOrThrow(params.beta_basis,
-                                  s_by_u[static_cast<std::size_t>(u)],
-                                  "RecoverPartialEvaluationsFromSByU");
+        RecoverBasisCoordsUnchecked(params.beta_basis,
+                                    s_by_u[static_cast<std::size_t>(u)]);
   }
 
   std::vector<FieldElement> partials(static_cast<std::size_t>(basis_dimension),
@@ -390,9 +411,8 @@ std::vector<FieldElement> RecoverPartialEvaluationsFromSByU(
       alpha_coords[static_cast<std::size_t>(u)] =
           coeff_rows[static_cast<std::size_t>(u)][static_cast<std::size_t>(v)];
     }
-    partials[static_cast<std::size_t>(v)] = ComposeFromBasisCoordsOrThrow(
-        params.alpha_basis.basis, alpha_coords,
-        "RecoverPartialEvaluationsFromSByU");
+    partials[static_cast<std::size_t>(v)] = ComposeFromBasisCoordsUnchecked(
+        params.alpha_basis.basis, alpha_coords);
   }
   return partials;
 }
@@ -475,6 +495,48 @@ vec_ZZ_pE BuildBatchedGTable(const RingSwitchComponentTensor &tensor,
   return out;
 }
 
+FieldElement EvaluateBooleanTableAtEqualityTable(const vec_ZZ_pE &table,
+                                                 const vec_ZZ_pE &eq_table,
+                                                 const char *func_name) {
+  if (table.length() != eq_table.length()) {
+    LogicError((std::string(func_name) +
+                ": equality table length mismatch")
+                   .c_str());
+  }
+  FieldElement acc = FieldElement(0);
+  for (long i = 0; i < table.length(); ++i) {
+    acc += table[i] * eq_table[i];
+  }
+  return acc;
+}
+
+FieldElement EvaluateGStarFromTensorEqTables(const RingSwitchComponentTensor &tensor,
+                                             const vec_ZZ_pE &eq_prefix,
+                                             const vec_ZZ_pE &eq_suffix) {
+  const long num_u = tensor.basis_dimension;
+  const long num_w = Pow2LongOrThrow(
+      tensor.ell_prime,
+      "EvaluateGStarFromTensorEqTables: ell_prime is too large for long");
+  if (eq_prefix.length() != num_u) {
+    LogicError(
+        "EvaluateGStarFromTensorEqTables: prefix equality table length mismatch");
+  }
+  if (eq_suffix.length() != num_w) {
+    LogicError(
+        "EvaluateGStarFromTensorEqTables: suffix equality table length mismatch");
+  }
+
+  FieldElement acc = FieldElement(0);
+  for (long w = 0; w < num_w; ++w) {
+    FieldElement g_at_w = FieldElement(0);
+    for (long u = 0; u < num_u; ++u) {
+      g_at_w += tensor.a_by_u_then_w[u * num_w + w] * eq_prefix[u];
+    }
+    acc += g_at_w * eq_suffix[w];
+  }
+  return acc;
+}
+
 FieldElement ComputeInitialBatchedClaim(const std::vector<FieldElement> &s_by_u,
                                         const vec_ZZ_pE &eq_prefix) {
   if (eq_prefix.length() != static_cast<long>(s_by_u.size())) {
@@ -506,9 +568,16 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
     const FieldElement &claimed_s, long num_queries,
     const RingSwitchPCSOuterCommitArtifacts &commit_artifacts,
     bool checked_path, const char *func_name) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer total_timer(prof ? &prof->ring_switch_outer_prove_total_ns
+                               : nullptr,
+                          prof ? &prof->ring_switch_outer_prove_total_calls
+                               : nullptr);
   if (checked_path) {
-    ValidateEvalInputsOrThrow(params, t_table, z, num_queries, func_name);
-    ValidateOuterCommitArtifactsOrThrow(params, commit_artifacts, func_name);
+    ValidateEvalInputsWithValidParamsOrThrow(params, t_table, z, num_queries,
+                                            func_name);
+    ValidateOuterCommitArtifactsWithValidParamsOrThrow(params, commit_artifacts,
+                                                       func_name);
   }
 
   if (checked_path) {
@@ -522,50 +591,77 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
   const std::vector<FieldElement> z_prefix = SlicePoint(z, 0, params.kappa);
   const std::vector<FieldElement> z_suffix =
       SlicePoint(z, params.kappa, params.ell_prime);
-  const RingSwitchComponentTensor tensor =
-      BuildRingSwitchComponentTensor(params, z_suffix);
+  const RingSwitchComponentTensor tensor = [&] {
+    ScopedTimer timer(prof ? &prof->ring_switch_outer_prove_tensor_build_ns
+                           : nullptr,
+                      prof ? &prof->ring_switch_outer_prove_tensor_build_calls
+                           : nullptr);
+    return BuildRingSwitchComponentTensorInternal(
+        params, z_suffix, /*materialize_r_evaluation_caches=*/false);
+  }();
 
   OuterProveEvalResult out;
-  out.proof.s_by_u = ComputeSByU(tensor, commit_artifacts.t_packed_table);
+  {
+    ScopedTimer timer(prof ? &prof->ring_switch_outer_prove_compute_s_ns
+                           : nullptr,
+                      prof ? &prof->ring_switch_outer_prove_compute_s_calls
+                           : nullptr);
+    out.proof.s_by_u = ComputeSByU(tensor, commit_artifacts.t_packed_table);
+  }
   out.proof.h_by_level.resize(static_cast<std::size_t>(params.ell_prime));
 
-  const std::vector<FieldElement> recovered_partials =
-      RecoverPartialEvaluationsFromSByU(params, out.proof.s_by_u);
-  if (checked_path) {
-    const std::vector<FieldElement> direct_partials =
-        ComputeDirectPartialEvaluations(params, t_table, z_suffix);
-    if (recovered_partials != direct_partials) {
-      LogicError((std::string(func_name) +
-                  ": recovered partial evaluations do not match Appendix C.1 reconstruction")
-                     .c_str());
-    }
-    if (RecombineClaimFromPartials(recovered_partials, z_prefix) != claimed_s) {
-      LogicError((std::string(func_name) +
-                  ": Equality Check 1 failed on honest witness")
-                     .c_str());
+  std::vector<FieldElement> recovered_partials;
+  {
+    ScopedTimer timer(
+        prof ? &prof->ring_switch_outer_prove_recover_partials_ns : nullptr,
+        prof ? &prof->ring_switch_outer_prove_recover_partials_calls : nullptr);
+    recovered_partials = RecoverPartialEvaluationsFromSByU(params, out.proof.s_by_u);
+    if (checked_path) {
+      const std::vector<FieldElement> direct_partials =
+          ComputeDirectPartialEvaluations(params, t_table, z_suffix);
+      if (recovered_partials != direct_partials) {
+        LogicError((std::string(func_name) +
+                    ": recovered partial evaluations do not match Appendix C.1 reconstruction")
+                       .c_str());
+      }
+      if (RecombineClaimFromPartials(recovered_partials, z_prefix) != claimed_s) {
+        LogicError((std::string(func_name) +
+                    ": Equality Check 1 failed on honest witness")
+                       .c_str());
+      }
     }
   }
 
   HashTranscript transcript = MakeRingSwitchTranscript();
-  AbsorbPublicInput(transcript, commitment, z, claimed_s);
-  for (const FieldElement &s_u : out.proof.s_by_u) {
-    transcript.AbsorbFieldElement(s_u);
-  }
+  std::vector<FieldElement> rprime_prefix(static_cast<std::size_t>(params.kappa));
+  vec_ZZ_pE eq_prefix;
+  FieldElement initial_claim;
+  vec_ZZ_pE g_table;
+  {
+    ScopedTimer timer(prof ? &prof->ring_switch_outer_prove_batch_prep_ns
+                           : nullptr,
+                      prof ? &prof->ring_switch_outer_prove_batch_prep_calls
+                           : nullptr);
+    AbsorbPublicInput(transcript, commitment, z, claimed_s);
+    for (const FieldElement &s_u : out.proof.s_by_u) {
+      transcript.AbsorbFieldElement(s_u);
+    }
 
-  std::vector<FieldElement> rprime_prefix(
-      static_cast<std::size_t>(params.kappa));
-  for (long i = 0; i < params.kappa; ++i) {
-    rprime_prefix[static_cast<std::size_t>(i)] =
-        transcript.ChallengeFieldElement("rprime/prefix/" + std::to_string(i));
+    for (long i = 0; i < params.kappa; ++i) {
+      rprime_prefix[static_cast<std::size_t>(i)] = transcript.ChallengeFieldElement(
+          "rprime/prefix/" + std::to_string(i));
+    }
+    eq_prefix = EqualityTableFromPoint(rprime_prefix);
+    initial_claim = ComputeInitialBatchedClaim(out.proof.s_by_u, eq_prefix);
+    g_table = BuildBatchedGTable(tensor, eq_prefix);
   }
-  const vec_ZZ_pE eq_prefix = EqualityTableFromPoint(rprime_prefix);
-
-  const FieldElement initial_claim =
-      ComputeInitialBatchedClaim(out.proof.s_by_u, eq_prefix);
-  const vec_ZZ_pE g_table = BuildBatchedGTable(tensor, eq_prefix);
 
   out.rprime_suffix.resize(static_cast<std::size_t>(params.ell_prime));
   if (params.ell_prime > 0) {
+    ScopedTimer timer(prof ? &prof->ring_switch_outer_prove_sumcheck_ns
+                           : nullptr,
+                      prof ? &prof->ring_switch_outer_prove_sumcheck_calls
+                           : nullptr);
     ProductSumcheckProver sumcheck(commit_artifacts.t_packed_table, g_table);
     out.proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)] =
         sumcheck.CurrentPolynomial();
@@ -596,23 +692,27 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
     }
   }
 
-  out.proof.t_star = EvalMultilinearMonomialCoeffs(
-      commit_artifacts.t_packed_monomial_coeffs, out.rprime_suffix);
+  {
+    ScopedTimer timer(prof ? &prof->ring_switch_outer_prove_final_check_ns
+                           : nullptr,
+                      prof ? &prof->ring_switch_outer_prove_final_check_calls
+                           : nullptr);
+    out.proof.t_star = EvalMultilinearMonomialCoeffs(
+        commit_artifacts.t_packed_monomial_coeffs, out.rprime_suffix);
 
-  std::vector<FieldElement> rprime_full = rprime_prefix;
-  rprime_full.insert(rprime_full.end(), out.rprime_suffix.begin(),
-                     out.rprime_suffix.end());
-  const FieldElement g_star =
-      EvalMultilinearMonomialCoeffs(tensor.r_monomial_coeffs, rprime_full);
-  if (checked_path) {
-    const FieldElement final_sumcheck_claim =
-        (params.ell_prime == 0)
-            ? initial_claim
-            : out.proof.h_by_level[0].Eval(out.rprime_suffix[0]);
-    if (final_sumcheck_claim != out.proof.t_star * g_star) {
-      LogicError((std::string(func_name) +
-                  ": honest Equality Check 3 failed")
-                     .c_str());
+    const vec_ZZ_pE eq_suffix = EqualityTableFromPoint(out.rprime_suffix);
+    const FieldElement g_star = EvaluateBooleanTableAtEqualityTable(
+        g_table, eq_suffix, "ProveOuterEvalFromCommitArtifactsInternal");
+    if (checked_path) {
+      const FieldElement final_sumcheck_claim =
+          (params.ell_prime == 0)
+              ? initial_claim
+              : out.proof.h_by_level[0].Eval(out.rprime_suffix[0]);
+      if (final_sumcheck_claim != out.proof.t_star * g_star) {
+        LogicError((std::string(func_name) +
+                    ": honest Equality Check 3 failed")
+                       .c_str());
+      }
     }
   }
 
@@ -625,7 +725,8 @@ RingSwitchPCSEvalProof ProveEvalFromCommitArtifactsInternal(
     long num_queries, const RingSwitchPCSCommitArtifacts &commit_artifacts,
     bool checked_path, const char *func_name) {
   if (checked_path) {
-    ValidateCommitArtifactsOrThrow(params, commit_artifacts, func_name);
+    ValidateCommitArtifactsWithValidParamsOrThrow(params, commit_artifacts,
+                                                  func_name);
   }
 
   RingSwitchPCSOuterCommitArtifacts outer_commit_artifacts;
@@ -658,7 +759,11 @@ bool VerifyOuterEvalAndMaybeRecoverSuffix(
     const std::vector<FieldElement> &z, const FieldElement &claimed_s,
     long num_queries, const RingSwitchPCSOuterEvalProof &proof,
     std::vector<FieldElement> *rprime_suffix_out) {
-  ValidateRingSwitchPCSParamsOrThrow(params);
+  Profile *prof = ActiveProfile();
+  ScopedTimer total_timer(prof ? &prof->ring_switch_outer_verify_total_ns
+                               : nullptr,
+                          prof ? &prof->ring_switch_outer_verify_total_calls
+                               : nullptr);
   if (static_cast<long>(z.size()) != params.ell) {
     return false;
   }
@@ -672,35 +777,56 @@ bool VerifyOuterEvalAndMaybeRecoverSuffix(
   const std::vector<FieldElement> z_prefix = SlicePoint(z, 0, params.kappa);
   const std::vector<FieldElement> z_suffix =
       SlicePoint(z, params.kappa, params.ell_prime);
-  const RingSwitchComponentTensor tensor =
-      BuildRingSwitchComponentTensor(params, z_suffix);
+  const RingSwitchComponentTensor tensor = [&] {
+    ScopedTimer timer(prof ? &prof->ring_switch_outer_verify_tensor_build_ns
+                           : nullptr,
+                      prof ? &prof->ring_switch_outer_verify_tensor_build_calls
+                           : nullptr);
+    return BuildRingSwitchComponentTensorInternal(
+        params, z_suffix, /*materialize_r_evaluation_caches=*/false);
+  }();
 
-  const std::vector<FieldElement> recovered_partials =
-      RecoverPartialEvaluationsFromSByU(params, proof.s_by_u);
-  if (RecombineClaimFromPartials(recovered_partials, z_prefix) != claimed_s) {
-    return false;
+  {
+    ScopedTimer timer(
+        prof ? &prof->ring_switch_outer_verify_recover_partials_ns : nullptr,
+        prof ? &prof->ring_switch_outer_verify_recover_partials_calls : nullptr);
+    const std::vector<FieldElement> recovered_partials =
+        RecoverPartialEvaluationsFromSByU(params, proof.s_by_u);
+    if (RecombineClaimFromPartials(recovered_partials, z_prefix) != claimed_s) {
+      return false;
+    }
   }
 
   HashTranscript transcript = MakeRingSwitchTranscript();
-  AbsorbPublicInput(transcript, commitment, z, claimed_s);
-  for (const FieldElement &s_u : proof.s_by_u) {
-    transcript.AbsorbFieldElement(s_u);
-  }
-
   std::vector<FieldElement> rprime_prefix(
       static_cast<std::size_t>(params.kappa));
-  for (long i = 0; i < params.kappa; ++i) {
-    rprime_prefix[static_cast<std::size_t>(i)] =
-        transcript.ChallengeFieldElement("rprime/prefix/" + std::to_string(i));
-  }
-  const vec_ZZ_pE eq_prefix = EqualityTableFromPoint(rprime_prefix);
+  vec_ZZ_pE eq_prefix;
+  FieldElement initial_claim;
+  {
+    ScopedTimer timer(prof ? &prof->ring_switch_outer_verify_prefix_replay_ns
+                           : nullptr,
+                      prof ? &prof->ring_switch_outer_verify_prefix_replay_calls
+                           : nullptr);
+    AbsorbPublicInput(transcript, commitment, z, claimed_s);
+    for (const FieldElement &s_u : proof.s_by_u) {
+      transcript.AbsorbFieldElement(s_u);
+    }
 
-  const FieldElement initial_claim =
-      ComputeInitialBatchedClaim(proof.s_by_u, eq_prefix);
+    for (long i = 0; i < params.kappa; ++i) {
+      rprime_prefix[static_cast<std::size_t>(i)] = transcript.ChallengeFieldElement(
+          "rprime/prefix/" + std::to_string(i));
+    }
+    eq_prefix = EqualityTableFromPoint(rprime_prefix);
+    initial_claim = ComputeInitialBatchedClaim(proof.s_by_u, eq_prefix);
+  }
 
   std::vector<FieldElement> rprime_suffix(
       static_cast<std::size_t>(params.ell_prime));
   if (params.ell_prime > 0) {
+    ScopedTimer timer(prof ? &prof->ring_switch_outer_verify_sumcheck_replay_ns
+                           : nullptr,
+                      prof ? &prof->ring_switch_outer_verify_sumcheck_replay_calls
+                           : nullptr);
     AbsorbQuadraticPoly(
         transcript,
         proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)]);
@@ -713,24 +839,27 @@ bool VerifyOuterEvalAndMaybeRecoverSuffix(
             proof.h_by_level[static_cast<std::size_t>(i - 1)]);
       }
     }
+    if (!CheckProductSumcheckChain(initial_claim, proof.h_by_level,
+                                   rprime_suffix)) {
+      return false;
+    }
   }
 
-  if (!CheckProductSumcheckChain(initial_claim, proof.h_by_level,
-                                 rprime_suffix)) {
-    return false;
-  }
-
-  std::vector<FieldElement> rprime_full = rprime_prefix;
-  rprime_full.insert(rprime_full.end(), rprime_suffix.begin(),
-                     rprime_suffix.end());
-  const FieldElement g_star =
-      EvalMultilinearMonomialCoeffs(tensor.r_monomial_coeffs, rprime_full);
-  const FieldElement final_sumcheck_claim =
-      (params.ell_prime == 0)
-          ? initial_claim
-          : proof.h_by_level[0].Eval(rprime_suffix[0]);
-  if (final_sumcheck_claim != proof.t_star * g_star) {
-    return false;
+  {
+    ScopedTimer timer(prof ? &prof->ring_switch_outer_verify_final_check_ns
+                           : nullptr,
+                      prof ? &prof->ring_switch_outer_verify_final_check_calls
+                           : nullptr);
+    const vec_ZZ_pE eq_suffix = EqualityTableFromPoint(rprime_suffix);
+    const FieldElement g_star =
+        EvaluateGStarFromTensorEqTables(tensor, eq_prefix, eq_suffix);
+    const FieldElement final_sumcheck_claim =
+        (params.ell_prime == 0)
+            ? initial_claim
+            : proof.h_by_level[0].Eval(rprime_suffix[0]);
+    if (final_sumcheck_claim != proof.t_star * g_star) {
+      return false;
+    }
   }
 
   if (rprime_suffix_out != nullptr) {
@@ -981,6 +1110,7 @@ RingSwitchPCSOuterEvalProof RingSwitchPCSProveOuterEvalFromCommitArtifacts(
     const MerkleRoot &commitment, const std::vector<FieldElement> &z,
     const FieldElement &claimed_s, long num_queries,
     const RingSwitchPCSOuterCommitArtifacts &commit_artifacts) {
+  ValidateRingSwitchPCSParamsOrThrow(params);
   return ProveOuterEvalFromCommitArtifactsInternal(
              params, t_table, commitment, z, claimed_s, num_queries,
              commit_artifacts, /*checked_path=*/true,
@@ -1004,6 +1134,7 @@ RingSwitchPCSEvalProof RingSwitchPCSProveEvalFromCommitArtifacts(
     const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table,
     const std::vector<FieldElement> &z, const FieldElement &claimed_s,
     long num_queries, const RingSwitchPCSCommitArtifacts &commit_artifacts) {
+  ValidateRingSwitchPCSParamsOrThrow(params);
   return ProveEvalFromCommitArtifactsInternal(
       params, t_table, z, claimed_s, num_queries, commit_artifacts,
       /*checked_path=*/true, "RingSwitchPCSProveEvalFromCommitArtifacts");
@@ -1024,6 +1155,17 @@ bool RingSwitchPCSVerifyEval(const RingSwitchPCSParams &params,
                              const std::vector<FieldElement> &z,
                              const FieldElement &claimed_s, long num_queries,
                              const RingSwitchPCSEvalProof &proof) {
+  ValidateRingSwitchPCSParamsOrThrow(params);
+  return RingSwitchPCSVerifyEvalUnchecked(params, commitment, z, claimed_s,
+                                          num_queries, proof);
+}
+
+bool RingSwitchPCSVerifyEvalUnchecked(const RingSwitchPCSParams &params,
+                                      const MerkleRoot &commitment,
+                                      const std::vector<FieldElement> &z,
+                                      const FieldElement &claimed_s,
+                                      long num_queries,
+                                      const RingSwitchPCSEvalProof &proof) {
   if (!HasExpectedEvalProofShape(params, proof) ||
       !HasCompatibleBackendEvalSubproof(params, proof.backend_proof)) {
     return false;
@@ -1057,6 +1199,15 @@ bool RingSwitchPCSVerifyOuterEval(const RingSwitchPCSParams &params,
                                   const FieldElement &claimed_s,
                                   long num_queries,
                                   const RingSwitchPCSOuterEvalProof &proof) {
+  ValidateRingSwitchPCSParamsOrThrow(params);
+  return RingSwitchPCSVerifyOuterEvalUnchecked(
+      params, commitment, z, claimed_s, num_queries, proof);
+}
+
+bool RingSwitchPCSVerifyOuterEvalUnchecked(
+    const RingSwitchPCSParams &params, const MerkleRoot &commitment,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const RingSwitchPCSOuterEvalProof &proof) {
   return VerifyOuterEvalAndMaybeRecoverSuffix(params, commitment, z, claimed_s,
                                               num_queries, proof, nullptr);
 }
@@ -1079,9 +1230,11 @@ vec_ZZ_pE DecomposeGRElementToBaseCoeffs(
                                 "DecomposeGRElementToBaseCoeffs"));
 }
 
-RingSwitchComponentTensor BuildRingSwitchComponentTensor(
-    const RingSwitchPCSParams &params, const std::vector<ZZ_pE> &r_suffix) {
-  ValidateRingSwitchPCSParamsOrThrow(params);
+namespace {
+
+RingSwitchComponentTensor BuildRingSwitchComponentTensorInternal(
+    const RingSwitchPCSParams &params, const std::vector<ZZ_pE> &r_suffix,
+    bool materialize_r_evaluation_caches) {
   if (static_cast<long>(r_suffix.size()) != params.ell_prime) {
     LogicError(
         "BuildRingSwitchComponentTensor: r_suffix dimension must equal ell_prime");
@@ -1101,27 +1254,42 @@ RingSwitchComponentTensor BuildRingSwitchComponentTensor(
   tensor.basis_dimension = basis_dimension;
   tensor.ell_prime = params.ell_prime;
   tensor.a_by_u_then_w.SetLength(total_coeffs);
-  tensor.r_table.SetLength(total_coeffs);
+  if (materialize_r_evaluation_caches) {
+    tensor.r_table.SetLength(total_coeffs);
+  }
 
   for (long w = 0; w < num_w; ++w) {
     const std::vector<ZZ_pE> bool_point =
         BooleanPointFromIndex(w, params.ell_prime);
     const ZZ_pE eq_at_w = EqPolynomial(r_suffix, bool_point);
-    const std::vector<ZZ_p> coeffs = RecoverBasisCoordsOrThrow(
-        params.alpha_basis, eq_at_w, "BuildRingSwitchComponentTensor");
+    const std::vector<ZZ_p> coeffs =
+        RecoverBasisCoordsUnchecked(params.alpha_basis, eq_at_w);
     for (long u = 0; u < basis_dimension; ++u) {
       const long row_major_index = u * num_w + w;
-      const long flat_index = u + w * basis_dimension;
       const ZZ_pE lifted_coeff =
           BaseRingConstant(coeffs[static_cast<std::size_t>(u)]);
       tensor.a_by_u_then_w[row_major_index] = lifted_coeff;
-      tensor.r_table[flat_index] = lifted_coeff;
+      if (materialize_r_evaluation_caches) {
+        const long flat_index = u + w * basis_dimension;
+        tensor.r_table[flat_index] = lifted_coeff;
+      }
     }
   }
-  tensor.r_monomial_coeffs =
-      BooleanHypercubeTableToMonomialCoeffs(tensor.r_table);
+  if (materialize_r_evaluation_caches) {
+    tensor.r_monomial_coeffs =
+        BooleanHypercubeTableToMonomialCoeffs(tensor.r_table);
+  }
 
   return tensor;
+}
+
+}  // namespace
+
+RingSwitchComponentTensor BuildRingSwitchComponentTensor(
+    const RingSwitchPCSParams &params, const std::vector<ZZ_pE> &r_suffix) {
+  ValidateRingSwitchPCSParamsOrThrow(params);
+  return BuildRingSwitchComponentTensorInternal(
+      params, r_suffix, /*materialize_r_evaluation_caches=*/true);
 }
 
 }  // namespace basefold

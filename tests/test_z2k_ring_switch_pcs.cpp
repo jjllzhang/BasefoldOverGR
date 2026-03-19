@@ -2974,7 +2974,13 @@ void TestRingSwitchOuterProveFromCommitArtifacts_CheckedAndUncheckedAgree() {
   CHECK(basefold::RingSwitchPCSVerifyOuterEval(
       params, composed_artifacts.commitment, z, claimed_s, /*num_queries=*/2,
       checked_proof));
+  CHECK(basefold::RingSwitchPCSVerifyOuterEvalUnchecked(
+      params, composed_artifacts.commitment, z, claimed_s, /*num_queries=*/2,
+      checked_proof));
   CHECK(basefold::RingSwitchPCSVerifyOuterEval(
+      params, composed_artifacts.commitment, z, claimed_s, /*num_queries=*/2,
+      unchecked_proof));
+  CHECK(basefold::RingSwitchPCSVerifyOuterEvalUnchecked(
       params, composed_artifacts.commitment, z, claimed_s, /*num_queries=*/2,
       unchecked_proof));
   CHECK_EQ(checked_proof.s_by_u, unchecked_proof.s_by_u);
@@ -3030,9 +3036,15 @@ void TestRingSwitchProveEvalFromCommitArtifacts_CheckedAndUncheckedAgree() {
   CHECK(basefold::RingSwitchPCSVerifyEval(params, artifacts.commitment, z,
                                           claimed_s, /*num_queries=*/2,
                                           checked_proof));
+  CHECK(basefold::RingSwitchPCSVerifyEvalUnchecked(
+      params, artifacts.commitment, z, claimed_s, /*num_queries=*/2,
+      checked_proof));
   CHECK(basefold::RingSwitchPCSVerifyEval(params, artifacts.commitment, z,
                                           claimed_s, /*num_queries=*/2,
                                           unchecked_proof));
+  CHECK(basefold::RingSwitchPCSVerifyEvalUnchecked(
+      params, artifacts.commitment, z, claimed_s, /*num_queries=*/2,
+      unchecked_proof));
   CHECK_EQ(checked_proof.s_by_u, unchecked_proof.s_by_u);
   CHECK_EQ(checked_proof.h_by_level.size(),
            unchecked_proof.h_by_level.size());

@@ -58,6 +58,45 @@ struct Profile {
   std::uint64_t z2k_backend_verify_ns = 0;
   std::uint64_t z2k_backend_verify_calls = 0;
 
+  std::uint64_t ring_switch_outer_prove_total_ns = 0;
+  std::uint64_t ring_switch_outer_prove_total_calls = 0;
+
+  std::uint64_t ring_switch_outer_prove_tensor_build_ns = 0;
+  std::uint64_t ring_switch_outer_prove_tensor_build_calls = 0;
+
+  std::uint64_t ring_switch_outer_prove_compute_s_ns = 0;
+  std::uint64_t ring_switch_outer_prove_compute_s_calls = 0;
+
+  std::uint64_t ring_switch_outer_prove_recover_partials_ns = 0;
+  std::uint64_t ring_switch_outer_prove_recover_partials_calls = 0;
+
+  std::uint64_t ring_switch_outer_prove_batch_prep_ns = 0;
+  std::uint64_t ring_switch_outer_prove_batch_prep_calls = 0;
+
+  std::uint64_t ring_switch_outer_prove_sumcheck_ns = 0;
+  std::uint64_t ring_switch_outer_prove_sumcheck_calls = 0;
+
+  std::uint64_t ring_switch_outer_prove_final_check_ns = 0;
+  std::uint64_t ring_switch_outer_prove_final_check_calls = 0;
+
+  std::uint64_t ring_switch_outer_verify_total_ns = 0;
+  std::uint64_t ring_switch_outer_verify_total_calls = 0;
+
+  std::uint64_t ring_switch_outer_verify_tensor_build_ns = 0;
+  std::uint64_t ring_switch_outer_verify_tensor_build_calls = 0;
+
+  std::uint64_t ring_switch_outer_verify_recover_partials_ns = 0;
+  std::uint64_t ring_switch_outer_verify_recover_partials_calls = 0;
+
+  std::uint64_t ring_switch_outer_verify_prefix_replay_ns = 0;
+  std::uint64_t ring_switch_outer_verify_prefix_replay_calls = 0;
+
+  std::uint64_t ring_switch_outer_verify_sumcheck_replay_ns = 0;
+  std::uint64_t ring_switch_outer_verify_sumcheck_replay_calls = 0;
+
+  std::uint64_t ring_switch_outer_verify_final_check_ns = 0;
+  std::uint64_t ring_switch_outer_verify_final_check_calls = 0;
+
   std::uint64_t verify_query_merkle_ns = 0;
   std::uint64_t verify_query_merkle_calls = 0;
 
@@ -269,6 +308,55 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
     os << "    Other (total - above):       " << other_ms << " ms\n";
   }
 
+  const bool has_ring_switch_outer_prover_breakdown =
+      (p.ring_switch_outer_prove_total_calls +
+       p.ring_switch_outer_prove_tensor_build_calls +
+       p.ring_switch_outer_prove_compute_s_calls +
+       p.ring_switch_outer_prove_recover_partials_calls +
+       p.ring_switch_outer_prove_batch_prep_calls +
+       p.ring_switch_outer_prove_sumcheck_calls +
+       p.ring_switch_outer_prove_final_check_calls) > 0;
+  if (has_ring_switch_outer_prover_breakdown) {
+    const double tensor_ms = NsToMs(p.ring_switch_outer_prove_tensor_build_ns);
+    const double compute_s_ms = NsToMs(p.ring_switch_outer_prove_compute_s_ns);
+    const double recover_ms =
+        NsToMs(p.ring_switch_outer_prove_recover_partials_ns);
+    const double batch_prep_ms =
+        NsToMs(p.ring_switch_outer_prove_batch_prep_ns);
+    const double sumcheck_ms = NsToMs(p.ring_switch_outer_prove_sumcheck_ns);
+    const double final_check_ms =
+        NsToMs(p.ring_switch_outer_prove_final_check_ns);
+    const double profiled_ms = tensor_ms + compute_s_ms + recover_ms +
+                               batch_prep_ms + sumcheck_ms + final_check_ms;
+    const double total_ms =
+        (p.ring_switch_outer_prove_total_calls > 0)
+            ? NsToMs(p.ring_switch_outer_prove_total_ns)
+            : profiled_ms;
+    const double other_ms =
+        (total_ms > profiled_ms) ? (total_ms - profiled_ms) : 0.0;
+
+    os << "  [profile-ring-switch-outer-prover]\n";
+    os << "    total:                        " << total_ms << " ms\n";
+    os << "    BuildComponentTensor:         " << tensor_ms << " ms"
+       << "  (calls " << p.ring_switch_outer_prove_tensor_build_calls
+       << ")\n";
+    os << "    ComputeSByU:                  " << compute_s_ms << " ms"
+       << "  (calls " << p.ring_switch_outer_prove_compute_s_calls
+       << ")\n";
+    os << "    RecoverPartialsEq1:           " << recover_ms << " ms"
+       << "  (calls " << p.ring_switch_outer_prove_recover_partials_calls
+       << ")\n";
+    os << "    BatchPrepPrefix:              " << batch_prep_ms << " ms"
+       << "  (calls " << p.ring_switch_outer_prove_batch_prep_calls
+       << ")\n";
+    os << "    SumcheckSuffixRounds:         " << sumcheck_ms << " ms"
+       << "  (calls " << p.ring_switch_outer_prove_sumcheck_calls << ")\n";
+    os << "    FinalTstarGstarEq3:           " << final_check_ms << " ms"
+       << "  (calls " << p.ring_switch_outer_prove_final_check_calls
+       << ")\n";
+    os << "    Other/unaccounted:            " << other_ms << " ms\n";
+  }
+
   if (p.pcs_verify_calls > 0) {
     const double total_ms = NsToMs(p.pcs_verify_ns);
     const double query_ms = NsToMs(p.verify_query_merkle_ns);
@@ -338,6 +426,52 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
     }
     os << "    Inside queries other:        " << query_other_ms << " ms\n";
     os << "    Outside queries:             " << outside_query_ms << " ms\n";
+  }
+
+  const bool has_ring_switch_outer_verifier_breakdown =
+      (p.ring_switch_outer_verify_total_calls +
+       p.ring_switch_outer_verify_tensor_build_calls +
+       p.ring_switch_outer_verify_recover_partials_calls +
+       p.ring_switch_outer_verify_prefix_replay_calls +
+       p.ring_switch_outer_verify_sumcheck_replay_calls +
+       p.ring_switch_outer_verify_final_check_calls) > 0;
+  if (has_ring_switch_outer_verifier_breakdown) {
+    const double tensor_ms = NsToMs(p.ring_switch_outer_verify_tensor_build_ns);
+    const double recover_ms =
+        NsToMs(p.ring_switch_outer_verify_recover_partials_ns);
+    const double prefix_ms =
+        NsToMs(p.ring_switch_outer_verify_prefix_replay_ns);
+    const double sumcheck_ms =
+        NsToMs(p.ring_switch_outer_verify_sumcheck_replay_ns);
+    const double final_check_ms =
+        NsToMs(p.ring_switch_outer_verify_final_check_ns);
+    const double profiled_ms =
+        tensor_ms + recover_ms + prefix_ms + sumcheck_ms + final_check_ms;
+    const double total_ms =
+        (p.ring_switch_outer_verify_total_calls > 0)
+            ? NsToMs(p.ring_switch_outer_verify_total_ns)
+            : profiled_ms;
+    const double other_ms =
+        (total_ms > profiled_ms) ? (total_ms - profiled_ms) : 0.0;
+
+    os << "  [profile-ring-switch-outer-verifier]\n";
+    os << "    total:                        " << total_ms << " ms\n";
+    os << "    BuildComponentTensor:         " << tensor_ms << " ms"
+       << "  (calls " << p.ring_switch_outer_verify_tensor_build_calls
+       << ")\n";
+    os << "    RecoverPartialsEq1:           " << recover_ms << " ms"
+       << "  (calls " << p.ring_switch_outer_verify_recover_partials_calls
+       << ")\n";
+    os << "    ReplayPrefixBatching:         " << prefix_ms << " ms"
+       << "  (calls " << p.ring_switch_outer_verify_prefix_replay_calls
+       << ")\n";
+    os << "    ReplaySumcheckChain:          " << sumcheck_ms << " ms"
+       << "  (calls " << p.ring_switch_outer_verify_sumcheck_replay_calls
+       << ")\n";
+    os << "    FinalGstarEq3:                " << final_check_ms << " ms"
+       << "  (calls " << p.ring_switch_outer_verify_final_check_calls
+       << ")\n";
+    os << "    Other/unaccounted:            " << other_ms << " ms\n";
   }
 }
 

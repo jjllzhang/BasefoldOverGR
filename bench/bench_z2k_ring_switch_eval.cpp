@@ -117,8 +117,9 @@ BenchResult RunEvalBenchmark(const basefold::RingSwitchPCSParams &params,
     bool ok = false;
     {
       basefold::ProfileGuard guard(&verifier_prof);
-      ok = basefold::RingSwitchPCSVerifyEval(params, commit_artifacts.commitment,
-                                             z, claimed_s, num_queries, proof);
+      ok = basefold::RingSwitchPCSVerifyEvalUnchecked(
+          params, commit_artifacts.commitment, z, claimed_s, num_queries,
+          proof);
     }
     const auto t3 = std::chrono::steady_clock::now();
     if (!ok) {
@@ -234,6 +235,7 @@ void PrintHelp() {
   std::cout << "\nNotes:\n"
       << "  This bench measures one full compiler eval run and reports commit split as outer commit + backend commit.\n"
       << "  Timed prove defaults to the unchecked prover hot path; pass --checked to include prover-side input and honest-witness self-checks.\n"
+      << "  Timed verify defaults to the unchecked verifier hot path with trusted params.\n"
       << "  Outer prover/verifier times are total times with the backend prove/verify subcall removed.\n"
       << "  Proof size reports exact serializer-backed bytes for the public RingSwitchPCSEvalProof.\n";
   PrintBasisCliNotes(std::cout, "  ");

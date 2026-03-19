@@ -84,7 +84,7 @@ MerkleRoot BaseFoldBackendCommit(const NTL::vec_ZZ_pE &f_coeffs,
                                  const void *backend_params) {
   const FoldableCodeParams &params =
       AsBaseFoldParams(backend_params, "BaseFoldBackendCommit");
-  return BaseFoldPCSCommit(f_coeffs, params);
+  return BaseFoldPCSBuildCommitArtifactsUnchecked(f_coeffs, params).root_d;
 }
 
 Z2kPCSBackendOpaquePtr BaseFoldBackendBuildCommitArtifacts(
@@ -93,7 +93,7 @@ Z2kPCSBackendOpaquePtr BaseFoldBackendBuildCommitArtifacts(
       AsBaseFoldParams(backend_params, "BaseFoldBackendBuildCommitArtifacts");
   return std::static_pointer_cast<const void>(
       std::make_shared<BaseFoldPCSCommitArtifacts>(
-          BaseFoldPCSBuildCommitArtifacts(f_coeffs, params)));
+          BaseFoldPCSBuildCommitArtifactsUnchecked(f_coeffs, params)));
 }
 
 MerkleRoot BaseFoldBackendCommitmentFromArtifacts(const void *commit_artifacts,
@@ -112,12 +112,13 @@ Z2kPCSBackendOpaquePtr BaseFoldBackendProveEval(
       AsBaseFoldParams(backend_params, "BaseFoldBackendProveEval");
   BaseFoldPCSEvalProof proof;
   if (commit_artifacts_or_null == nullptr) {
-    proof = BaseFoldPCSProveEval(f_coeffs, z, claimed_y, num_queries, params);
+    proof =
+        BaseFoldPCSProveEvalUnchecked(f_coeffs, z, claimed_y, num_queries, params);
   } else {
     const BaseFoldPCSCommitArtifacts &commit_artifacts =
         AsBaseFoldCommitArtifacts(commit_artifacts_or_null,
                                   "BaseFoldBackendProveEval");
-    proof = BaseFoldPCSProveEvalFromCommittedTopOracle(
+    proof = BaseFoldPCSProveEvalFromCommittedTopOracleUnchecked(
         f_coeffs, z, claimed_y, num_queries, params, commit_artifacts);
   }
   return std::static_pointer_cast<const void>(
