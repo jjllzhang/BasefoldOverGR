@@ -459,22 +459,26 @@ inline double CalibrateFrobeniusBenchCandidateMsOrThrow(
 
   switch (mode) {
     case FrobeniusBenchCalibrationMode::kCommit: {
-      (void)basefold::FrobeniusPCSBuildCommitArtifacts(params, t_table);
+      (void)basefold::FrobeniusPCSBuildCommitArtifactsUnchecked(params,
+                                                                t_table);
       double total_ms = 0.0;
       for (int rep = 0; rep < calibration_timed_reps; ++rep) {
         const auto t0 = std::chrono::steady_clock::now();
-        (void)basefold::FrobeniusPCSBuildCommitArtifacts(params, t_table);
+        (void)basefold::FrobeniusPCSBuildCommitArtifactsUnchecked(params,
+                                                                  t_table);
         const auto t1 = std::chrono::steady_clock::now();
         total_ms += MsSince(t0, t1);
       }
       return total_ms / static_cast<double>(calibration_timed_reps);
     }
     case FrobeniusBenchCalibrationMode::kOuterCommit: {
-      (void)basefold::FrobeniusPCSBuildOuterCommitArtifacts(params, t_table);
+      (void)basefold::FrobeniusPCSBuildOuterCommitArtifactsUnchecked(params,
+                                                                     t_table);
       double total_ms = 0.0;
       for (int rep = 0; rep < calibration_timed_reps; ++rep) {
         const auto t0 = std::chrono::steady_clock::now();
-        (void)basefold::FrobeniusPCSBuildOuterCommitArtifacts(params, t_table);
+        (void)basefold::FrobeniusPCSBuildOuterCommitArtifactsUnchecked(params,
+                                                                       t_table);
         const auto t1 = std::chrono::steady_clock::now();
         total_ms += MsSince(t0, t1);
       }
@@ -482,72 +486,54 @@ inline double CalibrateFrobeniusBenchCandidateMsOrThrow(
     }
     case FrobeniusBenchCalibrationMode::kOuterProve: {
       const basefold::FrobeniusPCSOuterCommitArtifacts warmup_artifacts =
-          basefold::FrobeniusPCSBuildOuterCommitArtifacts(params, t_table);
+          basefold::FrobeniusPCSBuildOuterCommitArtifactsUnchecked(params,
+                                                                   t_table);
       const basefold::MerkleRoot commitment = basefold::Z2kPCSBackendCommit(
           params.backend, warmup_artifacts.t_packed_monomial_coeffs);
-      const basefold::FrobeniusPCSOuterEvalProof warmup_proof =
-          basefold::FrobeniusPCSProveOuterEvalFromCommitArtifacts(
+      (void)basefold::FrobeniusPCSProveOuterEvalFromCommitArtifactsUnchecked(
               params, t_table, commitment, z, claimed_s, /*num_queries=*/2,
               warmup_artifacts);
-      if (!basefold::FrobeniusPCSVerifyOuterEval(
-              params, commitment, z, claimed_s, /*num_queries=*/2,
-              warmup_proof)) {
-        LogicError(
-            "CalibrateFrobeniusBenchCandidateMsOrThrow: outer-prove warmup verification failed");
-      }
 
       const basefold::FrobeniusPCSOuterCommitArtifacts outer_artifacts =
-          basefold::FrobeniusPCSBuildOuterCommitArtifacts(params, t_table);
+          basefold::FrobeniusPCSBuildOuterCommitArtifactsUnchecked(params,
+                                                                   t_table);
       const basefold::MerkleRoot timed_commitment = basefold::Z2kPCSBackendCommit(
           params.backend, outer_artifacts.t_packed_monomial_coeffs);
       double total_ms = 0.0;
       for (int rep = 0; rep < calibration_timed_reps; ++rep) {
         const auto t0 = std::chrono::steady_clock::now();
-        const basefold::FrobeniusPCSOuterEvalProof proof =
-            basefold::FrobeniusPCSProveOuterEvalFromCommitArtifacts(
+        (void)basefold::FrobeniusPCSProveOuterEvalFromCommitArtifactsUnchecked(
                 params, t_table, timed_commitment, z, claimed_s,
                 /*num_queries=*/2, outer_artifacts);
         const auto t1 = std::chrono::steady_clock::now();
-        if (!basefold::FrobeniusPCSVerifyOuterEval(
-                params, timed_commitment, z, claimed_s, /*num_queries=*/2,
-                proof)) {
-          LogicError(
-              "CalibrateFrobeniusBenchCandidateMsOrThrow: outer-prove timed verification failed");
-        }
         total_ms += MsSince(t0, t1);
       }
       return total_ms / static_cast<double>(calibration_timed_reps);
     }
     case FrobeniusBenchCalibrationMode::kEval: {
       const basefold::FrobeniusPCSCommitArtifacts warmup_artifacts =
-          basefold::FrobeniusPCSBuildCommitArtifacts(params, t_table);
+          basefold::FrobeniusPCSBuildCommitArtifactsUnchecked(params, t_table);
       const basefold::FrobeniusPCSEvalProof warmup_proof =
-          basefold::FrobeniusPCSProveEvalFromCommitArtifacts(
+          basefold::FrobeniusPCSProveEvalFromCommitArtifactsUnchecked(
               params, t_table, z, claimed_s, /*num_queries=*/2,
               warmup_artifacts);
-      if (!basefold::FrobeniusPCSVerifyEval(params, warmup_artifacts.commitment,
-                                            z, claimed_s, /*num_queries=*/2,
-                                            warmup_proof)) {
-        LogicError(
-            "CalibrateFrobeniusBenchCandidateMsOrThrow: eval warmup verification failed");
-      }
+      (void)basefold::FrobeniusPCSVerifyEvalUnchecked(
+          params, warmup_artifacts.commitment, z, claimed_s,
+          /*num_queries=*/2, warmup_proof);
 
       double total_ms = 0.0;
       for (int rep = 0; rep < calibration_timed_reps; ++rep) {
         const basefold::FrobeniusPCSCommitArtifacts commit_artifacts =
-            basefold::FrobeniusPCSBuildCommitArtifacts(params, t_table);
+            basefold::FrobeniusPCSBuildCommitArtifactsUnchecked(params, t_table);
         const auto t0 = std::chrono::steady_clock::now();
         const basefold::FrobeniusPCSEvalProof proof =
-            basefold::FrobeniusPCSProveEvalFromCommitArtifacts(
+            basefold::FrobeniusPCSProveEvalFromCommitArtifactsUnchecked(
                 params, t_table, z, claimed_s, /*num_queries=*/2,
                 commit_artifacts);
         const auto t1 = std::chrono::steady_clock::now();
-        if (!basefold::FrobeniusPCSVerifyEval(
-                params, commit_artifacts.commitment, z, claimed_s,
-                /*num_queries=*/2, proof)) {
-          LogicError(
-              "CalibrateFrobeniusBenchCandidateMsOrThrow: eval timed verification failed");
-        }
+        (void)basefold::FrobeniusPCSVerifyEvalUnchecked(
+            params, commit_artifacts.commitment, z, claimed_s,
+            /*num_queries=*/2, proof);
         const auto t2 = std::chrono::steady_clock::now();
         total_ms += MsSince(t0, t1) + MsSince(t1, t2);
       }
@@ -555,27 +541,22 @@ inline double CalibrateFrobeniusBenchCandidateMsOrThrow(
     }
     case FrobeniusBenchCalibrationMode::kOuterVerify: {
       const basefold::FrobeniusPCSOuterCommitArtifacts outer_artifacts =
-          basefold::FrobeniusPCSBuildOuterCommitArtifacts(params, t_table);
+          basefold::FrobeniusPCSBuildOuterCommitArtifactsUnchecked(params,
+                                                                   t_table);
       const basefold::MerkleRoot commitment = basefold::Z2kPCSBackendCommit(
           params.backend, outer_artifacts.t_packed_monomial_coeffs);
       const basefold::FrobeniusPCSOuterEvalProof proof =
-          basefold::FrobeniusPCSProveOuterEvalFromCommitArtifacts(
+          basefold::FrobeniusPCSProveOuterEvalFromCommitArtifactsUnchecked(
               params, t_table, commitment, z, claimed_s, /*num_queries=*/2,
               outer_artifacts);
-      if (!basefold::FrobeniusPCSVerifyOuterEval(
-              params, commitment, z, claimed_s, /*num_queries=*/2, proof)) {
-        LogicError(
-            "CalibrateFrobeniusBenchCandidateMsOrThrow: outer-verify warmup verification failed");
-      }
+      (void)basefold::FrobeniusPCSVerifyOuterEvalUnchecked(
+          params, commitment, z, claimed_s, /*num_queries=*/2, proof);
 
       double total_ms = 0.0;
       for (int rep = 0; rep < calibration_timed_reps; ++rep) {
         const auto t0 = std::chrono::steady_clock::now();
-        if (!basefold::FrobeniusPCSVerifyOuterEval(
-                params, commitment, z, claimed_s, /*num_queries=*/2, proof)) {
-          LogicError(
-              "CalibrateFrobeniusBenchCandidateMsOrThrow: outer-verify timed verification failed");
-        }
+        (void)basefold::FrobeniusPCSVerifyOuterEvalUnchecked(
+            params, commitment, z, claimed_s, /*num_queries=*/2, proof);
         const auto t1 = std::chrono::steady_clock::now();
         total_ms += MsSince(t0, t1);
       }

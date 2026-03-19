@@ -1477,6 +1477,77 @@ void TestFrobeniusPCSOuterProveVerify_AcceptsHonestProof() {
   CHECK_EQ(outer_proof.t_star, composed_proof.t_star);
 }
 
+void TestFrobeniusPCSOuterCommitArtifacts_CheckedAndUncheckedAgree() {
+  testutil::PrintInfo(
+      "Frobenius Phase 3: checked and unchecked outer commit artifacts agree on honest inputs");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::FrobeniusPCSParams params =
+      BuildFrobeniusParams(p, modulus, F, alpha, /*ell=*/3, /*kappa=*/1);
+  const vec_ZZ_pE t_table =
+      BuildBaseRingCoeffVector({3, 1, 0, 2, 1, 2, 3, 0});
+
+  const basefold::FrobeniusPCSOuterCommitArtifacts checked_artifacts =
+      basefold::FrobeniusPCSBuildOuterCommitArtifacts(params, t_table);
+  const basefold::FrobeniusPCSOuterCommitArtifacts unchecked_artifacts =
+      basefold::FrobeniusPCSBuildOuterCommitArtifactsUnchecked(params, t_table);
+
+  CHECK_EQ(checked_artifacts.t_packed_table, unchecked_artifacts.t_packed_table);
+  CHECK_EQ(checked_artifacts.t_packed_monomial_coeffs,
+           unchecked_artifacts.t_packed_monomial_coeffs);
+}
+
+void TestFrobeniusPCSCommitArtifacts_CheckedAndUncheckedAgree() {
+  testutil::PrintInfo(
+      "Frobenius Phase 3: checked and unchecked commit artifacts agree on honest inputs");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::FrobeniusPCSParams params =
+      BuildFrobeniusParams(p, modulus, F, alpha, /*ell=*/3, /*kappa=*/1);
+  const vec_ZZ_pE t_table =
+      BuildBaseRingCoeffVector({3, 1, 0, 2, 1, 2, 3, 0});
+
+  const basefold::FrobeniusPCSCommitArtifacts checked_artifacts =
+      basefold::FrobeniusPCSBuildCommitArtifacts(params, t_table);
+  const basefold::FrobeniusPCSCommitArtifacts unchecked_artifacts =
+      basefold::FrobeniusPCSBuildCommitArtifactsUnchecked(params, t_table);
+
+  CHECK_EQ(checked_artifacts.t_packed_table, unchecked_artifacts.t_packed_table);
+  CHECK_EQ(checked_artifacts.t_packed_monomial_coeffs,
+           unchecked_artifacts.t_packed_monomial_coeffs);
+  CHECK_EQ(checked_artifacts.commitment, unchecked_artifacts.commitment);
+  CHECK_EQ(checked_artifacts.backend_commit_artifacts.commitment,
+           unchecked_artifacts.backend_commit_artifacts.commitment);
+}
+
 void TestFrobeniusPCSOuterProveFromCommitArtifacts_CheckedAndUncheckedAgree() {
   testutil::PrintInfo(
       "Frobenius Phase 3: checked and unchecked outer prove paths agree on honest inputs");
@@ -1714,6 +1785,8 @@ int main() {
     RUN_TEST(TestFrobeniusPCSVerifyEval_RejectsTampering);
     RUN_TEST(TestFrobeniusPCSVerifyEval_DimensionZeroUsesNoSumcheckRounds);
     RUN_TEST(TestFrobeniusPCSOuterProveVerify_AcceptsHonestProof);
+    RUN_TEST(TestFrobeniusPCSOuterCommitArtifacts_CheckedAndUncheckedAgree);
+    RUN_TEST(TestFrobeniusPCSCommitArtifacts_CheckedAndUncheckedAgree);
     RUN_TEST(TestFrobeniusPCSOuterProveFromCommitArtifacts_CheckedAndUncheckedAgree);
     RUN_TEST(TestFrobeniusPCSProveEvalFromCommitArtifacts_CheckedAndUncheckedAgree);
     RUN_TEST(TestFrobeniusProofSerialize_ComposedSizeMatchesBytes);

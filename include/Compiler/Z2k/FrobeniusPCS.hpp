@@ -104,7 +104,23 @@ MerkleRoot FrobeniusPCSCommit(const FrobeniusPCSParams &params,
 FrobeniusPCSOuterCommitArtifacts FrobeniusPCSBuildOuterCommitArtifacts(
     const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table);
 
+// Unchecked variant intended for benchmarking / hot paths with trusted params.
+//
+// Differences vs FrobeniusPCSBuildOuterCommitArtifacts:
+// - Does NOT validate params.
+// - Does NOT validate that t_table is base-ring valued.
+FrobeniusPCSOuterCommitArtifacts FrobeniusPCSBuildOuterCommitArtifactsUnchecked(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table);
+
 FrobeniusPCSCommitArtifacts FrobeniusPCSBuildCommitArtifacts(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table);
+
+// Unchecked variant intended for benchmarking / hot paths with trusted params.
+//
+// Differences vs FrobeniusPCSBuildCommitArtifacts:
+// - Does NOT validate params.
+// - Does NOT validate that t_table is base-ring valued.
+FrobeniusPCSCommitArtifacts FrobeniusPCSBuildCommitArtifactsUnchecked(
     const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table);
 
 FrobeniusPCSOuterEvalProof FrobeniusPCSProveOuterEval(

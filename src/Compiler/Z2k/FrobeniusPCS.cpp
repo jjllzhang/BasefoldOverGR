@@ -24,6 +24,10 @@ using std::string;
 using std::vector;
 
 namespace basefold {
+
+NTL::vec_ZZ_pE PackZ2kTableToFrobeniusGREvalsWithTrustedParamsOrThrow(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table);
+
 namespace {
 
 struct PackedCommitInputs {
@@ -239,7 +243,8 @@ NTL::vec_ZZ_pE BooleanHypercubeTableToMonomialCoeffsInternal(
 PackedCommitInputs BuildPackedCommitInputs(const FrobeniusPCSParams &params,
                                            const NTL::vec_ZZ_pE &t_table) {
   PackedCommitInputs out;
-  out.t_packed_table = PackZ2kTableToFrobeniusGREvals(params, t_table);
+  out.t_packed_table =
+      PackZ2kTableToFrobeniusGREvalsWithTrustedParamsOrThrow(params, t_table);
   out.t_packed_monomial_coeffs =
       BooleanHypercubeTableToMonomialCoeffsInternal(out.t_packed_table);
   return out;
@@ -989,11 +994,19 @@ NTL::vec_ZZ_pE PackZ2kTableToFrobeniusGREvals(
   ValidateBaseRingVectorOrThrow(t_table, "t_table",
                                 "PackZ2kTableToFrobeniusGREvals");
 
-  const vector<ZZ_pE> &beta = params.basis_data.normal_basis.beta;
-  const long basis_dimension = static_cast<long>(beta.size());
+  return PackZ2kTableToFrobeniusGREvalsWithTrustedParamsOrThrow(params,
+                                                                t_table);
+}
+
+NTL::vec_ZZ_pE PackZ2kTableToFrobeniusGREvalsWithTrustedParamsOrThrow(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table) {
+  const long basis_dimension =
+      static_cast<long>(params.basis_data.normal_basis.beta.size());
   const long packed_length = Pow2LongOrThrow(
       params.ell_prime,
-      "PackZ2kTableToFrobeniusGREvals: ell_prime is too large for long");
+      "PackZ2kTableToFrobeniusGREvalsWithTrustedParamsOrThrow: ell_prime is too large for long");
+
+  const vector<ZZ_pE> &beta = params.basis_data.normal_basis.beta;
 
   NTL::vec_ZZ_pE packed;
   packed.SetLength(packed_length);
@@ -1030,6 +1043,20 @@ MerkleRoot FrobeniusPCSCommit(const FrobeniusPCSParams &params,
 FrobeniusPCSOuterCommitArtifacts FrobeniusPCSBuildOuterCommitArtifacts(
     const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table) {
   ValidateFrobeniusPCSParamsOrThrow(params);
+  const long expected_length = Pow2LongOrThrow(
+      params.ell,
+      "FrobeniusPCSBuildOuterCommitArtifacts: ell is too large for long");
+  if (t_table.length() != expected_length) {
+    LogicError(
+        "FrobeniusPCSBuildOuterCommitArtifacts: t_table length must equal 2^ell");
+  }
+  ValidateBaseRingVectorOrThrow(
+      t_table, "t_table", "FrobeniusPCSBuildOuterCommitArtifacts");
+  return FrobeniusPCSBuildOuterCommitArtifactsUnchecked(params, t_table);
+}
+
+FrobeniusPCSOuterCommitArtifacts FrobeniusPCSBuildOuterCommitArtifactsUnchecked(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table) {
   const PackedCommitInputs packed = BuildPackedCommitInputs(params, t_table);
 
   FrobeniusPCSOuterCommitArtifacts out;
@@ -1040,8 +1067,22 @@ FrobeniusPCSOuterCommitArtifacts FrobeniusPCSBuildOuterCommitArtifacts(
 
 FrobeniusPCSCommitArtifacts FrobeniusPCSBuildCommitArtifacts(
     const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table) {
+  ValidateFrobeniusPCSParamsOrThrow(params);
+  const long expected_length = Pow2LongOrThrow(
+      params.ell,
+      "FrobeniusPCSBuildCommitArtifacts: ell is too large for long");
+  if (t_table.length() != expected_length) {
+    LogicError("FrobeniusPCSBuildCommitArtifacts: t_table length must equal 2^ell");
+  }
+  ValidateBaseRingVectorOrThrow(
+      t_table, "t_table", "FrobeniusPCSBuildCommitArtifacts");
+  return FrobeniusPCSBuildCommitArtifactsUnchecked(params, t_table);
+}
+
+FrobeniusPCSCommitArtifacts FrobeniusPCSBuildCommitArtifactsUnchecked(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_table) {
   const FrobeniusPCSOuterCommitArtifacts outer =
-      FrobeniusPCSBuildOuterCommitArtifacts(params, t_table);
+      FrobeniusPCSBuildOuterCommitArtifactsUnchecked(params, t_table);
 
   FrobeniusPCSCommitArtifacts out;
   out.t_packed_table = outer.t_packed_table;

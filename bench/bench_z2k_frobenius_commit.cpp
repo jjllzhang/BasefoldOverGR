@@ -65,7 +65,8 @@ BenchResult RunCommitBenchmark(const basefold::FrobeniusPCSParams &params,
   for (int iter = -warmup; iter < reps; ++iter) {
     const auto t0 = std::chrono::steady_clock::now();
     const basefold::FrobeniusPCSOuterCommitArtifacts outer_artifacts =
-        basefold::FrobeniusPCSBuildOuterCommitArtifacts(params, t_table);
+        basefold::FrobeniusPCSBuildOuterCommitArtifactsUnchecked(params,
+                                                                 t_table);
     const auto t1 = std::chrono::steady_clock::now();
 
     const auto t2 = std::chrono::steady_clock::now();

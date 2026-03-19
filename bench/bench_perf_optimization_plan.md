@@ -163,7 +163,7 @@ Acceptance criteria:
 
 ### Phase 3: Frobenius Bench Parity
 
-Status: `[ ]`
+Status: `[x]`
 
 Primary targets:
 
@@ -175,9 +175,9 @@ Primary targets:
 Tasks:
 
 - `[x]` Add unchecked Frobenius verify entry points and use them by default in `bench_z2k_frobenius_eval.cpp`.
-- `[ ]` Ensure Frobenius commit benchmarks do not call checked top-level commit wrappers in the timed path.
-- `[ ]` Keep all basis discovery / provided-basis normalization / precomputed-table construction strictly in setup.
-- `[ ]` Audit Frobenius eval/commit benchmarks for any remaining benchmark-local correctness cross-checks and remove them.
+- `[x]` Ensure Frobenius commit benchmarks do not call checked top-level commit wrappers in the timed path.
+- `[x]` Keep all basis discovery / provided-basis normalization / precomputed-table construction strictly in setup.
+- `[x]` Audit Frobenius eval/commit benchmarks for any remaining benchmark-local correctness cross-checks and remove them.
 
 Acceptance criteria:
 
@@ -366,8 +366,17 @@ Fill this section as work lands.
 ### Phase 3
 
 - Before:
+- Frobenius commit/eval benches timed `FrobeniusPCSBuildOuterCommitArtifacts(...)`, so the reported `packing` / `outer commit` metrics still paid `ValidateFrobeniusPCSParamsOrThrow(...)` plus base-ring input validation on every measured repetition.
+- The bench-only basis calibration helper still used checked Frobenius commit/prove/verify entry points and explicit honest-proof self-checks, even though those checks were outside the published timed regions.
 - After:
+- Added unchecked Frobenius outer/full commit-artifact builders and routed `bench_z2k_frobenius_commit`, `bench_z2k_frobenius_eval`, and the Frobenius bench basis calibration helper through the unchecked hot path.
+- Basis discovery, provided-basis normalization, and precomputed-table construction remain setup-only work; the measured commit/eval loops now start from trusted `FrobeniusPCSParams` without revalidating them on each repetition.
+- Added regression coverage that checked and unchecked Frobenius outer/full commit-artifact builders agree on honest inputs.
 - Notes:
+- Validated with `test_z2k_frobenius_pcs`, `test_z2k_frobenius_bench_cli`, and fresh builds of `bench_z2k_frobenius_commit` / `bench_z2k_frobenius_eval`.
+- Small before/after check at `c=4, ell=8, kappa=1, warmup=0, reps=3, queries=1`:
+  - `bench_z2k_frobenius_commit`: `packing mean 0.176 -> 0.152 ms` (about `13.6%` faster), `commit mean 1.496 -> 1.434 ms` (about `4.1%` faster).
+  - `bench_z2k_frobenius_eval`: `outer commit mean 0.191 -> 0.167 ms` (about `12.6%` faster), `commit total mean 1.621 -> 1.621 ms` (no material change); prove/verify means stayed within noise, as expected for a commit-path-only cleanup.
 
 ### Phase 4
 
