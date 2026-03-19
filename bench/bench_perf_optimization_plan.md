@@ -206,14 +206,14 @@ Acceptance criteria:
 
 ### Phase 5: Instrumentation and Stop Rules
 
-Status: `[ ]`
+Status: `[x]`
 
 Tasks:
 
-- `[ ]` Add commit-path profiling only if needed to decide between two plausible optimization directions.
-- `[ ]` Keep outer-only diagnostic benches as diagnostic tools, not optimization targets.
-- `[ ]` After each phase, record a short before/after timing note in this file.
-- `[ ]` Stop once the remaining dominant costs are either:
+- `[x]` Add commit-path profiling only if needed to decide between two plausible optimization directions.
+- `[x]` Keep outer-only diagnostic benches as diagnostic tools, not optimization targets.
+- `[x]` After each phase, record a short before/after timing note in this file.
+- `[x]` Stop once the remaining dominant costs are either:
   - backend work
   - protocol-inherent outer work
   - or low-payoff constant-factor cleanup
@@ -389,6 +389,19 @@ Fill this section as work lands.
 - Notes:
 - This phase intentionally stopped at audit because further edits would have been cosmetic or would have widened scope into BaseFold core API design.
 - Validation for the audit is deferred to the final end-to-end sweep below; there was no benchmark-driver behavior change to recompile in isolation here.
+
+### Phase 5
+
+- Before:
+- The plan still left open whether another round of instrumentation was needed, especially on commit paths, before deciding where to stop.
+- The repo already had three useful diagnostic surfaces: split commit benchmarks, eval benchmarks with outer/backend split, and ring-switch profile buckets on prove/verify.
+- After:
+- No new instrumentation was added in this phase. The existing benchmark surfaces were enough to decide the stop rule without widening scope into deployment-grade profiling infrastructure.
+- The stop rule is now considered reached for this pass: remaining measurable costs are backend work, protocol-inherent outer work, or low-payoff constant-factor cleanup rather than obvious benchmark-driver overhead.
+- Notes:
+- `bench_z2k_*_outer_*` benches remain diagnostic tools for hotspot inspection, not new optimization targets.
+- Ring-switch already has the decisive evidence: after the earlier hot-path cleanup and Phase 2 precompute work, the dominant remaining costs sit in real outer protocol work such as tensor construction and partial-recovery logic, not in repeated benchmark-driver validation.
+- Frobenius commit-path cleanup in Phase 3 produced only modest gains on the measured point (`packing` and `outer commit` improved, while total eval/prove/verify barely moved), which is the expected signal for a stop rather than another large implementation pass.
 
 ## Out of Scope
 
