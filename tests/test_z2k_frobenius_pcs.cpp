@@ -1522,7 +1522,13 @@ void TestFrobeniusPCSOuterProveFromCommitArtifacts_CheckedAndUncheckedAgree() {
   CHECK(basefold::FrobeniusPCSVerifyOuterEval(
       params, composed_artifacts.commitment, z, claimed_s, /*num_queries=*/2,
       checked_proof));
+  CHECK(basefold::FrobeniusPCSVerifyOuterEvalUnchecked(
+      params, composed_artifacts.commitment, z, claimed_s, /*num_queries=*/2,
+      checked_proof));
   CHECK(basefold::FrobeniusPCSVerifyOuterEval(
+      params, composed_artifacts.commitment, z, claimed_s, /*num_queries=*/2,
+      unchecked_proof));
+  CHECK(basefold::FrobeniusPCSVerifyOuterEvalUnchecked(
       params, composed_artifacts.commitment, z, claimed_s, /*num_queries=*/2,
       unchecked_proof));
   CHECK_EQ(checked_proof.s_by_i, unchecked_proof.s_by_i);
@@ -1577,9 +1583,15 @@ void TestFrobeniusPCSProveEvalFromCommitArtifacts_CheckedAndUncheckedAgree() {
   CHECK(basefold::FrobeniusPCSVerifyEval(params, artifacts.commitment, z,
                                          claimed_s, /*num_queries=*/2,
                                          checked_proof));
+  CHECK(basefold::FrobeniusPCSVerifyEvalUnchecked(
+      params, artifacts.commitment, z, claimed_s, /*num_queries=*/2,
+      checked_proof));
   CHECK(basefold::FrobeniusPCSVerifyEval(params, artifacts.commitment, z,
                                          claimed_s, /*num_queries=*/2,
                                          unchecked_proof));
+  CHECK(basefold::FrobeniusPCSVerifyEvalUnchecked(
+      params, artifacts.commitment, z, claimed_s, /*num_queries=*/2,
+      unchecked_proof));
   CHECK_EQ(checked_proof.s_by_i, unchecked_proof.s_by_i);
   CHECK_EQ(checked_proof.h_by_level.size(),
            unchecked_proof.h_by_level.size());

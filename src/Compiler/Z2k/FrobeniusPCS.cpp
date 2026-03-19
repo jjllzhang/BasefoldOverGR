@@ -740,7 +740,6 @@ bool VerifyOuterEvalAndMaybeRecoverSuffix(
     const std::vector<FieldElement> &z, const FieldElement &claimed_s,
     long num_queries, const FrobeniusPCSOuterEvalProof &proof,
     std::vector<FieldElement> *rprime_suffix_out) {
-  ValidateFrobeniusPCSParamsOrThrow(params);
   if (static_cast<long>(z.size()) != params.ell) {
     return false;
   }
@@ -1141,6 +1140,17 @@ bool FrobeniusPCSVerifyEval(const FrobeniusPCSParams &params,
                             const std::vector<FieldElement> &z,
                             const FieldElement &claimed_s, long num_queries,
                             const FrobeniusPCSEvalProof &proof) {
+  ValidateFrobeniusPCSParamsOrThrow(params);
+  return FrobeniusPCSVerifyEvalUnchecked(params, commitment, z, claimed_s,
+                                         num_queries, proof);
+}
+
+bool FrobeniusPCSVerifyEvalUnchecked(const FrobeniusPCSParams &params,
+                                     const MerkleRoot &commitment,
+                                     const std::vector<FieldElement> &z,
+                                     const FieldElement &claimed_s,
+                                     long num_queries,
+                                     const FrobeniusPCSEvalProof &proof) {
   if (!HasExpectedEvalProofShape(params, proof) ||
       !HasCompatibleBackendEvalSubproof(params, proof.backend_proof)) {
     return false;
@@ -1174,6 +1184,15 @@ bool FrobeniusPCSVerifyOuterEval(const FrobeniusPCSParams &params,
                                  const FieldElement &claimed_s,
                                  long num_queries,
                                  const FrobeniusPCSOuterEvalProof &proof) {
+  ValidateFrobeniusPCSParamsOrThrow(params);
+  return FrobeniusPCSVerifyOuterEvalUnchecked(params, commitment, z, claimed_s,
+                                              num_queries, proof);
+}
+
+bool FrobeniusPCSVerifyOuterEvalUnchecked(
+    const FrobeniusPCSParams &params, const MerkleRoot &commitment,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const FrobeniusPCSOuterEvalProof &proof) {
   return VerifyOuterEvalAndMaybeRecoverSuffix(params, commitment, z, claimed_s,
                                               num_queries, proof, nullptr);
 }

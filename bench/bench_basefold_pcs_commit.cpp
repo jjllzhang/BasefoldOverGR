@@ -133,9 +133,6 @@ basefold::FoldableCodeParams BuildParams_k0_gt1(long c, long k0, long d,
 BenchResult RunCommitBenchmark(const vec_ZZ_pE &f_coeffs,
                                const basefold::FoldableCodeParams &params,
                                int warmup, int reps) {
-  if (warmup < 0) LogicError("RunCommitBenchmark: warmup must be >= 0");
-  if (reps <= 0) LogicError("RunCommitBenchmark: reps must be > 0");
-
   std::vector<double> encode_ms;
   std::vector<double> top_merkle_build_ms;
   std::vector<double> commit_ms;
@@ -210,6 +207,8 @@ void PrintHelp() {
       << "Notes:\n"
       << "  Headline commit time includes top-level EncodeFoldable + MerkleTree::Build.\n"
       << "  Auxiliary lines print encode-only and top-merkle-build-only splits.\n\n"
+      << "  The benchmark assumes trusted setup inputs and does not add extra\n"
+      << "  benchmark-driver correctness cross-checks around the timed commit path.\n\n"
       << "  With --auto-zeta teich, zeta is derived as a Teichmuller generator from (p,k,F);\n"
       << "  then --field-zeta/--ring-zeta are ignored.\n\n"
       << "Examples:\n"

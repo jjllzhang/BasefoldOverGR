@@ -40,14 +40,12 @@ Already landed:
 - `bench_basefold_pcs_eval` already uses unchecked BaseFold commit artifacts and unchecked prove paths.
 - `bench_basefold_pcs_commit` is already documented as an unchecked top-commit benchmark.
 - `bench_z2k_ring_switch_eval` already uses unchecked prove and unchecked verify hot paths.
+- `bench_z2k_frobenius_eval` now uses unchecked prove and unchecked verify hot paths.
 - The compiler backend used by ring-switch now defaults to the unchecked BaseFold commit/prove hot path.
 - Ring-switch hot paths already removed repeated internal params/basis validation and no longer build `r_table -> r_monomial_coeffs` just to evaluate `g*`.
 
 Still misaligned with the desired benchmark contract:
 
-- `bench_z2k_ring_switch_commit` still calls the checked top-level `RingSwitchPCSCommit` path in the loop.
-- `bench_z2k_frobenius_commit` still calls the checked top-level `FrobeniusPCSCommit` path in the loop.
-- `bench_z2k_frobenius_eval` still uses checked verify because there is no unchecked Frobenius verify entry point yet.
 - Ring-switch still has two major implementation hotspots after the previous cleanup:
   - `RecoverPartialEvaluationsFromSByU`
   - `BuildRingSwitchComponentTensorInternal`
@@ -92,20 +90,20 @@ Not present in timed or untimed benchmark loops:
 
 ### Phase 0: Bench Contract Cleanup
 
-Status: `[ ]`
+Status: `[x]`
 
 Tasks:
 
-- `[ ]` Remove benchmark-driver correctness / consistency checks from:
+- `[x]` Remove benchmark-driver correctness / consistency checks from:
   - `bench/bench_basefold_pcs_eval.cpp`
   - `bench/bench_basefold_pcs_commit.cpp`
   - `bench/bench_z2k_ring_switch_eval.cpp`
   - `bench/bench_z2k_ring_switch_commit.cpp`
   - `bench/bench_z2k_frobenius_eval.cpp`
   - `bench/bench_z2k_frobenius_commit.cpp`
-- `[ ]` Delete compiler-commitment cross-checks in ring-switch and Frobenius commit benches.
-- `[ ]` Remove benchmark-driver post-run proof/verify sanity checks from the six target benches and rely on `tests/` for correctness coverage.
-- `[ ]` Update help text / notes so each benchmark explicitly states what is excluded from timing.
+- `[x]` Delete compiler-commitment cross-checks in ring-switch and Frobenius commit benches.
+- `[x]` Remove benchmark-driver post-run proof/verify sanity checks from the six target benches and rely on `tests/` for correctness coverage.
+- `[x]` Update help text / notes so each benchmark explicitly states what is excluded from timing.
 
 Acceptance criteria:
 
@@ -176,7 +174,7 @@ Primary targets:
 
 Tasks:
 
-- `[ ]` Add unchecked Frobenius verify entry points and use them by default in `bench_z2k_frobenius_eval.cpp`.
+- `[x]` Add unchecked Frobenius verify entry points and use them by default in `bench_z2k_frobenius_eval.cpp`.
 - `[ ]` Ensure Frobenius commit benchmarks do not call checked top-level commit wrappers in the timed path.
 - `[ ]` Keep all basis discovery / provided-basis normalization / precomputed-table construction strictly in setup.
 - `[ ]` Audit Frobenius eval/commit benchmarks for any remaining benchmark-local correctness cross-checks and remove them.
@@ -229,22 +227,22 @@ Acceptance criteria:
 
 ### Bench Files
 
-- `[ ]` `bench/bench_basefold_pcs_eval.cpp`
+- `[x]` `bench/bench_basefold_pcs_eval.cpp`
   - remove benchmark-local correctness checks not required for timing
   - keep current unchecked prove/commit-artifact flow
-- `[ ]` `bench/bench_basefold_pcs_commit.cpp`
+- `[x]` `bench/bench_basefold_pcs_commit.cpp`
   - audit and strip nonessential benchmark-local validation
-- `[ ]` `bench/bench_z2k_ring_switch_eval.cpp`
+- `[x]` `bench/bench_z2k_ring_switch_eval.cpp`
   - keep unchecked prove/verify
   - remove remaining benchmark-local correctness checks
   - ensure commit split construction uses hot-path-only wrappers
-- `[ ]` `bench/bench_z2k_ring_switch_commit.cpp`
+- `[x]` `bench/bench_z2k_ring_switch_commit.cpp`
   - stop calling checked `RingSwitchPCSCommit` in timed path
   - remove commitment cross-check
-- `[ ]` `bench/bench_z2k_frobenius_eval.cpp`
+- `[x]` `bench/bench_z2k_frobenius_eval.cpp`
   - switch default benchmark verify to unchecked verify
   - remove benchmark-local correctness checks
-- `[ ]` `bench/bench_z2k_frobenius_commit.cpp`
+- `[x]` `bench/bench_z2k_frobenius_commit.cpp`
   - stop calling checked `FrobeniusPCSCommit` in timed path
   - remove commitment cross-check
 
@@ -255,9 +253,9 @@ Acceptance criteria:
 - `[ ]` `src/Compiler/Z2k/RingSwitchPCS.cpp`
   - implement ring-switch setup precompute
   - implement fast packing / partial-recovery / tensor-build paths
-- `[ ]` `include/Compiler/Z2k/FrobeniusPCS.hpp`
+- `[x]` `include/Compiler/Z2k/FrobeniusPCS.hpp`
   - declare unchecked verify APIs if needed
-- `[ ]` `src/Compiler/Z2k/FrobeniusPCS.cpp`
+- `[x]` `src/Compiler/Z2k/FrobeniusPCS.cpp`
   - implement unchecked verify hot path and keep checked wrappers intact
 - `[ ]` `include/PCS/Common/Profile.hpp`
   - touch only if commit-path profiling becomes necessary
@@ -326,8 +324,15 @@ Fill this section as work lands.
 ### Phase 0
 
 - Before:
+  - Commit benches still performed benchmark-driver commitment cross-checks.
+  - Eval benches still performed benchmark-driver verify-success assertions.
+  - Frobenius eval still defaulted to the checked verifier path.
 - After:
+  - All six target benches now drop benchmark-driver correctness/cross-check logic from the measured workflow.
+  - Ring-switch and Frobenius commit benches now time backend commit on prepacked monomial data rather than checked top-level commit wrappers.
+  - Frobenius eval now defaults to unchecked verify, matching the release-sweep hot-path contract.
 - Notes:
+  - Validated with `bench_*` target rebuild plus `test_z2k_frobenius_pcs`, `test_z2k_ring_switch_bench_cli`, and `test_z2k_frobenius_bench_cli`.
 
 ### Phase 1
 

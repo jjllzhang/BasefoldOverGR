@@ -710,6 +710,8 @@ run_compiler_eval_row() {
   status="ok"
   error="-"
 
+  # Release sweep intentionally relies on each compiler bench's default
+  # unchecked hot path and never passes --checked here.
   if ! run_and_log "$log_file" \
       "$BUILD_DIR/$eval_bin" \
       "${bench_args[@]}" \
@@ -897,6 +899,8 @@ run_one_context_d() {
     basefold_error="$release_query_error"
   fi
 
+  # Release sweep uses the benchmark defaults, which are the unchecked hot
+  # paths unless a bench is explicitly passed --checked.
   if ! run_and_log "$commit_log" \
       "$BUILD_DIR/bench_basefold_pcs_commit" \
       --mode "$mode" \
@@ -914,6 +918,8 @@ run_one_context_d() {
   fi
 
   if [[ "$release_query_status" == "ok" ]]; then
+    # Keep the release sweep on the benchmark defaults; do not add --checked
+    # unless the goal is debug-only checked-path measurements.
     if ! run_and_log "$eval_log" \
         "$BUILD_DIR/bench_basefold_pcs_eval" \
         --mode "$mode" \

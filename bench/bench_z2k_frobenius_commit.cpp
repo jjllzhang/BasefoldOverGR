@@ -70,15 +70,9 @@ BenchResult RunCommitBenchmark(const basefold::FrobeniusPCSParams &params,
 
     const auto t2 = std::chrono::steady_clock::now();
     const basefold::MerkleRoot commitment =
-        basefold::FrobeniusPCSCommit(params, t_table);
-    const auto t3 = std::chrono::steady_clock::now();
-
-    const basefold::MerkleRoot direct_commitment =
         basefold::Z2kPCSBackendCommit(params.backend,
                                       outer_artifacts.t_packed_monomial_coeffs);
-    if (commitment != direct_commitment) {
-      NTL::LogicError("RunCommitBenchmark: compiler commitment mismatch");
-    }
+    const auto t3 = std::chrono::steady_clock::now();
 
     if (outer_artifacts.t_packed_table.length() > 0) {
       anti_opt_checksum ^=
@@ -132,7 +126,8 @@ void PrintHelp() {
       << "                             [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
       << "Notes:\n"
       << "  Headline packing time measures t -> t' packing plus Boolean-table to monomial conversion.\n"
-      << "  Headline commit time measures the full FrobeniusPCSCommit path.\n";
+      << "  Headline commit time measures backend commitment on prebuilt packed monomial data.\n"
+      << "  CLI parsing, setup, and any correctness cross-checking are excluded from timing.\n";
 }
 
 }  // namespace

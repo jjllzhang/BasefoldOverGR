@@ -183,12 +183,32 @@ bool FrobeniusPCSVerifyEval(const FrobeniusPCSParams &params,
                             const FieldElement &claimed_s, long num_queries,
                             const FrobeniusPCSEvalProof &proof);
 
+// Unchecked verifier variant intended for benchmarking / hot paths with
+// trusted params.
+//
+// Differences vs FrobeniusPCSVerifyEval:
+// - Does NOT validate params or basis data.
+bool FrobeniusPCSVerifyEvalUnchecked(
+    const FrobeniusPCSParams &params, const MerkleRoot &commitment,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const FrobeniusPCSEvalProof &proof);
+
 bool FrobeniusPCSVerifyOuterEval(const FrobeniusPCSParams &params,
                                  const MerkleRoot &commitment,
                                  const std::vector<FieldElement> &z,
                                  const FieldElement &claimed_s,
                                  long num_queries,
                                  const FrobeniusPCSOuterEvalProof &proof);
+
+// Unchecked verifier variant intended for benchmarking / hot paths with
+// trusted params.
+//
+// Differences vs FrobeniusPCSVerifyOuterEval:
+// - Does NOT validate params or basis data.
+bool FrobeniusPCSVerifyOuterEvalUnchecked(
+    const FrobeniusPCSParams &params, const MerkleRoot &commitment,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const FrobeniusPCSOuterEvalProof &proof);
 
 struct FrobeniusPCSCommittedWitness {
   MerkleRoot commitment;
@@ -288,8 +308,8 @@ class FrobeniusPCSVerifier {
               const std::vector<FieldElement> &z,
               const FieldElement &claimed_s, long num_queries,
               const FrobeniusPCSEvalProof &proof) const {
-    return FrobeniusPCSVerifyEval(params_, commitment, z, claimed_s,
-                                  num_queries, proof);
+    return FrobeniusPCSVerifyEvalUnchecked(params_, commitment, z, claimed_s,
+                                           num_queries, proof);
   }
 
   const FrobeniusPCSParams &params() const { return params_; }
@@ -312,8 +332,9 @@ class FrobeniusPCSOuterVerifier {
               const std::vector<FieldElement> &z,
               const FieldElement &claimed_s, long num_queries,
               const FrobeniusPCSOuterEvalProof &proof) const {
-    return FrobeniusPCSVerifyOuterEval(params_, commitment, z, claimed_s,
-                                       num_queries, proof);
+    return FrobeniusPCSVerifyOuterEvalUnchecked(params_, commitment, z,
+                                                claimed_s, num_queries,
+                                                proof);
   }
 
   const FrobeniusPCSParams &params() const { return params_; }
