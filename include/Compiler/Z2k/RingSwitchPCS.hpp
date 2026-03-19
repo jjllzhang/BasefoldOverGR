@@ -2,6 +2,7 @@
 #define BASEFOLD_Z2K_RING_SWITCH_PCS_HPP_
 
 #include <NTL/ZZ.h>
+#include <NTL/ZZ_p.h>
 #include <NTL/ZZ_pE.h>
 #include <NTL/ZZ_pX.h>
 #include <NTL/vec_ZZ_pE.h>
@@ -35,6 +36,19 @@ struct RingSwitchPCSSetupInput {
   Z2kPCSBackendHandle backend;
 };
 
+struct RingSwitchPCSPrecomputedTables {
+  bool alpha_is_polynomial_basis = false;
+  bool beta_is_polynomial_basis = false;
+  // recover_rows[u][power] = alpha_u coordinate of x^power.
+  std::vector<std::vector<NTL::ZZ_p>> alpha_recover_from_power_rows;
+  // recover_rows[v][power] = beta_v coordinate of x^power.
+  std::vector<std::vector<NTL::ZZ_p>> beta_recover_from_power_rows;
+  // compose_rows[power][u] = x^power coefficient of alpha_u.
+  std::vector<std::vector<NTL::ZZ_p>> alpha_compose_to_power_rows;
+  // compose_rows[power][v] = x^power coefficient of beta_v.
+  std::vector<std::vector<NTL::ZZ_p>> beta_compose_to_power_rows;
+};
+
 struct RingSwitchPCSParams {
   long ell = 0;
   long kappa = 0;
@@ -44,6 +58,7 @@ struct RingSwitchPCSParams {
   // alpha and beta are independent basis objects in the paper semantics.
   GaloisRingBasisData alpha_basis;
   GaloisRingBasisData beta_basis;
+  RingSwitchPCSPrecomputedTables precomputed;
   Z2kPCSBackendHandle backend;
 };
 

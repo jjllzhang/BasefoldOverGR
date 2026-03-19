@@ -1365,6 +1365,47 @@ void TestRingSwitchSetup_Succeeds() {
   CHECK_EQ(basefold::Z2kPCSBackendPointDimension(params.backend), 2L);
 }
 
+void TestRingSwitchSetup_DefaultPolynomialBasisBuildsFastPathPrecompute() {
+  testutil::PrintInfo("Ring-switch setup: default polynomial bases mark the polynomial fast path and identity transforms");
+
+  const ZZ p = to_ZZ(2);
+  const ZZ modulus = to_ZZ(4);
+  ZZ_pPush mod_push(modulus);
+
+  ZZ_pX F;
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  ZZ_pEPush ext_push(F);
+
+  ZZ_pX xpoly;
+  SetCoeff(xpoly, 1, 1);
+  ZZ_pE alpha;
+  conv(alpha, xpoly);
+
+  const basefold::RingSwitchPCSParams params =
+      BuildRingSwitchParamsGR42(/*ell=*/3, /*kappa=*/1, modulus, F, p, alpha);
+
+  CHECK(params.precomputed.alpha_is_polynomial_basis);
+  CHECK(params.precomputed.beta_is_polynomial_basis);
+  CHECK_EQ(static_cast<long>(params.precomputed.alpha_recover_from_power_rows.size()),
+           2L);
+  CHECK_EQ(static_cast<long>(params.precomputed.beta_recover_from_power_rows.size()),
+           2L);
+  CHECK_EQ(static_cast<long>(params.precomputed.alpha_compose_to_power_rows.size()),
+           2L);
+  CHECK_EQ(static_cast<long>(params.precomputed.beta_compose_to_power_rows.size()),
+           2L);
+  CHECK_EQ(params.precomputed.alpha_recover_from_power_rows[0][0], NTL::to_ZZ_p(1));
+  CHECK_EQ(params.precomputed.alpha_recover_from_power_rows[0][1], NTL::to_ZZ_p(0));
+  CHECK_EQ(params.precomputed.alpha_recover_from_power_rows[1][0], NTL::to_ZZ_p(0));
+  CHECK_EQ(params.precomputed.alpha_recover_from_power_rows[1][1], NTL::to_ZZ_p(1));
+  CHECK_EQ(params.precomputed.beta_compose_to_power_rows[0][0], NTL::to_ZZ_p(1));
+  CHECK_EQ(params.precomputed.beta_compose_to_power_rows[0][1], NTL::to_ZZ_p(0));
+  CHECK_EQ(params.precomputed.beta_compose_to_power_rows[1][0], NTL::to_ZZ_p(0));
+  CHECK_EQ(params.precomputed.beta_compose_to_power_rows[1][1], NTL::to_ZZ_p(1));
+}
+
 void TestRingSwitchSetup_ProvidedBasisAcceptsValidNonPolynomialBases() {
   testutil::PrintInfo("Ring-switch setup: provided alpha/beta bases can be valid non-polynomial bases");
 
@@ -1392,6 +1433,35 @@ void TestRingSwitchSetup_ProvidedBasisAcceptsValidNonPolynomialBases() {
   CHECK_EQ(params.beta_basis.basis, input.provided_basis.beta_basis.basis);
   CHECK_EQ(static_cast<long>(params.alpha_basis.dual_basis.size()), 2L);
   CHECK_EQ(static_cast<long>(params.beta_basis.dual_basis.size()), 2L);
+}
+
+void TestRingSwitchSetup_ProvidedBasisBuildsGenericPrecompute() {
+  testutil::PrintInfo("Ring-switch setup: provided non-polynomial bases build generic precomputed transforms");
+
+  const ScopedRingSwitchTestContext ctx(MakeGR42ContextSpec());
+  const RingSwitchBasisCase alpha_case =
+      BuildTransformedBasisCase(/*seed=*/0, BasisTransformFamily::kUnitriangular);
+  const RingSwitchBasisCase beta_case =
+      BuildTransformedBasisCase(/*seed=*/1, BasisTransformFamily::kDense);
+  const basefold::RingSwitchPCSParams params = BuildProvidedRingSwitchParamsFromSpec(
+      /*ell=*/3, /*kappa=*/1, ctx, alpha_case, beta_case);
+
+  CHECK(!params.precomputed.alpha_is_polynomial_basis);
+  CHECK(!params.precomputed.beta_is_polynomial_basis);
+  CHECK_EQ(static_cast<long>(params.precomputed.alpha_recover_from_power_rows.size()),
+           2L);
+  CHECK_EQ(static_cast<long>(params.precomputed.beta_recover_from_power_rows.size()),
+           2L);
+  CHECK_EQ(static_cast<long>(params.precomputed.alpha_compose_to_power_rows.size()),
+           2L);
+  CHECK_EQ(static_cast<long>(params.precomputed.beta_compose_to_power_rows.size()),
+           2L);
+  CHECK_EQ(static_cast<long>(
+               params.precomputed.alpha_recover_from_power_rows[0].size()),
+           2L);
+  CHECK_EQ(static_cast<long>(
+               params.precomputed.beta_compose_to_power_rows[1].size()),
+           2L);
 }
 
 void TestRingSwitchSetup_ProvidedBasisDerivesMissingDualBases() {
@@ -3437,7 +3507,9 @@ int main() {
     RUN_TEST(TestValidateCurrentZ2kRingContext_SucceedsForGR42);
     RUN_TEST(TestValidateCurrentZ2kRingContext_RejectsReducibleMod2Polynomial);
     RUN_TEST(TestRingSwitchSetup_Succeeds);
+    RUN_TEST(TestRingSwitchSetup_DefaultPolynomialBasisBuildsFastPathPrecompute);
     RUN_TEST(TestRingSwitchSetup_ProvidedBasisAcceptsValidNonPolynomialBases);
+    RUN_TEST(TestRingSwitchSetup_ProvidedBasisBuildsGenericPrecompute);
     RUN_TEST(TestRingSwitchSetup_ProvidedBasisDerivesMissingDualBases);
     RUN_TEST(TestRingSwitchWP3Helpers_BuildReusableContextAndBasisCases);
     RUN_TEST(TestRingSwitchSetup_RejectsMismatchedBaseModulus);

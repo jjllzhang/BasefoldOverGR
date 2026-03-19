@@ -128,7 +128,7 @@ Acceptance criteria:
 
 ### Phase 2: Ring-Switch Core Precompute and Hot-Path Simplification
 
-Status: `[ ]`
+Status: `[x]`
 
 Primary targets:
 
@@ -139,21 +139,21 @@ Primary targets:
 
 Tasks:
 
-- `[ ]` Add a `RingSwitchPCS` setup-owned precomputed block, analogous in spirit to Frobenius precomputed tables.
-- `[ ]` Precompute basis metadata that allows fast-path selection at setup time.
-- `[ ]` Precompute the reusable linear data needed for:
+- `[x]` Add a `RingSwitchPCS` setup-owned precomputed block, analogous in spirit to Frobenius precomputed tables.
+- `[x]` Precompute basis metadata that allows fast-path selection at setup time.
+- `[x]` Precompute the reusable linear data needed for:
   - recovering `s_by_u` into partial evaluations
   - packing base-ring coefficients into packed GR evaluations
   - decomposing equality-table values into alpha-basis coordinates
-- `[ ]` Replace the current generic `RecoverPartialEvaluationsFromSByU` implementation with:
+- `[x]` Replace the current generic `RecoverPartialEvaluationsFromSByU` implementation with:
   - a polynomial-basis fast path for the default basis case
   - a generic precomputed transform path for provided-basis cases
-- `[ ]` Replace generic checked packing in `PackZ2kCoeffsToGREvals` with a hot-path version that uses precomputed data and does not revalidate params per call.
-- `[ ]` Rewrite `BuildRingSwitchComponentTensorInternal` so it computes `EqualityTableFromPoint(r_suffix)` once and then reuses precomputed decomposition data instead of:
+- `[x]` Replace generic checked packing in `PackZ2kCoeffsToGREvals` with a hot-path version that uses precomputed data and does not revalidate params per call.
+- `[x]` Rewrite `BuildRingSwitchComponentTensorInternal` so it computes `EqualityTableFromPoint(r_suffix)` once and then reuses precomputed decomposition data instead of:
   - rebuilding a Boolean point per `w`
   - calling `EqPolynomial` per `w`
   - doing a fresh generic basis recovery per `w`
-- `[ ]` Keep checked APIs intact by layering the fast path under setup-owned trusted params and unchecked entry points.
+- `[x]` Keep checked APIs intact by layering the fast path under setup-owned trusted params and unchecked entry points.
 
 Acceptance criteria:
 
@@ -349,8 +349,19 @@ Fill this section as work lands.
 ### Phase 2
 
 - Before:
+- `RingSwitchPCSParams` carried only basis data plus backend handle, so every hot path rebuilt the same linear basis logic from scratch.
+- `RecoverPartialEvaluationsFromSByU` used generic beta-basis recovery plus alpha-basis recomposition on every call.
+- `PackZ2kCoeffsToGREvals` composed each packed element through the generic basis helper and revalidated params again when called under already-validated commit paths.
+- `BuildRingSwitchComponentTensorInternal` rebuilt one Boolean point per `w`, evaluated `EqPolynomial` point-by-point, and recovered alpha coordinates fresh for each suffix point.
 - After:
+- `RingSwitchPCSSetup` now builds setup-owned precomputed alpha/beta linear maps together with fast-path flags for the active polynomial basis.
+- `RecoverPartialEvaluationsFromSByU` now runs as a direct power-coefficient transpose in the default polynomial case, and otherwise uses precomputed beta-recover plus alpha-compose matrices instead of generic basis helpers.
+- `PackZ2kCoeffsToGREvals` now uses precomputed beta compose rows, with `BuildPackedCommitInputs` calling an internal hot path that skips redundant params validation.
+- `BuildRingSwitchComponentTensorInternal` now computes `EqualityTableFromPoint(r_suffix)` once and decomposes each suffix equality value with the precomputed alpha recovery rows.
 - Notes:
+- Validated with `test_z2k_ring_switch_pcs`, `test_z2k_ring_switch_bench_cli`, and fresh builds of `bench_z2k_ring_switch_commit` / `bench_z2k_ring_switch_eval`.
+- Added setup-level regression checks that default polynomial bases mark the fast path and provided non-polynomial bases still build square generic precompute matrices.
+- Small smoke reruns on the default GR(4,2) context still produce stable bench output, for example `bench_z2k_ring_switch_commit --ell 8 --kappa 1` reports `packing mean 0.103 ms`, and `bench_z2k_ring_switch_eval --ell 8 --kappa 1 --queries 1` reports `outer prover mean 0.667 ms`, `outer verifier mean 0.288 ms`.
 
 ### Phase 3
 

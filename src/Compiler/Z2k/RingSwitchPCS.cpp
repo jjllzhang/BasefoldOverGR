@@ -27,6 +27,11 @@ using NTL::ZZ_pBak;
 using NTL::vec_ZZ_pE;
 
 namespace basefold {
+
+vec_ZZ_pE PackZ2kCoeffsToGREvalsWithValidParamsOrThrow(
+    const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table,
+    const char *func_name);
+
 namespace {
 
 long Pow2LongOrThrow(long exponent, const char *what) {
@@ -116,16 +121,6 @@ std::vector<ZZ_p> RecoverBasisCoordsUnchecked(const GaloisRingBasisData &basis,
   return coords;
 }
 
-ZZ_pE ComposeFromBasisCoordsUnchecked(const std::vector<ZZ_pE> &basis,
-                                      const std::vector<ZZ_p> &coords) {
-  ZZ_pE out = ZZ_pE(0);
-  for (long i = 0; i < static_cast<long>(basis.size()); ++i) {
-    out += BaseRingConstant(coords[static_cast<std::size_t>(i)]) *
-           basis[static_cast<std::size_t>(i)];
-  }
-  return out;
-}
-
 std::vector<ZZ_pE> BuildActivePolynomialBasisOrThrow(const char *func_name) {
   if (!ZZ_pE::initialized()) {
     LogicError((std::string(func_name) +
@@ -147,6 +142,11 @@ GaloisRingBasisData BuildActivePolynomialBasisDataOrThrow(
   basis_data.basis = BuildActivePolynomialBasisOrThrow(func_name);
   basis_data.dual_basis = ::BuildDualBasisOrThrow(basis_data.basis);
   return basis_data;
+}
+
+bool BasisDataEquals(const GaloisRingBasisData &lhs,
+                     const GaloisRingBasisData &rhs) {
+  return lhs.basis == rhs.basis && lhs.dual_basis == rhs.dual_basis;
 }
 
 long BasisDimensionOrThrow(const GaloisRingBasisData &basis, const char *label,
@@ -226,6 +226,29 @@ vec_ZZ_pE DecomposeGRElementToBaseCoeffsPolynomialBasisUnchecked(
   return coeffs;
 }
 
+std::vector<ZZ_p> ExtractPowerBasisCoordsUnchecked(long basis_dimension,
+                                                   const ZZ_pE &element) {
+  std::vector<ZZ_p> coeffs(static_cast<std::size_t>(basis_dimension), ZZ_p(0));
+  const ZZ_pX poly = NTL::rep(element);
+  const long degree = std::min<long>(NTL::deg(poly), basis_dimension - 1);
+  for (long i = 0; i <= degree; ++i) {
+    coeffs[static_cast<std::size_t>(i)] = NTL::coeff(poly, i);
+  }
+  return coeffs;
+}
+
+ZZ_pE ComposeFromPowerBasisCoordsUnchecked(const std::vector<ZZ_p> &coords) {
+  ZZ_pX poly;
+  for (long i = 0; i < static_cast<long>(coords.size()); ++i) {
+    if (coords[static_cast<std::size_t>(i)] != 0) {
+      NTL::SetCoeff(poly, i, coords[static_cast<std::size_t>(i)]);
+    }
+  }
+  ZZ_pE out;
+  NTL::conv(out, poly);
+  return out;
+}
+
 vec_ZZ_pE LiftBaseRingCoordsToFieldVector(const std::vector<ZZ_p> &coords) {
   vec_ZZ_pE out;
   out.SetLength(static_cast<long>(coords.size()));
@@ -235,10 +258,128 @@ vec_ZZ_pE LiftBaseRingCoordsToFieldVector(const std::vector<ZZ_p> &coords) {
   return out;
 }
 
+std::vector<std::vector<ZZ_p>> BuildRecoverFromPowerRows(
+    const GaloisRingBasisData &basis) {
+  const long basis_dimension = static_cast<long>(basis.basis.size());
+  std::vector<std::vector<ZZ_p>> rows(
+      static_cast<std::size_t>(basis_dimension),
+      std::vector<ZZ_p>(static_cast<std::size_t>(basis_dimension), ZZ_p(0)));
+  const std::vector<ZZ_pE> power_basis = BuildPolynomialBasis(basis_dimension);
+  for (long power = 0; power < basis_dimension; ++power) {
+    const std::vector<ZZ_p> coords =
+        RecoverBasisCoordsUnchecked(basis, power_basis[static_cast<std::size_t>(power)]);
+    for (long i = 0; i < basis_dimension; ++i) {
+      rows[static_cast<std::size_t>(i)][static_cast<std::size_t>(power)] =
+          coords[static_cast<std::size_t>(i)];
+    }
+  }
+  return rows;
+}
+
+std::vector<std::vector<ZZ_p>> BuildComposeToPowerRows(
+    const std::vector<ZZ_pE> &basis) {
+  const long basis_dimension = static_cast<long>(basis.size());
+  std::vector<std::vector<ZZ_p>> rows(
+      static_cast<std::size_t>(basis_dimension),
+      std::vector<ZZ_p>(static_cast<std::size_t>(basis_dimension), ZZ_p(0)));
+  for (long power = 0; power < basis_dimension; ++power) {
+    for (long i = 0; i < basis_dimension; ++i) {
+      rows[static_cast<std::size_t>(power)][static_cast<std::size_t>(i)] =
+          NTL::coeff(NTL::rep(basis[static_cast<std::size_t>(i)]), power);
+    }
+  }
+  return rows;
+}
+
+RingSwitchPCSPrecomputedTables BuildRingSwitchPCSPrecomputedTables(
+    const GaloisRingBasisData &alpha_basis,
+    const GaloisRingBasisData &beta_basis,
+    const GaloisRingBasisData &polynomial_basis) {
+  RingSwitchPCSPrecomputedTables out;
+  out.alpha_is_polynomial_basis = BasisDataEquals(alpha_basis, polynomial_basis);
+  out.beta_is_polynomial_basis = BasisDataEquals(beta_basis, polynomial_basis);
+  out.alpha_recover_from_power_rows = BuildRecoverFromPowerRows(alpha_basis);
+  out.beta_recover_from_power_rows = BuildRecoverFromPowerRows(beta_basis);
+  out.alpha_compose_to_power_rows = BuildComposeToPowerRows(alpha_basis.basis);
+  out.beta_compose_to_power_rows = BuildComposeToPowerRows(beta_basis.basis);
+  return out;
+}
+
+void ValidatePrecomputedTablesOrThrow(const RingSwitchPCSParams &params) {
+  const long alpha_dimension = static_cast<long>(params.alpha_basis.basis.size());
+  const long beta_dimension = static_cast<long>(params.beta_basis.basis.size());
+  if (alpha_dimension <= 0 || beta_dimension <= 0 ||
+      alpha_dimension != beta_dimension) {
+    LogicError(
+        "ValidatePrecomputedTablesOrThrow: basis dimensions must be positive and equal");
+  }
+
+  const auto validate_square_rows = [&](const std::vector<std::vector<ZZ_p>> &rows,
+                                        long expected_dimension,
+                                        const char *label) {
+    if (static_cast<long>(rows.size()) != expected_dimension) {
+      LogicError((std::string("ValidatePrecomputedTablesOrThrow: ") + label +
+                  " row count mismatch")
+                     .c_str());
+    }
+    for (long row = 0; row < expected_dimension; ++row) {
+      if (static_cast<long>(rows[static_cast<std::size_t>(row)].size()) !=
+          expected_dimension) {
+        LogicError((std::string("ValidatePrecomputedTablesOrThrow: ") + label +
+                    " row width mismatch")
+                       .c_str());
+      }
+    }
+  };
+
+  validate_square_rows(params.precomputed.alpha_recover_from_power_rows,
+                       alpha_dimension, "alpha_recover_from_power_rows");
+  validate_square_rows(params.precomputed.beta_recover_from_power_rows,
+                       beta_dimension, "beta_recover_from_power_rows");
+  validate_square_rows(params.precomputed.alpha_compose_to_power_rows,
+                       alpha_dimension, "alpha_compose_to_power_rows");
+  validate_square_rows(params.precomputed.beta_compose_to_power_rows,
+                       beta_dimension, "beta_compose_to_power_rows");
+}
+
 struct PackedCommitInputs {
   vec_ZZ_pE t_packed_table;
   vec_ZZ_pE t_packed_monomial_coeffs;
 };
+
+std::vector<ZZ_p> ApplyRecoverRowsUnchecked(
+    const std::vector<std::vector<ZZ_p>> &recover_rows,
+    const std::vector<ZZ_p> &power_coords) {
+  const long basis_dimension = static_cast<long>(recover_rows.size());
+  std::vector<ZZ_p> out(static_cast<std::size_t>(basis_dimension), ZZ_p(0));
+  for (long row = 0; row < basis_dimension; ++row) {
+    ZZ_p acc(0);
+    for (long power = 0; power < basis_dimension; ++power) {
+      acc += recover_rows[static_cast<std::size_t>(row)]
+                         [static_cast<std::size_t>(power)] *
+             power_coords[static_cast<std::size_t>(power)];
+    }
+    out[static_cast<std::size_t>(row)] = acc;
+  }
+  return out;
+}
+
+std::vector<ZZ_p> ComposePowerCoordsFromBasisCoordsUnchecked(
+    const std::vector<std::vector<ZZ_p>> &compose_rows,
+    const std::vector<ZZ_p> &basis_coords) {
+  const long basis_dimension = static_cast<long>(compose_rows.size());
+  std::vector<ZZ_p> out(static_cast<std::size_t>(basis_dimension), ZZ_p(0));
+  for (long power = 0; power < basis_dimension; ++power) {
+    ZZ_p acc(0);
+    for (long i = 0; i < basis_dimension; ++i) {
+      acc += compose_rows[static_cast<std::size_t>(power)]
+                         [static_cast<std::size_t>(i)] *
+             basis_coords[static_cast<std::size_t>(i)];
+    }
+    out[static_cast<std::size_t>(power)] = acc;
+  }
+  return out;
+}
 
 RingSwitchComponentTensor BuildRingSwitchComponentTensorInternal(
     const RingSwitchPCSParams &params, const std::vector<ZZ_pE> &r_suffix,
@@ -270,7 +411,8 @@ void ValidateBasicIrreducibilityModTwoOrThrow(const ZZ_pX &extension_modulus,
 PackedCommitInputs BuildPackedCommitInputs(const RingSwitchPCSParams &params,
                                            const vec_ZZ_pE &t_table) {
   PackedCommitInputs out;
-  out.t_packed_table = PackZ2kCoeffsToGREvals(params, t_table);
+  out.t_packed_table = PackZ2kCoeffsToGREvalsWithValidParamsOrThrow(
+      params, t_table, "BuildPackedCommitInputs");
   out.t_packed_monomial_coeffs =
       BooleanHypercubeTableToMonomialCoeffs(out.t_packed_table);
   return out;
@@ -386,33 +528,48 @@ std::vector<FieldElement> SlicePoint(const std::vector<FieldElement> &z,
 std::vector<FieldElement> RecoverPartialEvaluationsFromSByU(
     const RingSwitchPCSParams &params,
     const std::vector<FieldElement> &s_by_u) {
-  const long basis_dimension =
-      BasisDimensionOrThrow(params.alpha_basis, "alpha_basis",
-                            "RecoverPartialEvaluationsFromSByU");
+  const long basis_dimension = static_cast<long>(
+      params.precomputed.alpha_compose_to_power_rows.size());
   if (static_cast<long>(s_by_u.size()) != basis_dimension) {
     LogicError(
         "RecoverPartialEvaluationsFromSByU: s_by_u size must equal basis dimension");
   }
 
-  std::vector<std::vector<ZZ_p>> coeff_rows(
-      static_cast<std::size_t>(basis_dimension));
+  std::vector<std::vector<ZZ_p>> partial_power_coords(
+      static_cast<std::size_t>(basis_dimension),
+      std::vector<ZZ_p>(static_cast<std::size_t>(basis_dimension), ZZ_p(0)));
   for (long u = 0; u < basis_dimension; ++u) {
-    coeff_rows[static_cast<std::size_t>(u)] =
-        RecoverBasisCoordsUnchecked(params.beta_basis,
-                                    s_by_u[static_cast<std::size_t>(u)]);
+    const std::vector<ZZ_p> s_power_coords = ExtractPowerBasisCoordsUnchecked(
+        basis_dimension, s_by_u[static_cast<std::size_t>(u)]);
+    const std::vector<ZZ_p> beta_coords =
+        params.precomputed.beta_is_polynomial_basis
+            ? s_power_coords
+            : ApplyRecoverRowsUnchecked(
+                  params.precomputed.beta_recover_from_power_rows,
+                  s_power_coords);
+    for (long v = 0; v < basis_dimension; ++v) {
+      const ZZ_p coeff = beta_coords[static_cast<std::size_t>(v)];
+      if (params.precomputed.alpha_is_polynomial_basis) {
+        partial_power_coords[static_cast<std::size_t>(v)]
+                           [static_cast<std::size_t>(u)] = coeff;
+      } else {
+        for (long power = 0; power < basis_dimension; ++power) {
+          partial_power_coords[static_cast<std::size_t>(v)]
+                             [static_cast<std::size_t>(power)] +=
+              params.precomputed.alpha_compose_to_power_rows
+                               [static_cast<std::size_t>(power)]
+                               [static_cast<std::size_t>(u)] *
+              coeff;
+        }
+      }
+    }
   }
 
   std::vector<FieldElement> partials(static_cast<std::size_t>(basis_dimension),
                                      FieldElement(0));
   for (long v = 0; v < basis_dimension; ++v) {
-    std::vector<ZZ_p> alpha_coords(static_cast<std::size_t>(basis_dimension),
-                                   ZZ_p(0));
-    for (long u = 0; u < basis_dimension; ++u) {
-      alpha_coords[static_cast<std::size_t>(u)] =
-          coeff_rows[static_cast<std::size_t>(u)][static_cast<std::size_t>(v)];
-    }
-    partials[static_cast<std::size_t>(v)] = ComposeFromBasisCoordsUnchecked(
-        params.alpha_basis.basis, alpha_coords);
+    partials[static_cast<std::size_t>(v)] = ComposeFromPowerBasisCoordsUnchecked(
+        partial_power_coords[static_cast<std::size_t>(v)]);
   }
   return partials;
 }
@@ -948,6 +1105,7 @@ void ValidateRingSwitchPCSParamsOrThrow(const RingSwitchPCSParams &params) {
     LogicError(
         "ValidateRingSwitchPCSParamsOrThrow: backend point dimension must equal ell-kappa");
   }
+  ValidatePrecomputedTablesOrThrow(params);
 }
 
 RingSwitchPCSParams RingSwitchPCSSetup(const RingSwitchPCSSetupInput &input) {
@@ -958,6 +1116,8 @@ RingSwitchPCSParams RingSwitchPCSSetup(const RingSwitchPCSSetupInput &input) {
   params.ell_prime = input.ell - input.kappa;
   params.base_modulus = input.base_modulus;
   params.extension_modulus = input.extension_modulus;
+  const GaloisRingBasisData polynomial_basis =
+      BuildActivePolynomialBasisDataOrThrow(func_name);
   if (input.use_provided_basis) {
     if (!input.provided_basis.has_alpha_basis ||
         !input.provided_basis.has_beta_basis) {
@@ -971,9 +1131,11 @@ RingSwitchPCSParams RingSwitchPCSSetup(const RingSwitchPCSSetupInput &input) {
         input.provided_basis.beta_basis, "provided_basis.beta_basis",
         func_name);
   } else {
-    params.alpha_basis = BuildActivePolynomialBasisDataOrThrow(func_name);
-    params.beta_basis = BuildActivePolynomialBasisDataOrThrow(func_name);
+    params.alpha_basis = polynomial_basis;
+    params.beta_basis = polynomial_basis;
   }
+  params.precomputed = BuildRingSwitchPCSPrecomputedTables(
+      params.alpha_basis, params.beta_basis, polynomial_basis);
   params.backend = input.backend;
   ValidateRingSwitchPCSParamsOrThrow(params);
   return params;
@@ -1000,39 +1162,50 @@ vec_ZZ_pE BooleanHypercubeTableToMonomialCoeffs(const vec_ZZ_pE &table_values) {
   return coeffs;
 }
 
-vec_ZZ_pE PackZ2kCoeffsToGREvals(const RingSwitchPCSParams &params,
-                                 const vec_ZZ_pE &t_table) {
-  ValidateRingSwitchPCSParamsOrThrow(params);
+vec_ZZ_pE PackZ2kCoeffsToGREvalsWithValidParamsOrThrow(
+    const RingSwitchPCSParams &params, const vec_ZZ_pE &t_table,
+    const char *func_name) {
   const long expected_length = Pow2LongOrThrow(
-      params.ell, "PackZ2kCoeffsToGREvals: ell is too large for long");
+      params.ell, (std::string(func_name) + ": ell is too large for long").c_str());
   if (t_table.length() != expected_length) {
-    LogicError("PackZ2kCoeffsToGREvals: t_table length must equal 2^ell");
+    LogicError((std::string(func_name) + ": t_table length must equal 2^ell")
+                   .c_str());
   }
-  ValidateBaseRingVectorOrThrow(t_table, "t_table",
-                                "PackZ2kCoeffsToGREvals");
+  ValidateBaseRingVectorOrThrow(t_table, "t_table", func_name);
 
-  const long basis_dimension =
-      BasisDimensionOrThrow(params.beta_basis, "beta_basis",
-                            "PackZ2kCoeffsToGREvals");
+  const long basis_dimension = static_cast<long>(
+      params.precomputed.beta_compose_to_power_rows.size());
   const long packed_length = Pow2LongOrThrow(
       params.ell_prime,
-      "PackZ2kCoeffsToGREvals: ell_prime is too large for long");
+      (std::string(func_name) + ": ell_prime is too large for long").c_str());
   vec_ZZ_pE packed;
   packed.SetLength(packed_length);
+  std::vector<ZZ_p> beta_coords(static_cast<std::size_t>(basis_dimension),
+                                ZZ_p(0));
 
   for (long w = 0; w < packed_length; ++w) {
-    std::vector<ZZ_p> beta_coords(static_cast<std::size_t>(basis_dimension),
-                                  ZZ_p(0));
     for (long v = 0; v < basis_dimension; ++v) {
       const long coeff_index = v + w * basis_dimension;
       beta_coords[static_cast<std::size_t>(v)] =
           NTL::coeff(NTL::rep(t_table[coeff_index]), 0);
     }
-    packed[w] = ComposeFromBasisCoordsOrThrow(
-        params.beta_basis.basis, beta_coords, "PackZ2kCoeffsToGREvals");
+    if (params.precomputed.beta_is_polynomial_basis) {
+      packed[w] = ComposeFromPowerBasisCoordsUnchecked(beta_coords);
+    } else {
+      packed[w] = ComposeFromPowerBasisCoordsUnchecked(
+          ComposePowerCoordsFromBasisCoordsUnchecked(
+              params.precomputed.beta_compose_to_power_rows, beta_coords));
+    }
   }
 
   return packed;
+}
+
+vec_ZZ_pE PackZ2kCoeffsToGREvals(const RingSwitchPCSParams &params,
+                                 const vec_ZZ_pE &t_table) {
+  ValidateRingSwitchPCSParamsOrThrow(params);
+  return PackZ2kCoeffsToGREvalsWithValidParamsOrThrow(
+      params, t_table, "PackZ2kCoeffsToGREvals");
 }
 
 MerkleRoot RingSwitchPCSCommit(const RingSwitchPCSParams &params,
@@ -1258,16 +1431,25 @@ RingSwitchComponentTensor BuildRingSwitchComponentTensorInternal(
     tensor.r_table.SetLength(total_coeffs);
   }
 
+  const vec_ZZ_pE eq_suffix_table = EqualityTableFromPoint(r_suffix);
+  if (eq_suffix_table.length() != num_w) {
+    LogicError(
+        "BuildRingSwitchComponentTensor: equality table length mismatch");
+  }
+
   for (long w = 0; w < num_w; ++w) {
-    const std::vector<ZZ_pE> bool_point =
-        BooleanPointFromIndex(w, params.ell_prime);
-    const ZZ_pE eq_at_w = EqPolynomial(r_suffix, bool_point);
-    const std::vector<ZZ_p> coeffs =
-        RecoverBasisCoordsUnchecked(params.alpha_basis, eq_at_w);
+    const std::vector<ZZ_p> eq_power_coords = ExtractPowerBasisCoordsUnchecked(
+        basis_dimension, eq_suffix_table[w]);
+    const std::vector<ZZ_p> alpha_coords =
+        params.precomputed.alpha_is_polynomial_basis
+            ? eq_power_coords
+            : ApplyRecoverRowsUnchecked(
+                  params.precomputed.alpha_recover_from_power_rows,
+                  eq_power_coords);
     for (long u = 0; u < basis_dimension; ++u) {
       const long row_major_index = u * num_w + w;
       const ZZ_pE lifted_coeff =
-          BaseRingConstant(coeffs[static_cast<std::size_t>(u)]);
+          BaseRingConstant(alpha_coords[static_cast<std::size_t>(u)]);
       tensor.a_by_u_then_w[row_major_index] = lifted_coeff;
       if (materialize_r_evaluation_caches) {
         const long flat_index = u + w * basis_dimension;
