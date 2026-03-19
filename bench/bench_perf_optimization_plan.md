@@ -186,7 +186,7 @@ Acceptance criteria:
 
 ### Phase 4: BaseFold Bench Hygiene
 
-Status: `[ ]`
+Status: `[x]`
 
 Primary targets:
 
@@ -195,9 +195,9 @@ Primary targets:
 
 Tasks:
 
-- `[ ]` Audit the two BaseFold benchmark drivers and strip benchmark-local correctness / validation code that is not needed for the measurement contract.
-- `[ ]` Keep current semantics that `bench_basefold_pcs_eval` excludes top encode+commit from prover timing.
-- `[ ]` Do not modify BaseFold PCS core unless the audit reveals benchmark-visible checked-wrapper overhead that materially affects the published timing.
+- `[x]` Audit the two BaseFold benchmark drivers and strip benchmark-local correctness / validation code that is not needed for the measurement contract.
+- `[x]` Keep current semantics that `bench_basefold_pcs_eval` excludes top encode+commit from prover timing.
+- `[x]` Do not modify BaseFold PCS core unless the audit reveals benchmark-visible checked-wrapper overhead that materially affects the published timing.
 
 Acceptance criteria:
 
@@ -381,8 +381,14 @@ Fill this section as work lands.
 ### Phase 4
 
 - Before:
+- After Phase 0 and Phase 1, the BaseFold benchmarks were already close to the target contract: `bench_basefold_pcs_commit` timed only unchecked encode + top Merkle build, and `bench_basefold_pcs_eval` started from one prebuilt unchecked committed top oracle per benchmark run.
+- The remaining checks in the two drivers were limited to CLI/setup sanity (argument parsing, monic extension modulus, overflow guards) rather than timed-path correctness cross-checks.
 - After:
+- Audit completed with no additional source changes required in the BaseFold bench drivers.
+- The repo keeps BaseFold as the measurement baseline: `bench_basefold_pcs_eval` still excludes top encode+commit from prover timing, and no new unchecked verifier-only API or BaseFold core change was introduced just to force symmetry with the compiler benches.
 - Notes:
+- This phase intentionally stopped at audit because further edits would have been cosmetic or would have widened scope into BaseFold core API design.
+- Validation for the audit is deferred to the final end-to-end sweep below; there was no benchmark-driver behavior change to recompile in isolation here.
 
 ## Out of Scope
 
