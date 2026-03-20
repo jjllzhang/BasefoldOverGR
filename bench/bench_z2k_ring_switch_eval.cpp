@@ -52,26 +52,31 @@ basefold::RingSwitchPCSOuterEvalProof ExtractOuterProof(
   return outer_proof;
 }
 
-bool MeasureStandaloneBackendVerify(const basefold::RingSwitchPCSParams &params,
-                                    const basefold::MerkleRoot &commitment,
-                                    const std::vector<ZZ_pE> &z,
-                                    const ZZ_pE &claimed_s, long num_queries,
-                                    const basefold::RingSwitchPCSEvalProof &proof,
-                                    double &backend_ms_out) {
+bool MeasureStandaloneVerifySplit(const basefold::RingSwitchPCSParams &params,
+                                  const basefold::MerkleRoot &commitment,
+                                  const std::vector<ZZ_pE> &z,
+                                  const ZZ_pE &claimed_s, long num_queries,
+                                  const basefold::RingSwitchPCSEvalProof &proof,
+                                  double &outer_ms_out,
+                                  double &backend_ms_out) {
   std::vector<ZZ_pE> backend_eval_point;
+  const auto t0 = std::chrono::steady_clock::now();
   if (!basefold::RingSwitchPCSRecoverBackendEvaluationPointUnchecked(
-          params, commitment, z, claimed_s, num_queries, ExtractOuterProof(proof),
-          backend_eval_point)) {
+          params, commitment, z, claimed_s, num_queries,
+          ExtractOuterProof(proof), backend_eval_point)) {
+    outer_ms_out = MsSince(t0, std::chrono::steady_clock::now());
     backend_ms_out = 0.0;
     return false;
   }
+  const auto t1 = std::chrono::steady_clock::now();
+  outer_ms_out = MsSince(t0, t1);
 
-  const auto t0 = std::chrono::steady_clock::now();
+  const auto t2 = std::chrono::steady_clock::now();
   const bool ok = basefold::Z2kPCSBackendVerifyEvalUnchecked(
       params.backend, commitment, backend_eval_point, proof.t_star, num_queries,
       proof.backend_proof);
-  const auto t1 = std::chrono::steady_clock::now();
-  backend_ms_out = MsSince(t0, t1);
+  const auto t3 = std::chrono::steady_clock::now();
+  backend_ms_out = MsSince(t2, t3);
   return ok;
 }
 
@@ -172,18 +177,11 @@ BenchResult RunEvalBenchmark(const basefold::RingSwitchPCSParams &params,
       verify_total = MsSince(t2, t3);
       verify_backend = basefold::NsToMs(verifier_prof.z2k_backend_verify_ns);
     } else {
-      const auto t2 = std::chrono::steady_clock::now();
-      ok = basefold::RingSwitchPCSVerifyEvalUnchecked(
-          params, commit_artifacts.commitment, z, claimed_s, num_queries,
-          proof);
-      const auto t3 = std::chrono::steady_clock::now();
-      verify_total = MsSince(t2, t3);
-      const bool backend_ok = MeasureStandaloneBackendVerify(
+      double verify_outer_split = 0.0;
+      ok = MeasureStandaloneVerifySplit(
           params, commit_artifacts.commitment, z, claimed_s, num_queries, proof,
-          verify_backend);
-      if (ok && !backend_ok) {
-        LogicError("RunEvalBenchmark: standalone backend verify failed after full verify succeeded");
-      }
+          verify_outer_split, verify_backend);
+      verify_total = verify_outer_split + verify_backend;
     }
 
     const double prove_total = MsSince(t0, t1);
@@ -307,7 +305,7 @@ void PrintHelp() {
       << "  This bench measures one full compiler eval run and reports commit split as outer commit + backend commit.\n"
       << "  Timed prove defaults to the unchecked prover hot path; pass --checked to include prover-side input and honest-witness self-checks.\n"
       << "  Timed verify defaults to the unchecked verifier hot path with trusted params.\n"
-      << "  By default, backend verifier mean is measured by a separate unchecked backend-only verify replay without ProfileGuard.\n"
+      << "  By default, verifier split is measured as standalone outer replay plus standalone backend-only verify, both without ProfileGuard.\n"
       << "  Pass --profiled-backend-verify to recover the old subcall-timed backend verifier measurement.\n"
       << "  Outer prover/verifier times are total times with the backend prove/verify portion removed.\n"
       << "  CLI parsing, setup, deterministic witness generation, and claimed-value derivation are outside timed regions.\n"

@@ -689,9 +689,9 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
 
   out.proof.t_star = EvalMultilinearMonomialCoeffs(
       commit_artifacts.t_packed_monomial_coeffs, out.rprime_suffix);
-  const FieldElement g_star =
-      ComputeFinalGStar(lambda_by_i, suffix_orbit, out.rprime_suffix);
   if (checked_path) {
+    const FieldElement g_star =
+        ComputeFinalGStar(lambda_by_i, suffix_orbit, out.rprime_suffix);
     const FieldElement final_sumcheck_claim =
         (params.ell_prime == 0)
             ? initial_claim
