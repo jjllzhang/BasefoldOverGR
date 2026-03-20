@@ -1261,4 +1261,25 @@ bool FrobeniusPCSVerifyOuterEvalUnchecked(
                                               num_queries, proof, nullptr);
 }
 
+bool FrobeniusPCSRecoverBackendEvaluationPoint(
+    const FrobeniusPCSParams &params, const MerkleRoot &commitment,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const FrobeniusPCSOuterEvalProof &proof,
+    std::vector<FieldElement> &backend_eval_point_out) {
+  ValidateFrobeniusPCSParamsOrThrow(params);
+  return FrobeniusPCSRecoverBackendEvaluationPointUnchecked(
+      params, commitment, z, claimed_s, num_queries, proof,
+      backend_eval_point_out);
+}
+
+bool FrobeniusPCSRecoverBackendEvaluationPointUnchecked(
+    const FrobeniusPCSParams &params, const MerkleRoot &commitment,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const FrobeniusPCSOuterEvalProof &proof,
+    std::vector<FieldElement> &backend_eval_point_out) {
+  return VerifyOuterEvalAndMaybeRecoverSuffix(params, commitment, z, claimed_s,
+                                              num_queries, proof,
+                                              &backend_eval_point_out);
+}
+
 }  // namespace basefold

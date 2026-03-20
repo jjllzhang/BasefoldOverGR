@@ -1064,6 +1064,21 @@ void TestFrobeniusPCSProveEval_ProducesConsistentOuterProof() {
   CHECK(basefold::Z2kPCSBackendVerifyEvalUnchecked(
       params.backend, artifacts.commitment, trace.rprime_suffix, proof.t_star,
       /*num_queries=*/2, proof.backend_proof));
+
+  basefold::FrobeniusPCSOuterEvalProof outer_proof;
+  outer_proof.s_by_i = proof.s_by_i;
+  outer_proof.h_by_level = proof.h_by_level;
+  outer_proof.t_star = proof.t_star;
+  vector<ZZ_pE> recovered_backend_point;
+  CHECK(basefold::FrobeniusPCSRecoverBackendEvaluationPoint(
+      params, artifacts.commitment, z, claimed_s, /*num_queries=*/2,
+      outer_proof, recovered_backend_point));
+  CHECK_EQ(recovered_backend_point, trace.rprime_suffix);
+  vector<ZZ_pE> recovered_backend_point_unchecked;
+  CHECK(basefold::FrobeniusPCSRecoverBackendEvaluationPointUnchecked(
+      params, artifacts.commitment, z, claimed_s, /*num_queries=*/2,
+      outer_proof, recovered_backend_point_unchecked));
+  CHECK_EQ(recovered_backend_point_unchecked, trace.rprime_suffix);
 }
 
 void TestFrobeniusPCSProveEval_DirectAndArtifactPathsAgreeOnOuterMessages() {

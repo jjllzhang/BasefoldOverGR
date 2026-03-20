@@ -179,8 +179,8 @@ void TestFrobeniusBenchEval_HelpTextIsStable() {
   ExpectCommandSuccessContains(
       exe, {"--help"},
       {"bench_z2k_frobenius_eval", "--queries <int>", "--checked",
-       "unchecked prover hot path", "commit split as outer commit + backend commit",
-       "serializer-backed bytes"},
+       "--profiled-backend-verify", "unchecked prover hot path",
+       "commit split as outer commit + backend commit", "serializer-backed bytes"},
       "TestFrobeniusBenchEval_HelpTextIsStable");
 }
 
@@ -407,6 +407,20 @@ void TestFrobeniusBenchEval_CheckedFlagAccepted() {
       "TestFrobeniusBenchEval_CheckedFlagAccepted");
 }
 
+void TestFrobeniusBenchEval_ProfiledBackendVerifyFlagAccepted() {
+  testutil::PrintInfo(
+      "Frobenius bench CLI: eval accepts --profiled-backend-verify and still prints stable fields");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_frobenius_eval";
+  ExpectCommandSuccessContains(
+      exe,
+      {"--profiled-backend-verify", "--warmup", "0", "--reps", "1",
+       "--queries", "2", "--seed", "37"},
+      {"[frobenius eval]", "backend verify timing profiled-subcall",
+       "backend verifier mean"},
+      "TestFrobeniusBenchEval_ProfiledBackendVerifyFlagAccepted");
+}
+
 void TestFrobeniusBenchOuterProve_SmokeRunPrintsStableFieldsAndSizes() {
   testutil::PrintInfo(
       "Frobenius bench CLI: outer prove smoke run prints stable fields and sane proof sizes");
@@ -513,9 +527,10 @@ int main(int argc, char **argv) {
   RUN_TEST(TestFrobeniusBenchOuterCommit_SmokeRunPrintsStableFields);
   RUN_TEST(TestFrobeniusBenchBackendEval_SmokeRunPrintsStableFieldsAndSizes);
   RUN_TEST(TestFrobeniusBenchEval_SmokeRunPrintsStableFieldsAndSizes);
-  RUN_TEST(TestFrobeniusBenchEval_HardcodedPresetForGR2P32_64);
-  RUN_TEST(TestFrobeniusBenchEval_CheckedFlagAccepted);
-  RUN_TEST(TestFrobeniusBenchOuterProve_SmokeRunPrintsStableFieldsAndSizes);
+    RUN_TEST(TestFrobeniusBenchEval_HardcodedPresetForGR2P32_64);
+    RUN_TEST(TestFrobeniusBenchEval_CheckedFlagAccepted);
+    RUN_TEST(TestFrobeniusBenchEval_ProfiledBackendVerifyFlagAccepted);
+    RUN_TEST(TestFrobeniusBenchOuterProve_SmokeRunPrintsStableFieldsAndSizes);
   RUN_TEST(TestFrobeniusBenchOuterProve_CheckedFlagAccepted);
   RUN_TEST(TestFrobeniusBenchOuterVerify_SmokeRunPrintsStableFieldsAndSizes);
 

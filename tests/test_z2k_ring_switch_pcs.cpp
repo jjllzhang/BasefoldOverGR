@@ -2528,6 +2528,21 @@ void TestRingSwitchProveEvalFromCommitArtifacts_HonestProofIsSelfConsistent() {
   CHECK(basefold::Z2kPCSBackendVerifyEvalUnchecked(
       params.backend, artifacts.commitment, trace.rprime_suffix, proof.t_star,
       /*num_queries=*/2, proof.backend_proof));
+
+  basefold::RingSwitchPCSOuterEvalProof outer_proof;
+  outer_proof.s_by_u = proof.s_by_u;
+  outer_proof.h_by_level = proof.h_by_level;
+  outer_proof.t_star = proof.t_star;
+  std::vector<ZZ_pE> recovered_backend_point;
+  CHECK(basefold::RingSwitchPCSRecoverBackendEvaluationPoint(
+      params, artifacts.commitment, z, claimed_s, /*num_queries=*/2,
+      outer_proof, recovered_backend_point));
+  CHECK_EQ(recovered_backend_point, trace.rprime_suffix);
+  std::vector<ZZ_pE> recovered_backend_point_unchecked;
+  CHECK(basefold::RingSwitchPCSRecoverBackendEvaluationPointUnchecked(
+      params, artifacts.commitment, z, claimed_s, /*num_queries=*/2,
+      outer_proof, recovered_backend_point_unchecked));
+  CHECK_EQ(recovered_backend_point_unchecked, trace.rprime_suffix);
 }
 
 void TestRingSwitchProveEval_DirectAndArtifactPathsAgreeOnOuterMessages() {

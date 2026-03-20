@@ -1422,6 +1422,27 @@ bool RingSwitchPCSVerifyOuterEvalUnchecked(
                                               num_queries, proof, nullptr);
 }
 
+bool RingSwitchPCSRecoverBackendEvaluationPoint(
+    const RingSwitchPCSParams &params, const MerkleRoot &commitment,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const RingSwitchPCSOuterEvalProof &proof,
+    std::vector<FieldElement> &backend_eval_point_out) {
+  ValidateRingSwitchPCSParamsOrThrow(params);
+  return RingSwitchPCSRecoverBackendEvaluationPointUnchecked(
+      params, commitment, z, claimed_s, num_queries, proof,
+      backend_eval_point_out);
+}
+
+bool RingSwitchPCSRecoverBackendEvaluationPointUnchecked(
+    const RingSwitchPCSParams &params, const MerkleRoot &commitment,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const RingSwitchPCSOuterEvalProof &proof,
+    std::vector<FieldElement> &backend_eval_point_out) {
+  return VerifyOuterEvalAndMaybeRecoverSuffix(params, commitment, z, claimed_s,
+                                              num_queries, proof,
+                                              &backend_eval_point_out);
+}
+
 vec_ZZ_pE DecomposeGRElementToBaseCoeffsPolynomialBasis(
     const RingSwitchPCSParams &params, const ZZ_pE &element) {
   ValidateRingSwitchPCSParamsOrThrow(params);

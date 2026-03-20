@@ -226,6 +226,25 @@ bool FrobeniusPCSVerifyOuterEvalUnchecked(
     const std::vector<FieldElement> &z, const FieldElement &claimed_s,
     long num_queries, const FrobeniusPCSOuterEvalProof &proof);
 
+// Replays the outer verifier and recovers the backend evaluation point r'
+// used by the backend PCS verifier.
+bool FrobeniusPCSRecoverBackendEvaluationPoint(
+    const FrobeniusPCSParams &params, const MerkleRoot &commitment,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const FrobeniusPCSOuterEvalProof &proof,
+    std::vector<FieldElement> &backend_eval_point_out);
+
+// Unchecked recovery helper intended for benchmarking / hot paths with trusted
+// params.
+//
+// Differences vs FrobeniusPCSRecoverBackendEvaluationPoint:
+// - Does NOT validate params or basis data.
+bool FrobeniusPCSRecoverBackendEvaluationPointUnchecked(
+    const FrobeniusPCSParams &params, const MerkleRoot &commitment,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const FrobeniusPCSOuterEvalProof &proof,
+    std::vector<FieldElement> &backend_eval_point_out);
+
 struct FrobeniusPCSCommittedWitness {
   MerkleRoot commitment;
   NTL::vec_ZZ_pE t_table;

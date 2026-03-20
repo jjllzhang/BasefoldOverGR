@@ -45,6 +45,11 @@ using basefold_bench_z2k_frobenius_common::PrintFrobeniusBasisSummary;
 using basefold_bench_z2k_frobenius_common::Stats;
 using basefold_bench_z2k_frobenius_common::ValidateMonic;
 
+enum class BackendVerifyTimingMode {
+  kStandaloneNoProfile,
+  kProfiledSubcall,
+};
+
 struct BenchResult {
   Stats commit_outer;
   Stats commit_backend;
@@ -62,12 +67,51 @@ struct BenchResult {
   std::uint64_t anti_opt_checksum = 0;
 };
 
+const char *BackendVerifyTimingModeName(BackendVerifyTimingMode mode) {
+  return mode == BackendVerifyTimingMode::kProfiledSubcall
+             ? "profiled-subcall"
+             : "standalone-no-profile";
+}
+
+basefold::FrobeniusPCSOuterEvalProof ExtractOuterProof(
+    const basefold::FrobeniusPCSEvalProof &proof) {
+  basefold::FrobeniusPCSOuterEvalProof outer_proof;
+  outer_proof.s_by_i = proof.s_by_i;
+  outer_proof.h_by_level = proof.h_by_level;
+  outer_proof.t_star = proof.t_star;
+  return outer_proof;
+}
+
+bool MeasureStandaloneBackendVerify(const basefold::FrobeniusPCSParams &params,
+                                    const basefold::MerkleRoot &commitment,
+                                    const std::vector<ZZ_pE> &z,
+                                    const ZZ_pE &claimed_s, long num_queries,
+                                    const basefold::FrobeniusPCSEvalProof &proof,
+                                    double &backend_ms_out) {
+  std::vector<ZZ_pE> backend_eval_point;
+  if (!basefold::FrobeniusPCSRecoverBackendEvaluationPointUnchecked(
+          params, commitment, z, claimed_s, num_queries, ExtractOuterProof(proof),
+          backend_eval_point)) {
+    backend_ms_out = 0.0;
+    return false;
+  }
+
+  const auto t0 = std::chrono::steady_clock::now();
+  const bool ok = basefold::Z2kPCSBackendVerifyEvalUnchecked(
+      params.backend, commitment, backend_eval_point, proof.t_star, num_queries,
+      proof.backend_proof);
+  const auto t1 = std::chrono::steady_clock::now();
+  backend_ms_out = MsSince(t0, t1);
+  return ok;
+}
+
 BenchResult RunEvalBenchmark(const basefold::FrobeniusPCSParams &params,
                              const vec_ZZ_pE &t_table,
                              const std::vector<ZZ_pE> &z,
                              const ZZ_pE &claimed_s, long num_queries,
-                             bool use_checked_prover_path, int warmup,
-                             int reps) {
+                             bool use_checked_prover_path,
+                             BackendVerifyTimingMode backend_verify_timing_mode,
+                             int warmup, int reps) {
   if (warmup < 0) {
     NTL::LogicError("RunEvalBenchmark: warmup must be >= 0");
   }
@@ -142,15 +186,36 @@ BenchResult RunEvalBenchmark(const basefold::FrobeniusPCSParams &params,
     }
     const auto t1 = std::chrono::steady_clock::now();
 
-    const auto t2 = std::chrono::steady_clock::now();
+    double verify_total = 0.0;
+    double verify_backend = 0.0;
     bool ok = false;
-    {
-      basefold::ProfileGuard guard(&verifier_prof);
+    if (backend_verify_timing_mode ==
+        BackendVerifyTimingMode::kProfiledSubcall) {
+      const auto t2 = std::chrono::steady_clock::now();
+      {
+        basefold::ProfileGuard guard(&verifier_prof);
+        ok = basefold::FrobeniusPCSVerifyEvalUnchecked(
+            params, commit_artifacts.commitment, z, claimed_s, num_queries,
+            proof);
+      }
+      const auto t3 = std::chrono::steady_clock::now();
+      verify_total = MsSince(t2, t3);
+      verify_backend = basefold::NsToMs(verifier_prof.z2k_backend_verify_ns);
+    } else {
+      const auto t2 = std::chrono::steady_clock::now();
       ok = basefold::FrobeniusPCSVerifyEvalUnchecked(
           params, commit_artifacts.commitment, z, claimed_s, num_queries,
           proof);
+      const auto t3 = std::chrono::steady_clock::now();
+      verify_total = MsSince(t2, t3);
+      const bool backend_ok = MeasureStandaloneBackendVerify(
+          params, commit_artifacts.commitment, z, claimed_s, num_queries, proof,
+          verify_backend);
+      if (ok && !backend_ok) {
+        NTL::LogicError(
+            "RunEvalBenchmark: standalone backend verify failed after full verify succeeded");
+      }
     }
-    const auto t3 = std::chrono::steady_clock::now();
 
     const double prove_total = MsSince(t0, t1);
     const double prove_backend =
@@ -158,9 +223,6 @@ BenchResult RunEvalBenchmark(const basefold::FrobeniusPCSParams &params,
     const double commit_outer = MsSince(c0, c1);
     const double commit_backend = MsSince(c2, c3);
     const double commit_total = commit_outer + commit_backend;
-    const double verify_total = MsSince(t2, t3);
-    const double verify_backend =
-        basefold::NsToMs(verifier_prof.z2k_backend_verify_ns);
     const double prove_outer = std::max(0.0, prove_total - prove_backend);
     const double verify_outer = std::max(0.0, verify_total - verify_backend);
 
@@ -217,6 +279,7 @@ void PrintResult(long c, long ell, long kappa, long queries, int warmup,
                  int reps,
                  const basefold_bench_z2k_frobenius_common::FrobeniusBenchBasisSummary
                      &basis_summary,
+                 BackendVerifyTimingMode backend_verify_timing_mode,
                  const BenchResult &result) {
   std::cout << "\n[frobenius eval]"
             << " c=" << c << " ell=" << ell << " kappa=" << kappa
@@ -225,6 +288,8 @@ void PrintResult(long c, long ell, long kappa, long queries, int warmup,
   std::cout << std::fixed << std::setprecision(3);
   std::cout << "  hash backend " << basefold::SelectedHashBackendName() << "\n";
   PrintFrobeniusBasisSummary(std::cout, basis_summary);
+  std::cout << "  backend verify timing "
+            << BackendVerifyTimingModeName(backend_verify_timing_mode) << "\n";
   std::cout << "  outer commit mean " << result.commit_outer.mean_ms
             << " ms  (min " << result.commit_outer.min_ms << ", max "
             << result.commit_outer.max_ms << ")\n";
@@ -265,6 +330,7 @@ void PrintHelp() {
       << "Usage:\n"
       << "  bench_z2k_frobenius_eval [--c <int>] [--ell <int>] [--kappa <int>]\n"
       << "                           [--queries <int>] [--warmup <int>] [--reps <int>] [--checked]\n"
+      << "                           [--profiled-backend-verify]\n"
       << "                           [--seed <u64>] [--auto-zeta teich]\n"
       << "                           [--ring-mod <decimal-int>] [--ring-p <decimal-int>]\n"
       << "                           [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
@@ -272,7 +338,9 @@ void PrintHelp() {
       << "  This bench measures one full compiler eval run and reports commit split as outer commit + backend commit.\n"
       << "  Timed prove defaults to the unchecked prover hot path; pass --checked to include prover-side input and honest-witness self-checks.\n"
       << "  Timed verify defaults to the unchecked compiler verifier hot path with trusted params.\n"
-      << "  Outer prover/verifier times are total times with the backend prove/verify subcall removed.\n"
+      << "  By default, backend verifier mean is measured by a separate unchecked backend-only verify replay without ProfileGuard.\n"
+      << "  Pass --profiled-backend-verify to recover the old subcall-timed backend verifier measurement.\n"
+      << "  Outer prover/verifier times are total times with the backend prove/verify portion removed.\n"
       << "  CLI parsing, setup, deterministic witness generation, and claimed-value derivation are outside timed regions.\n"
       << "  Proof size reports exact serializer-backed bytes for the public FrobeniusPCSEvalProof.\n";
 }
@@ -289,6 +357,8 @@ int main(int argc, char **argv) {
   std::uint64_t seed = 0x5eed5678ULL;
   bool auto_zeta_teich = false;
   bool use_checked_prover_path = false;
+  BackendVerifyTimingMode backend_verify_timing_mode =
+      BackendVerifyTimingMode::kStandaloneNoProfile;
 
   ContextSpec spec;
   spec.scalar_modulus = to_ZZ(4);
@@ -311,6 +381,8 @@ int main(int argc, char **argv) {
       return 0;
     } else if (arg == "--checked") {
       use_checked_prover_path = true;
+    } else if (arg == "--profiled-backend-verify") {
+      backend_verify_timing_mode = BackendVerifyTimingMode::kProfiledSubcall;
     } else if (arg == "--c") {
       if (!ParseLong(need_value("--c"), c)) {
         std::cerr << "Invalid --c\n";
@@ -408,9 +480,10 @@ int main(int argc, char **argv) {
 
     const BenchResult result =
         RunEvalBenchmark(params, t_table, z, claimed_s, queries,
-                         use_checked_prover_path, warmup, reps);
+                         use_checked_prover_path, backend_verify_timing_mode,
+                         warmup, reps);
     PrintResult(c, ell, kappa, queries, warmup, reps, setup.basis_summary,
-                result);
+                backend_verify_timing_mode, result);
   } catch (const std::exception &e) {
     std::cerr << "Error: " << e.what() << "\n";
     return 1;
