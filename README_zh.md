@@ -2,7 +2,7 @@
 
 本仓库包含一组在有限域和 Galois ring 上实现 BaseFold 风格编码、IOPP/PCS，以及 `Z_{2^k}` compiler bench 的 C++ 代码。
 
-当前 bench 工作流以 [scripts/run_release_c4_lambda128.sh](/home/zjl/BasefoldOverGR/scripts/run_release_c4_lambda128.sh) 为中心。
+当前 bench 工作流以 [scripts/run_release_c4_lambda128.sh](scripts/run_release_c4_lambda128.sh) 为中心。
 
 ## 基本目录结构
 
@@ -75,6 +75,13 @@ BENCH_THREADS=1 \
 scripts/run_release_c4_lambda128.sh
 ```
 
+说明：
+
+- compiler suite 目前只支持 ring context。
+- 所选 ring context 必须满足 `deg(F) = 2^COMPILER_KAPPA`。
+- 当前 compiler bench 只构造 `K0=1` 的 backend；若 `K0 != 1`，对应行会写成 `status=unsupported_k0`。
+- `bench_z2k_ring_switch_eval` 默认把 verifier split 记为独立 outer replay 加独立 backend-only verify；传 `--profiled-backend-verify` 才会恢复旧的子调用计时方式。
+
 ### 跑 Frobenius Compiler Eval
 
 ```bash
@@ -88,13 +95,23 @@ BENCH_THREADS=1 \
 scripts/run_release_c4_lambda128.sh
 ```
 
+说明：
+
+- compiler suite 目前只支持 ring context。
+- 所选 ring context 必须满足 `deg(F) = 2^COMPILER_KAPPA`。
+- 当前 compiler bench 只构造 `K0=1` 的 backend；若 `K0 != 1`，对应行会写成 `status=unsupported_k0`。
+- `RUN_SUITE=compiler_eval_frobenius` 仍会跳过 `GR(2^2,r)` context，并写出 `status=disabled_gr2p2_context`。
+- `bench_z2k_frobenius_eval` 默认把 verifier split 记为独立 outer replay 加独立 backend-only verify；传 `--profiled-backend-verify` 才会恢复旧的子调用计时方式。
+
 ### 最常用的环境变量
 
 - `RUN_SUITE`：`basefold_release`、`compiler_eval_ring_switch`、`compiler_eval_frobenius`
 - `CONTEXTS`：`all` 或逗号分隔的 context 子集
 - `D_MIN`、`D_MAX`：`basefold_release` 下的 BaseFold 维度区间
 - `COMPILER_KAPPA`、`COMPILER_ELL_MIN`、`COMPILER_ELL_MAX`：compiler suite 必填
+- compiler suite 只接受 ring context，且要求 `deg(F) = 2^COMPILER_KAPPA`
 - `K0`：BaseFold 消息基础维度，默认 `1`
+- compiler suite 当前要求 `K0=1`
 - `BENCH_THREADS`：单个 bench 进程内部线程数
 - `OUT_DIR`：显式指定输出目录
 - `BUILD_DIR`：显式指定构建目录
@@ -102,7 +119,7 @@ scripts/run_release_c4_lambda128.sh
 - `CMD_TIMEOUT_SEC`：单条 bench 超时秒数，默认 `0` 表示不超时
 - `CONTINUE_ON_ERROR`：单点失败后是否继续，默认 `1`
 
-完整环境变量说明和支持的 context 列表见 [bench/exp_params_release_c4_lambda128.md](/home/zjl/BasefoldOverGR/bench/exp_params_release_c4_lambda128.md)。
+完整环境变量说明和支持的 context 列表见 [bench/exp_params_release_c4_lambda128.md](bench/exp_params_release_c4_lambda128.md)。
 
 ## 输出文件
 

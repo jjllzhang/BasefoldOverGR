@@ -2,7 +2,7 @@
 
 C++ implementations over finite fields and Galois rings for BaseFold-style encoding, IOPP/PCS, and `Z_{2^k}` compiler benchmarks.
 
-The benchmark workflow in this repo is centered on [scripts/run_release_c4_lambda128.sh](/home/zjl/BasefoldOverGR/scripts/run_release_c4_lambda128.sh).
+The benchmark workflow in this repo is centered on [scripts/run_release_c4_lambda128.sh](scripts/run_release_c4_lambda128.sh).
 
 ## Repository Structure
 
@@ -75,6 +75,13 @@ BENCH_THREADS=1 \
 scripts/run_release_c4_lambda128.sh
 ```
 
+Notes:
+
+- Compiler suites currently support ring contexts only.
+- The selected ring context must satisfy `deg(F) = 2^COMPILER_KAPPA`.
+- Compiler benches currently build only `K0=1` backends; `K0 != 1` rows are emitted as `status=unsupported_k0`.
+- In `bench_z2k_ring_switch_eval`, default verifier split is measured as standalone outer replay plus standalone backend-only verify; `--profiled-backend-verify` restores the old subcall-timed split.
+
 ### Run Frobenius Compiler Eval
 
 ```bash
@@ -88,13 +95,23 @@ BENCH_THREADS=1 \
 scripts/run_release_c4_lambda128.sh
 ```
 
+Notes:
+
+- Compiler suites currently support ring contexts only.
+- The selected ring context must satisfy `deg(F) = 2^COMPILER_KAPPA`.
+- Compiler benches currently build only `K0=1` backends; `K0 != 1` rows are emitted as `status=unsupported_k0`.
+- `RUN_SUITE=compiler_eval_frobenius` still skips `GR(2^2,r)` contexts and emits `status=disabled_gr2p2_context`.
+- In `bench_z2k_frobenius_eval`, default verifier split is measured as standalone outer replay plus standalone backend-only verify; `--profiled-backend-verify` restores the old subcall-timed split.
+
 ### Most Useful Environment Variables
 
 - `RUN_SUITE`: `basefold_release`, `compiler_eval_ring_switch`, `compiler_eval_frobenius`
 - `CONTEXTS`: `all` or a comma-separated subset of supported contexts
 - `D_MIN`, `D_MAX`: BaseFold sweep range, used by `basefold_release`
 - `COMPILER_KAPPA`, `COMPILER_ELL_MIN`, `COMPILER_ELL_MAX`: required by compiler suites
+- Compiler suites accept ring contexts only and require `deg(F) = 2^COMPILER_KAPPA`
 - `K0`: BaseFold message base dimension, default `1`
+- Compiler suites currently require `K0=1`
 - `BENCH_THREADS`: threads used inside each bench process
 - `OUT_DIR`: explicit output directory
 - `BUILD_DIR`: explicit build directory
@@ -102,7 +119,7 @@ scripts/run_release_c4_lambda128.sh
 - `CMD_TIMEOUT_SEC`: per-benchmark timeout, default `0` means no timeout
 - `CONTINUE_ON_ERROR`: keep sweeping after per-point failures, default `1`
 
-The full environment-variable reference and supported context list are in [bench/exp_params_release_c4_lambda128.md](/home/zjl/BasefoldOverGR/bench/exp_params_release_c4_lambda128.md).
+The full environment-variable reference and supported context list are in [bench/exp_params_release_c4_lambda128.md](bench/exp_params_release_c4_lambda128.md).
 
 ## Output Files
 
