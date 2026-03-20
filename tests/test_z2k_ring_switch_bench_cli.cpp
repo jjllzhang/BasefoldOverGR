@@ -149,7 +149,8 @@ void TestRingSwitchBenchEval_HelpTextIsStable() {
   ExpectCommandSuccessContains(
       exe, {"--help"},
       {"bench_z2k_ring_switch_eval", "--queries <int>", "--checked",
-       "unchecked prover hot path", "hardcoded bench presets"},
+       "--profiled-backend-verify", "unchecked prover hot path",
+       "hardcoded bench presets"},
       "TestRingSwitchBenchEval_HelpTextIsStable");
 }
 
@@ -268,6 +269,20 @@ void TestRingSwitchBenchEval_CheckedFlagAccepted() {
       "TestRingSwitchBenchEval_CheckedFlagAccepted");
 }
 
+void TestRingSwitchBenchEval_ProfiledBackendVerifyFlagAccepted() {
+  testutil::PrintInfo(
+      "Ring-switch bench CLI: eval accepts --profiled-backend-verify and still prints stable fields");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_eval";
+  ExpectCommandSuccessContains(
+      exe,
+      {"--profiled-backend-verify", "--warmup", "0", "--reps", "1",
+       "--queries", "2"},
+      {"[ring-switch eval]", "backend verify timing profiled-subcall",
+       "backend verifier mean"},
+      "TestRingSwitchBenchEval_ProfiledBackendVerifyFlagAccepted");
+}
+
 void TestRingSwitchBenchOuterProve_CheckedFlagAccepted() {
   testutil::PrintInfo(
       "Ring-switch bench CLI: outer prove accepts --checked and still prints stable fields");
@@ -294,6 +309,7 @@ int main(int argc, char **argv) {
   TestRingSwitchBenchEval_DefaultPresetForGR2p32r64();
   TestRingSwitchBenchBackendEval_DefaultPresetForGR2p32r64();
   TestRingSwitchBenchEval_CheckedFlagAccepted();
+  TestRingSwitchBenchEval_ProfiledBackendVerifyFlagAccepted();
   TestRingSwitchBenchOuterProve_CheckedFlagAccepted();
 
   if (g_test_failure_count != 0) {

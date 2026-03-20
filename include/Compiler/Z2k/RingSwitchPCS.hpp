@@ -240,6 +240,25 @@ bool RingSwitchPCSVerifyOuterEvalUnchecked(
     const std::vector<FieldElement> &z, const FieldElement &claimed_s,
     long num_queries, const RingSwitchPCSOuterEvalProof &proof);
 
+// Replays the outer verifier and recovers the backend evaluation point r'
+// used by the backend PCS verifier.
+bool RingSwitchPCSRecoverBackendEvaluationPoint(
+    const RingSwitchPCSParams &params, const MerkleRoot &commitment,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const RingSwitchPCSOuterEvalProof &proof,
+    std::vector<FieldElement> &backend_eval_point_out);
+
+// Unchecked recovery helper intended for benchmarking / hot paths with trusted
+// params.
+//
+// Differences vs RingSwitchPCSRecoverBackendEvaluationPoint:
+// - Does NOT validate params or basis data.
+bool RingSwitchPCSRecoverBackendEvaluationPointUnchecked(
+    const RingSwitchPCSParams &params, const MerkleRoot &commitment,
+    const std::vector<FieldElement> &z, const FieldElement &claimed_s,
+    long num_queries, const RingSwitchPCSOuterEvalProof &proof,
+    std::vector<FieldElement> &backend_eval_point_out);
+
 // Prover-local state produced by Commit and consumed by Prove.
 struct RingSwitchPCSCommittedWitness {
   MerkleRoot commitment;
