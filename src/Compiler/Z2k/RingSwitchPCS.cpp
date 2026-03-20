@@ -856,11 +856,10 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
                            : nullptr);
     out.proof.t_star = EvalMultilinearMonomialCoeffs(
         commit_artifacts.t_packed_monomial_coeffs, out.rprime_suffix);
-
-    const vec_ZZ_pE eq_suffix = EqualityTableFromPoint(out.rprime_suffix);
-    const FieldElement g_star = EvaluateBooleanTableAtEqualityTable(
-        g_table, eq_suffix, "ProveOuterEvalFromCommitArtifactsInternal");
     if (checked_path) {
+      const vec_ZZ_pE eq_suffix = EqualityTableFromPoint(out.rprime_suffix);
+      const FieldElement g_star = EvaluateBooleanTableAtEqualityTable(
+          g_table, eq_suffix, "ProveOuterEvalFromCommitArtifactsInternal");
       const FieldElement final_sumcheck_claim =
           (params.ell_prime == 0)
               ? initial_claim

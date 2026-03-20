@@ -36,21 +36,22 @@ BenchResult RunCommitBenchmark(const basefold::RingSwitchPCSParams &params,
 
   std::uint64_t anti_opt_checksum = 0;
   for (int iter = -warmup; iter < reps; ++iter) {
-    vec_ZZ_pE packed_monomial;
     const auto t0 = std::chrono::steady_clock::now();
-    const vec_ZZ_pE packed_table =
-        basefold::PackZ2kCoeffsToGREvals(params, t_table);
-    packed_monomial = basefold::BooleanHypercubeTableToMonomialCoeffs(packed_table);
+    const basefold::RingSwitchPCSOuterCommitArtifacts outer_commit_artifacts =
+        basefold::RingSwitchPCSBuildOuterCommitArtifactsUnchecked(params,
+                                                                  t_table);
     const auto t1 = std::chrono::steady_clock::now();
 
     const auto t2 = std::chrono::steady_clock::now();
     const basefold::MerkleRoot commitment =
-        basefold::Z2kPCSBackendCommit(params.backend, packed_monomial);
+        basefold::Z2kPCSBackendCommit(
+            params.backend, outer_commit_artifacts.t_packed_monomial_coeffs);
     const auto t3 = std::chrono::steady_clock::now();
 
-    if (packed_table.length() > 0) {
+    if (outer_commit_artifacts.t_packed_table.length() > 0) {
       anti_opt_checksum ^=
-          static_cast<std::uint64_t>(packed_table[0] != ZZ_pE(0));
+          static_cast<std::uint64_t>(
+              outer_commit_artifacts.t_packed_table[0] != ZZ_pE(0));
     }
     if (!commitment.empty()) {
       anti_opt_checksum ^= static_cast<std::uint64_t>(commitment[0]);
