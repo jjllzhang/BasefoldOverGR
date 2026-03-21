@@ -162,22 +162,26 @@ scripts/run_release_c4_lambda128.sh
 - 可选 suite：
   - `RUN_SUITE=compiler_eval_ring_switch`：只跑 ring-switch compiler full eval
   - `RUN_SUITE=compiler_eval_frobenius`：只跑 Frobenius compiler full eval
+  - `RUN_SUITE=compiler_outer_commit_ring_switch`：只跑 ring-switch compiler outer commit
+  - `RUN_SUITE=compiler_outer_commit_frobenius`：只跑 Frobenius compiler outer commit
 
 - 常用环境变量：
   - `RUN_SUITE`
     - `basefold_release`
     - `compiler_eval_ring_switch`
     - `compiler_eval_frobenius`
+    - `compiler_outer_commit_ring_switch`
+    - `compiler_outer_commit_frobenius`
   - `RUN_ID`：本次运行 ID（默认 `<timestamp>_pid<shell-pid>`），用于区分输出目录和（可选）构建目录
   - `D_MIN` / `D_MAX`：只对 `basefold_release` 生效的维度区间（默认 `3..29`）
   - `K0`：基础消息维度 `k0`（默认 `1`，要求为 2 的幂）
     - `backend_eval_results.csv` 中的 `poly_dim = k_d = K0*2^d`
   - `COMPILER_KAPPA`：只对 compiler eval suite 生效；要求为正整数
   - `COMPILER_ELL_MIN` / `COMPILER_ELL_MAX`
-    - 只对 compiler eval suite 生效
+    - 只对 compiler suite 生效
     - 要求满足 `COMPILER_ELL_MIN >= COMPILER_KAPPA`
     - 脚本内部按 `ell` sweep，并自动计算 `d = ell-kappa`
-    - `compiler_eval_results.csv` 里的 `poly_dim = 2^ell`
+    - `compiler_eval_results.csv` 和 `compiler_outer_commit_results.csv` 里的 `poly_dim = 2^ell`
   - `CONTEXTS`：选择上下文，默认 `all`
     - 可选值：`field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162,field-prime64-ext,field-f2p64-ext,field-prime128-ext,field-f2p128-ext,field-f3p40-ext,field-f3p81-ext,ring-gr-2p16-64-ext,ring-gr-2p16-128-ext,ring-gr-2p2-64-ext,ring-gr-2p2-128-ext`
     - 示例：`CONTEXTS=field-prime128-ext` 或 `CONTEXTS=field-f2p128-ext,ring-gr-2p16-64-ext`
@@ -204,7 +208,7 @@ scripts/run_release_c4_lambda128.sh
   - `CONTINUE_ON_ERROR`：遇到某个点失败后是否继续（默认 `1`）
   - `COMMIT_WARMUP` / `COMMIT_REPS`
   - `EVAL_WARMUP` / `EVAL_REPS`
-    - 控制 `bench_basefold_pcs_eval` 与 `bench_z2k_*_eval` 的共享 `--warmup/--reps`
+    - 控制 `bench_basefold_pcs_eval`、`bench_z2k_*_eval` 与 `bench_z2k_*_outer_commit` 的共享 `--warmup/--reps`
     - 对 `bench_basefold_pcs_eval` 来说，这一组参数同时作用于 prove-phase 和 verifier 统计
   - `SEED`
 
@@ -220,10 +224,10 @@ ISOLATE_BUILD_DIR=1 CPU_PIN_MODE=slot RUN_SLOT=1 RUN_SLOTS_TOTAL=2 \
 CONTEXTS=ring-gr-2p16-128-ext scripts/run_release_c4_lambda128.sh
 ```
 
-若并发的是 compiler eval suite，请同时给出 `COMPILER_KAPPA` 和
+若并发的是 compiler suite，请同时给出 `COMPILER_KAPPA` 和
 `COMPILER_ELL_MIN/MAX`。
 
-说明：`basefold_release` 在脚本内部按 `d` 串行推进；compiler eval suite
+说明：`basefold_release` 在脚本内部按 `d` 串行推进；compiler suite
 在脚本内部按 `ell` 串行推进，并统一使用 `d = ell-kappa`。单次运行只会执行一个 family（ring-switch 或 Frobenius）。并行度主要来自单个 bench 进程内部线程；多脚本并发时建议使用上面的 CPU 分片与独立 build 目录。
 
 ## 5) 输出
@@ -239,6 +243,13 @@ CONTEXTS=ring-gr-2p16-128-ext scripts/run_release_c4_lambda128.sh
     分解，以及 `outer_proof_size` / `total_proof_size`
   - 对 `family=frobenius`，凡是 `GR(2^2,r)` context 都不会实际执行 bench，
     而是直接写 `status=disabled_gr2p2_context`
+- `compiler_outer_commit_results.csv`
+  - 仅在 `RUN_SUITE=compiler_outer_commit_ring_switch` 或
+    `RUN_SUITE=compiler_outer_commit_frobenius` 时生成；仅对 ring context 写行
+  - 包含 `bench_z2k_*_outer_commit` 的 `outer_commit_mean_ms`，以及传给 backend 的固定宽度输入大小
+  - 复用 compiler suite 的 `gamma` / `queries` 元数据推导，但 timed region 只记录 outer commit
+  - 对 `family=frobenius`，凡是 `GR(2^2,r)` context 都不会实际执行 bench，
+    而是直接写 `status=disabled_gr2p2_context`
 - 汇总 markdown：`RESULTS.md`
 - 原始日志：`logs/*.log`（来自 `calc_iopp_params`、`bench_basefold_pcs_commit`、
-  `bench_basefold_pcs_eval`、`bench_z2k_*_eval`）
+  `bench_basefold_pcs_eval`、`bench_z2k_*_eval`、`bench_z2k_*_outer_commit`）
