@@ -103,9 +103,30 @@ Notes:
 - `RUN_SUITE=compiler_eval_frobenius` still skips `GR(2^2,r)` contexts and emits `status=disabled_gr2p2_context`.
 - In `bench_z2k_frobenius_eval`, default verifier split is measured as standalone outer replay plus standalone backend-only verify; `--profiled-backend-verify` restores the old subcall-timed split.
 
+### Run Compiler Outer Commit Only
+
+```bash
+RUN_SUITE=compiler_outer_commit_frobenius \
+CONTEXTS=ring-gr-2p16-64-ext \
+COMPILER_KAPPA=6 \
+COMPILER_ELL_MIN=9 \
+COMPILER_ELL_MAX=12 \
+EVAL_WARMUP=0 EVAL_REPS=1 \
+BENCH_THREADS=1 \
+scripts/run_release_c4_lambda128.sh
+```
+
+Notes:
+
+- Outer-commit suites currently support ring contexts only.
+- The selected ring context must satisfy `deg(F) = 2^COMPILER_KAPPA`.
+- Outer-commit suites currently build only `K0=1` backends; `K0 != 1` rows are emitted as `status=unsupported_k0`.
+- `RUN_SUITE=compiler_outer_commit_frobenius` still skips `GR(2^2,r)` contexts and emits `status=disabled_gr2p2_context`.
+- Outer-commit rows reuse the compiler `ell` sweep and `calc_iopp_params` metadata from compiler eval, but the timed region records only `bench_z2k_*_outer_commit`.
+
 ### Most Useful Environment Variables
 
-- `RUN_SUITE`: `basefold_release`, `compiler_eval_ring_switch`, `compiler_eval_frobenius`
+- `RUN_SUITE`: `basefold_release`, `compiler_eval_ring_switch`, `compiler_eval_frobenius`, `compiler_outer_commit_ring_switch`, `compiler_outer_commit_frobenius`
 - `CONTEXTS`: `all` or a comma-separated subset of supported contexts
 - `D_MIN`, `D_MAX`: BaseFold sweep range, used by `basefold_release`
 - `COMPILER_KAPPA`, `COMPILER_ELL_MIN`, `COMPILER_ELL_MAX`: required by compiler suites
@@ -127,9 +148,10 @@ Each run writes:
 
 - `backend_eval_results.csv`: BaseFold release rows from `bench_basefold_pcs_commit` and `bench_basefold_pcs_eval`
 - `compiler_eval_results.csv`: compiler-eval rows for the selected family (`ring_switch` or `frobenius`), including `outer_proof_size_*` and `total_proof_size_*`
+- `compiler_outer_commit_results.csv`: written only for `RUN_SUITE=compiler_outer_commit_ring_switch` or `RUN_SUITE=compiler_outer_commit_frobenius`; records `outer_commit_mean_ms` and backend-input size for the selected family
 - `RESULTS.md`: markdown summary table
 - `logs/*.log`: raw logs for `calc_iopp_params` and benchmark binaries
 
 Note:
 
-- `RUN_SUITE=compiler_eval_frobenius` does not execute Frobenius full eval on `GR(2^2,r)` contexts; those rows are emitted as `status=disabled_gr2p2_context`.
+- `RUN_SUITE=compiler_eval_frobenius` and `RUN_SUITE=compiler_outer_commit_frobenius` do not execute Frobenius rows on `GR(2^2,r)` contexts; those rows are emitted as `status=disabled_gr2p2_context`.

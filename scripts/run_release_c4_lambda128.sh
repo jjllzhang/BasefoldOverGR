@@ -407,6 +407,8 @@ RUN_SUITE="${RUN_SUITE:-basefold_release}"
 RUN_BASEFOLD_RELEASE=0
 RUN_COMPILER_EVAL=0
 COMPILER_EVAL_FAMILY=""
+RUN_COMPILER_OUTER_COMMIT=0
+COMPILER_OUTER_COMMIT_FAMILY=""
 case "$RUN_SUITE" in
   basefold_release)
     RUN_BASEFOLD_RELEASE=1
@@ -419,8 +421,16 @@ case "$RUN_SUITE" in
     RUN_COMPILER_EVAL=1
     COMPILER_EVAL_FAMILY="frobenius"
     ;;
+  compiler_outer_commit_ring_switch)
+    RUN_COMPILER_OUTER_COMMIT=1
+    COMPILER_OUTER_COMMIT_FAMILY="ring_switch"
+    ;;
+  compiler_outer_commit_frobenius)
+    RUN_COMPILER_OUTER_COMMIT=1
+    COMPILER_OUTER_COMMIT_FAMILY="frobenius"
+    ;;
   *)
-    echo "RUN_SUITE must be one of: basefold_release, compiler_eval_ring_switch, compiler_eval_frobenius" >&2
+    echo "RUN_SUITE must be one of: basefold_release, compiler_eval_ring_switch, compiler_eval_frobenius, compiler_outer_commit_ring_switch, compiler_outer_commit_frobenius" >&2
     exit 2
     ;;
 esac
@@ -436,13 +446,13 @@ if (( RUN_BASEFOLD_RELEASE )); then
   fi
 fi
 
-if (( RUN_COMPILER_EVAL )); then
+if (( RUN_COMPILER_EVAL || RUN_COMPILER_OUTER_COMMIT )); then
   if ! [[ "$COMPILER_KAPPA" =~ ^[1-9][0-9]*$ ]]; then
-    echo "COMPILER_KAPPA must be a positive integer when compiler_eval suite is enabled" >&2
+    echo "COMPILER_KAPPA must be a positive integer when a compiler suite is enabled" >&2
     exit 2
   fi
   if ! [[ "$COMPILER_ELL_MIN" =~ ^[0-9]+$ && "$COMPILER_ELL_MAX" =~ ^[0-9]+$ ]]; then
-    echo "COMPILER_ELL_MIN and COMPILER_ELL_MAX must be non-negative integers when compiler_eval suite is enabled" >&2
+    echo "COMPILER_ELL_MIN and COMPILER_ELL_MAX must be non-negative integers when a compiler suite is enabled" >&2
     exit 2
   fi
   if (( COMPILER_ELL_MIN < COMPILER_KAPPA )); then
@@ -461,23 +471,35 @@ if (( SELECTED_CONTEXT_COUNT == 0 )); then
 fi
 
 COMPILER_EVAL_RESULT_CSV="$OUT_DIR/compiler_eval_results.csv"
+COMPILER_OUTER_COMMIT_RESULT_CSV="$OUT_DIR/compiler_outer_commit_results.csv"
 BACKEND_EVAL_RESULT_CSV="$OUT_DIR/backend_eval_results.csv"
 RESULT_MD="$OUT_DIR/RESULTS.md"
 RUN_AT_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 BASEFOLD_RELEASE_SOURCE="family=basefold rows use bench_basefold_pcs_commit + bench_basefold_pcs_eval"
-RELEASE_QUERY_SOURCE="basefold_release/compiler_eval* use calc_iopp_params and parse default l_min_for_IOPP"
+RELEASE_QUERY_SOURCE="basefold_release/compiler_* suites use calc_iopp_params and parse default l_min_for_IOPP"
 if (( RUN_COMPILER_EVAL )); then
   COMPILER_EVAL_SOURCE="family=${COMPILER_EVAL_FAMILY} rows use bench_z2k_${COMPILER_EVAL_FAMILY}_eval with commit split"
 else
   COMPILER_EVAL_SOURCE="n/a"
 fi
+if (( RUN_COMPILER_OUTER_COMMIT )); then
+  COMPILER_OUTER_COMMIT_SOURCE="family=${COMPILER_OUTER_COMMIT_FAMILY} rows use bench_z2k_${COMPILER_OUTER_COMMIT_FAMILY}_outer_commit"
+else
+  COMPILER_OUTER_COMMIT_SOURCE="n/a"
+fi
 BACKEND_EVAL_SOURCE="family=basefold rows use bench_basefold_pcs_commit + bench_basefold_pcs_eval only"
-COMPILER_EVAL_LAYOUT_SOURCE="compiler_eval_* rows use fixed COMPILER_KAPPA with ell range, derive d=ell-kappa, and record poly_dim=2^ell"
+COMPILER_SWEEP_LAYOUT_SOURCE="compiler_* rows use fixed COMPILER_KAPPA with ell range, derive d=ell-kappa, and record poly_dim=2^ell"
 COMPILER_BACKEND_SOURCE="current z2k compiler benches build BaseFold backend params with k0=1 only"
 
 cat > "$COMPILER_EVAL_RESULT_CSV" <<CSV
 family,context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,compiler_ell,ell_prime,compiler_kappa,outer_commit_mean_ms,backend_commit_mean_ms,commit_total_mean_ms,prove_total_mean_ms,prove_outer_mean_ms,prove_backend_mean_ms,verify_total_mean_ms,verify_outer_mean_ms,verify_backend_mean_ms,outer_proof_size_kb,outer_proof_size_bytes,total_proof_size_kb,total_proof_size_bytes,status,error
 CSV
+
+if (( RUN_COMPILER_OUTER_COMMIT )); then
+  cat > "$COMPILER_OUTER_COMMIT_RESULT_CSV" <<CSV
+family,context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,compiler_ell,ell_prime,compiler_kappa,outer_commit_mean_ms,backend_input_size_kb,backend_input_size_bytes,status,error
+CSV
+fi
 
 cat > "$BACKEND_EVAL_RESULT_CSV" <<CSV
 family,context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_ms,prove_phase_mean_ms,verifier_mean_ms,proof_size_kb,proof_size_bytes,status,error
@@ -642,6 +664,29 @@ write_backend_eval_row() {
   echo "${family},${context_id},${context_label_csv},${mode},${d},${poly_dim},${C},${K0},${LAMBDA},${gamma},${queries},${commit_ms},${prove_ms},${verify_ms},${proof_kb},${proof_bytes},${status},${error_csv}" >> "$BACKEND_EVAL_RESULT_CSV"
 }
 
+write_compiler_outer_commit_row() {
+  local family="$1"
+  local context_id="$2"
+  local context_label="$3"
+  local mode="$4"
+  local d="$5"
+  local poly_dim="$6"
+  local gamma="$7"
+  local queries="$8"
+  local compiler_ell="$9"
+  local ell_prime="${10}"
+  local compiler_kappa="${11}"
+  local outer_commit_ms="${12}"
+  local backend_input_kb="${13}"
+  local backend_input_bytes="${14}"
+  local status="${15}"
+  local error="${16}"
+  local context_label_csv="${context_label//,/;}"
+  local error_csv="${error//,/;}"
+
+  echo "${family},${context_id},${context_label_csv},${mode},${d},${poly_dim},${C},${K0},${LAMBDA},${gamma},${queries},${compiler_ell},${ell_prime},${compiler_kappa},${outer_commit_ms},${backend_input_kb},${backend_input_bytes},${status},${error_csv}" >> "$COMPILER_OUTER_COMMIT_RESULT_CSV"
+}
+
 run_compiler_eval_row() {
   local family="$1"
   local context_id="$2"
@@ -748,6 +793,81 @@ run_compiler_eval_row() {
 
   write_compiler_eval_row "$family" "$context_id" "$context_label" "$mode" "$d" "$poly_dim" "$gamma" "$queries" "$compiler_ell" "$ell_prime" "$compiler_kappa" "$outer_commit_ms" "$backend_commit_ms" "$commit_total_ms" "$prove_total_ms" "$prove_outer_ms" "$prove_backend_ms" "$verify_total_ms" "$verify_outer_ms" "$verify_backend_ms" "$outer_proof_kb" "$outer_proof_bytes" "$total_proof_kb" "$total_proof_bytes" "$status" "$error"
   maybe_abort "$status" "${context_label} d=${d} ${family}:eval status=${status}"
+}
+
+run_compiler_outer_commit_row() {
+  local family="$1"
+  local context_id="$2"
+  local context_label="$3"
+  local mode="$4"
+  local d="$5"
+  local poly_dim="$6"
+  local gamma="$7"
+  local queries="$8"
+  local query_status="$9"
+  local query_error="${10}"
+  local compiler_ell="${11}"
+  local ell_prime="${12}"
+  local compiler_kappa="${13}"
+  local context_extension_degree="${14}"
+  local context_scalar_modulus="${15}"
+  shift 15
+  local -a bench_args=("$@")
+
+  local outer_commit_bin=""
+  case "$family" in
+    ring_switch)
+      outer_commit_bin="bench_z2k_ring_switch_outer_commit"
+      ;;
+    frobenius)
+      outer_commit_bin="bench_z2k_frobenius_outer_commit"
+      ;;
+    *)
+      echo "Unknown compiler outer commit family: $family" >&2
+      exit 1
+      ;;
+  esac
+
+  local status=""
+  local error=""
+  IFS=',' read -r status error < <(compiler_precheck "$family" "$context_extension_degree" "$compiler_kappa" "$context_scalar_modulus")
+  if [[ "$status" != "ok" ]]; then
+    write_compiler_outer_commit_row "$family" "$context_id" "$context_label" "$mode" "$d" "$poly_dim" "$gamma" "$queries" "$compiler_ell" "$ell_prime" "$compiler_kappa" "NA" "NA" "NA" "$status" "$error"
+    maybe_abort "$status" "${context_label} d=${d} ${family}:outer_commit status=${status}"
+    return
+  fi
+  if [[ "$query_status" != "ok" ]]; then
+    write_compiler_outer_commit_row "$family" "$context_id" "$context_label" "$mode" "$d" "$poly_dim" "$gamma" "$queries" "$compiler_ell" "$ell_prime" "$compiler_kappa" "NA" "NA" "NA" "$query_status" "$query_error"
+    maybe_abort "$query_status" "${context_label} d=${d} ${family}:outer_commit status=${query_status}"
+    return
+  fi
+
+  local log_file="$OUT_DIR/logs/${context_id}_d${d}_${family}_outer_commit.log"
+  local outer_commit_ms="NA"
+  local backend_input_kb="NA"
+  local backend_input_bytes="NA"
+  status="ok"
+  error="-"
+
+  if ! run_and_log "$log_file" \
+      "$BUILD_DIR/$outer_commit_bin" \
+      "${bench_args[@]}" \
+      --c "$C" --ell "$compiler_ell" --kappa "$compiler_kappa" \
+      --warmup "$EVAL_WARMUP" --reps "$EVAL_REPS" \
+      --seed "$SEED"; then
+    status="${family}_outer_commit_failed"
+    error="$(first_error_line "$log_file")"
+  else
+    outer_commit_ms="$(parse_first "outer commit mean" 4 "$log_file")"
+    backend_input_kb="$(parse_size_kb "backend input size" "$log_file")"
+    backend_input_bytes="$(parse_size_bytes "backend input size" "$log_file")"
+    [[ -n "$outer_commit_ms" ]] || outer_commit_ms="NA"
+    [[ -n "$backend_input_kb" ]] || backend_input_kb="NA"
+    [[ -n "$backend_input_bytes" ]] || backend_input_bytes="NA"
+  fi
+
+  write_compiler_outer_commit_row "$family" "$context_id" "$context_label" "$mode" "$d" "$poly_dim" "$gamma" "$queries" "$compiler_ell" "$ell_prime" "$compiler_kappa" "$outer_commit_ms" "$backend_input_kb" "$backend_input_bytes" "$status" "$error"
+  maybe_abort "$status" "${context_label} d=${d} ${family}:outer_commit status=${status}"
 }
 
 run_one_context_d() {
@@ -1001,7 +1121,7 @@ resolve_compiler_context_metadata() {
   esac
 }
 
-run_one_context_compiler_eval_ell() {
+run_one_context_compiler_suite_ell() {
   local context_id="$1"
   local context_label="$2"
   local compiler_family="$3"
@@ -1046,7 +1166,11 @@ run_one_context_compiler_eval_ell() {
     fi
   fi
 
-  run_compiler_eval_row "$compiler_family" "$context_id" "$context_label" "ring" "$d" "$poly_dim" "$gamma" "$release_queries" "$release_query_status" "$release_query_error" "$compiler_ell" "$d" "$compiler_kappa" "$COMPILER_CONTEXT_EXTENSION_DEGREE" "$COMPILER_CONTEXT_SCALAR_MODULUS" "${bench_args[@]}"
+  if (( RUN_COMPILER_EVAL )); then
+    run_compiler_eval_row "$compiler_family" "$context_id" "$context_label" "ring" "$d" "$poly_dim" "$gamma" "$release_queries" "$release_query_status" "$release_query_error" "$compiler_ell" "$d" "$compiler_kappa" "$COMPILER_CONTEXT_EXTENSION_DEGREE" "$COMPILER_CONTEXT_SCALAR_MODULUS" "${bench_args[@]}"
+  else
+    run_compiler_outer_commit_row "$compiler_family" "$context_id" "$context_label" "ring" "$d" "$poly_dim" "$gamma" "$release_queries" "$release_query_status" "$release_query_error" "$compiler_ell" "$d" "$compiler_kappa" "$COMPILER_CONTEXT_EXTENSION_DEGREE" "$COMPILER_CONTEXT_SCALAR_MODULUS" "${bench_args[@]}"
+  fi
 }
 
 echo "[1/4] Configure Release build in: $BUILD_DIR"
@@ -1057,7 +1181,7 @@ else
 fi
 
 BUILD_TARGETS=()
-if (( RUN_BASEFOLD_RELEASE || RUN_COMPILER_EVAL )); then
+if (( RUN_BASEFOLD_RELEASE || RUN_COMPILER_EVAL || RUN_COMPILER_OUTER_COMMIT )); then
   BUILD_TARGETS+=(calc_iopp_params)
 fi
 if (( RUN_BASEFOLD_RELEASE )); then
@@ -1077,6 +1201,20 @@ if (( RUN_COMPILER_EVAL )); then
       ;;
   esac
 fi
+if (( RUN_COMPILER_OUTER_COMMIT )); then
+  case "$COMPILER_OUTER_COMMIT_FAMILY" in
+    ring_switch)
+      BUILD_TARGETS+=(bench_z2k_ring_switch_outer_commit)
+      ;;
+    frobenius)
+      BUILD_TARGETS+=(bench_z2k_frobenius_outer_commit)
+      ;;
+    *)
+      echo "Unknown compiler outer commit family: $COMPILER_OUTER_COMMIT_FAMILY" >&2
+      exit 1
+      ;;
+  esac
+fi
 
 echo "[2/4] Build required benchmarks/tools"
 if [[ -n "$EFFECTIVE_CPU_SET" && "$PIN_BUILD" == "1" ]]; then
@@ -1091,6 +1229,9 @@ if (( RUN_BASEFOLD_RELEASE )); then
 fi
 if (( RUN_COMPILER_EVAL )); then
   echo "  compiler_eval family=$COMPILER_EVAL_FAMILY ell in [$COMPILER_ELL_MIN, $COMPILER_ELL_MAX] with kappa=$COMPILER_KAPPA (d=ell-kappa)"
+fi
+if (( RUN_COMPILER_OUTER_COMMIT )); then
+  echo "  compiler_outer_commit family=$COMPILER_OUTER_COMMIT_FAMILY ell in [$COMPILER_ELL_MIN, $COMPILER_ELL_MAX] with kappa=$COMPILER_KAPPA (d=ell-kappa)"
 fi
 
 if (( RUN_BASEFOLD_RELEASE )); then
@@ -1203,52 +1344,59 @@ if (( RUN_BASEFOLD_RELEASE )); then
   done
 fi
 
-if (( RUN_COMPILER_EVAL )); then
+if (( RUN_COMPILER_EVAL || RUN_COMPILER_OUTER_COMMIT )); then
+  if (( RUN_COMPILER_EVAL )); then
+    compiler_suite_label="compiler_eval"
+    compiler_suite_family="$COMPILER_EVAL_FAMILY"
+  else
+    compiler_suite_label="compiler_outer_commit"
+    compiler_suite_family="$COMPILER_OUTER_COMMIT_FAMILY"
+  fi
   for compiler_ell in $(seq "$COMPILER_ELL_MIN" "$COMPILER_ELL_MAX"); do
-    echo "[compiler_eval/$COMPILER_EVAL_FAMILY ell=$compiler_ell d=$((compiler_ell - COMPILER_KAPPA))]"
+    echo "[$compiler_suite_label/$compiler_suite_family ell=$compiler_ell d=$((compiler_ell - COMPILER_KAPPA))]"
     if (( ENABLE_RING2P16_162 )); then
-      run_one_context_compiler_eval_ell \
-        "ring-gr-2p16-162" "GR(2^16,162)" "$COMPILER_EVAL_FAMILY" "$compiler_ell" \
+      run_one_context_compiler_suite_ell \
+        "ring-gr-2p16-162" "GR(2^16,162)" "$compiler_suite_family" "$compiler_ell" \
         --ring-mod "$RING2P16_MOD" \
         --ring-p "$RING2P16_P" \
         --ring-F "$RING2P16_F" \
         --ring-zeta "$RING2P16_ZETA"
     fi
     if (( ENABLE_RING2P2_162 )); then
-      run_one_context_compiler_eval_ell \
-        "ring-gr-2p2-162" "GR(2^2,162)" "$COMPILER_EVAL_FAMILY" "$compiler_ell" \
+      run_one_context_compiler_suite_ell \
+        "ring-gr-2p2-162" "GR(2^2,162)" "$compiler_suite_family" "$compiler_ell" \
         --ring-mod "$RING2P2_MOD" \
         --ring-p "$RING2P2_P" \
         --ring-F "$RING2P2_F" \
         --ring-zeta "$RING2P2_ZETA"
     fi
     if (( ENABLE_RING2P16_64_EXT )); then
-      run_one_context_compiler_eval_ell \
-        "ring-gr-2p16-64-ext" "GR(2^16,64) (ext-challenge)" "$COMPILER_EVAL_FAMILY" "$compiler_ell" \
+      run_one_context_compiler_suite_ell \
+        "ring-gr-2p16-64-ext" "GR(2^16,64) (ext-challenge)" "$compiler_suite_family" "$compiler_ell" \
         --ring-mod "$RING2P16_MOD" \
         --ring-p "$RING2P16_P" \
         --ring-F "$RING_F_64" \
         --ring-zeta "$RING2P16_ZETA"
     fi
     if (( ENABLE_RING2P16_128_EXT )); then
-      run_one_context_compiler_eval_ell \
-        "ring-gr-2p16-128-ext" "GR(2^16,128) (ext-challenge)" "$COMPILER_EVAL_FAMILY" "$compiler_ell" \
+      run_one_context_compiler_suite_ell \
+        "ring-gr-2p16-128-ext" "GR(2^16,128) (ext-challenge)" "$compiler_suite_family" "$compiler_ell" \
         --ring-mod "$RING2P16_MOD" \
         --ring-p "$RING2P16_P" \
         --ring-F "$RING_F_128" \
         --ring-zeta "$RING2P16_ZETA"
     fi
     if (( ENABLE_RING2P2_64_EXT )); then
-      run_one_context_compiler_eval_ell \
-        "ring-gr-2p2-64-ext" "GR(2^2,64) (ext-challenge)" "$COMPILER_EVAL_FAMILY" "$compiler_ell" \
+      run_one_context_compiler_suite_ell \
+        "ring-gr-2p2-64-ext" "GR(2^2,64) (ext-challenge)" "$compiler_suite_family" "$compiler_ell" \
         --ring-mod "$RING2P2_MOD" \
         --ring-p "$RING2P2_P" \
         --ring-F "$RING_F_64" \
         --ring-zeta "$RING2P2_ZETA"
     fi
     if (( ENABLE_RING2P2_128_EXT )); then
-      run_one_context_compiler_eval_ell \
-        "ring-gr-2p2-128-ext" "GR(2^2,128) (ext-challenge)" "$COMPILER_EVAL_FAMILY" "$compiler_ell" \
+      run_one_context_compiler_suite_ell \
+        "ring-gr-2p2-128-ext" "GR(2^2,128) (ext-challenge)" "$compiler_suite_family" "$compiler_ell" \
         --ring-mod "$RING2P2_MOD" \
         --ring-p "$RING2P2_P" \
         --ring-F "$RING_F_128" \
@@ -1281,6 +1429,11 @@ echo "[4/4] Build markdown summary"
     echo "- compiler_eval_kappa: n/a"
     echo "- compiler_eval_ell_range: n/a"
   fi
+  if (( RUN_COMPILER_OUTER_COMMIT )); then
+    echo "- compiler_outer_commit_family: $COMPILER_OUTER_COMMIT_FAMILY"
+    echo "- compiler_outer_commit_kappa: $COMPILER_KAPPA"
+    echo "- compiler_outer_commit_ell_range: [$COMPILER_ELL_MIN, $COMPILER_ELL_MAX] (compiler_outer_commit/${COMPILER_OUTER_COMMIT_FAMILY} rows use d=ell-kappa and poly_dim=2^ell)"
+  fi
   echo "- contexts: $CONTEXTS"
   echo "- bench_threads: $BENCH_THREADS (set 0 to use runtime default)"
   echo "- commit_warmup/reps: $COMMIT_WARMUP / $COMMIT_REPS"
@@ -1288,8 +1441,11 @@ echo "[4/4] Build markdown summary"
   echo "- basefold_release_source: $BASEFOLD_RELEASE_SOURCE"
   echo "- release_query_source: $RELEASE_QUERY_SOURCE"
   echo "- compiler_eval_source: $COMPILER_EVAL_SOURCE"
+  if (( RUN_COMPILER_OUTER_COMMIT )); then
+    echo "- compiler_outer_commit_source: $COMPILER_OUTER_COMMIT_SOURCE"
+  fi
   echo "- backend_eval_source: $BACKEND_EVAL_SOURCE"
-  echo "- compiler_eval_layout_source: $COMPILER_EVAL_LAYOUT_SOURCE"
+  echo "- compiler_sweep_layout_source: $COMPILER_SWEEP_LAYOUT_SOURCE"
   echo "- compiler_backend_source: $COMPILER_BACKEND_SOURCE"
   echo "- cpu_pin_mode: $CPU_PIN_MODE"
   if [[ -n "$EFFECTIVE_CPU_SET" ]]; then
@@ -1314,6 +1470,14 @@ echo "[4/4] Build markdown summary"
   echo "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
   tail -n +2 "$COMPILER_EVAL_RESULT_CSV" | awk -F',' '{printf "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", $1, $3, $5, $6, $11, $12, $13, $14, $15, $16, $17, $18, $21, $24, $26, $28}'
   echo ""
+  if (( RUN_COMPILER_OUTER_COMMIT )); then
+    echo "## Compiler Outer Commit"
+    echo ""
+    echo "| family | context | d | poly_dim | queries | ell | ell' | kappa | outer commit ms | backend input KB | backend input B | status |"
+    echo "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
+    tail -n +2 "$COMPILER_OUTER_COMMIT_RESULT_CSV" | awk -F',' '{printf "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", $1, $3, $5, $6, $11, $12, $13, $14, $15, $16, $17, $18}'
+    echo ""
+  fi
   echo "## Status Counts"
   echo ""
   echo "### Backend Eval"
@@ -1322,8 +1486,16 @@ echo "[4/4] Build markdown summary"
   echo "### Compiler Eval"
   tail -n +2 "$COMPILER_EVAL_RESULT_CSV" | awk -F',' '{cnt[$28]++} END {for (k in cnt) printf "- %s: %d\n", k, cnt[k]}'
   echo ""
+  if (( RUN_COMPILER_OUTER_COMMIT )); then
+    echo "### Compiler Outer Commit"
+    tail -n +2 "$COMPILER_OUTER_COMMIT_RESULT_CSV" | awk -F',' '{cnt[$18]++} END {for (k in cnt) printf "- %s: %d\n", k, cnt[k]}'
+    echo ""
+  fi
   echo "Backend eval csv: $BACKEND_EVAL_RESULT_CSV"
   echo "Compiler eval csv: $COMPILER_EVAL_RESULT_CSV"
+  if (( RUN_COMPILER_OUTER_COMMIT )); then
+    echo "Compiler outer commit csv: $COMPILER_OUTER_COMMIT_RESULT_CSV"
+  fi
   echo "Raw logs dir: $OUT_DIR/logs"
 } > "$RESULT_MD"
 
@@ -1331,3 +1503,6 @@ echo "Done."
 echo "Summary markdown:   $RESULT_MD"
 echo "Backend eval csv:   $BACKEND_EVAL_RESULT_CSV"
 echo "Compiler eval csv:  $COMPILER_EVAL_RESULT_CSV"
+if (( RUN_COMPILER_OUTER_COMMIT )); then
+  echo "Compiler outer commit csv: $COMPILER_OUTER_COMMIT_RESULT_CSV"
+fi
