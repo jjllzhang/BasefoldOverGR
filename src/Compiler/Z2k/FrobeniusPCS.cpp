@@ -505,11 +505,48 @@ FieldElement RecombineClaimFromPartials(const std::vector<FieldElement> &partial
   return acc;
 }
 
+std::vector<FieldElement> ComputeSByIFromEqTablesBatched(
+    const NTL::vec_ZZ_pE &t_packed_table, const SuffixOrbitCache &orbit_cache) {
+  const long basis_dimension =
+      static_cast<long>(orbit_cache.sigma_eq_tables_by_i.size());
+  std::vector<FieldElement> s_by_i(static_cast<std::size_t>(basis_dimension),
+                                   FieldElement(0));
+  const long num_w = t_packed_table.length();
+  for (long i = 0; i < basis_dimension; ++i) {
+    if (orbit_cache.sigma_eq_tables_by_i[static_cast<std::size_t>(i)].length() !=
+        num_w) {
+      LogicError(
+          "ComputeSByIFromEqTablesBatched: orbit equality-table width mismatch");
+    }
+  }
+
+  // Scan the packed evaluation table once and accumulate all orbit-point claims
+  // against the already-materialized sigma orbit equality tables.
+  for (long w = 0; w < num_w; ++w) {
+    const FieldElement &packed_eval = t_packed_table[w];
+    for (long i = 0; i < basis_dimension; ++i) {
+      s_by_i[static_cast<std::size_t>(i)] +=
+          packed_eval *
+          orbit_cache.sigma_eq_tables_by_i[static_cast<std::size_t>(i)][w];
+    }
+  }
+  return s_by_i;
+}
+
 std::vector<FieldElement> ComputeSByI(
+    const NTL::vec_ZZ_pE &t_packed_table,
     const NTL::vec_ZZ_pE &t_packed_monomial_coeffs,
     const SuffixOrbitCache &orbit_cache) {
   const long basis_dimension =
       static_cast<long>(orbit_cache.sigma_points_by_i.size());
+  if (!orbit_cache.sigma_eq_tables_by_i.empty()) {
+    if (static_cast<long>(orbit_cache.sigma_eq_tables_by_i.size()) !=
+        basis_dimension) {
+      LogicError("ComputeSByI: orbit equality-table count mismatch");
+    }
+    return ComputeSByIFromEqTablesBatched(t_packed_table, orbit_cache);
+  }
+
   std::vector<FieldElement> s_by_i(static_cast<std::size_t>(basis_dimension),
                                    FieldElement(0));
   for (long i = 0; i < basis_dimension; ++i) {
@@ -630,8 +667,9 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
                            : nullptr,
                       prof ? &prof->frobenius_outer_prove_compute_s_calls
                            : nullptr);
-    out.proof.s_by_i =
-        ComputeSByI(commit_artifacts.t_packed_monomial_coeffs, suffix_orbit);
+    out.proof.s_by_i = ComputeSByI(commit_artifacts.t_packed_table,
+                                   commit_artifacts.t_packed_monomial_coeffs,
+                                   suffix_orbit);
   }
   out.proof.h_by_level.resize(static_cast<std::size_t>(params.ell_prime));
 
