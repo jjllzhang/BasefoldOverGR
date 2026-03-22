@@ -4,6 +4,7 @@
 #include <NTL/ZZ_pE.h>
 #include <NTL/ZZ_pX.h>
 
+#include <cstdint>
 #include <limits>
 #include <string>
 #include <vector>
@@ -44,6 +45,17 @@ struct SuffixOrbitCache {
   std::vector<std::vector<ZZ_p>> suffix_coords_by_var;
   std::vector<std::vector<FieldElement>> sigma_points_by_i;
   std::vector<NTL::vec_ZZ_pE> sigma_eq_by_w_then_i;
+};
+
+struct OrbitBuildProfileTargets {
+  std::uint64_t *recover_coords_ns = nullptr;
+  std::uint64_t *recover_coords_calls = nullptr;
+  std::uint64_t *sigma_points_ns = nullptr;
+  std::uint64_t *sigma_points_calls = nullptr;
+  std::uint64_t *eq_eval_ns = nullptr;
+  std::uint64_t *eq_eval_calls = nullptr;
+  std::uint64_t *eq_transpose_ns = nullptr;
+  std::uint64_t *eq_transpose_calls = nullptr;
 };
 
 long RotateIndex(long index, long shift, long dimension) {
@@ -395,13 +407,21 @@ std::vector<FieldElement> ComposePointWithBasisRow(
 
 SuffixOrbitCache BuildSuffixOrbitCache(const FrobeniusPCSParams &params,
                                        const std::vector<FieldElement> &r_suffix,
-                                       bool build_eq_tables) {
+                                       bool build_eq_tables,
+                                       const OrbitBuildProfileTargets *profile_targets =
+                                           nullptr) {
   if (static_cast<long>(r_suffix.size()) != params.ell_prime) {
     LogicError("BuildSuffixOrbitCache: r_suffix dimension must equal ell_prime");
   }
 
   SuffixOrbitCache out;
-  out.suffix_coords_by_var = RecoverPointNormalBasisCoords(params, r_suffix);
+  {
+    ScopedTimer timer(profile_targets ? profile_targets->recover_coords_ns
+                                      : nullptr,
+                      profile_targets ? profile_targets->recover_coords_calls
+                                      : nullptr);
+    out.suffix_coords_by_var = RecoverPointNormalBasisCoords(params, r_suffix);
+  }
   const long basis_dimension =
       static_cast<long>(params.precomputed.sigma_basis_rows.size());
   const long num_w = build_eq_tables
@@ -418,19 +438,38 @@ SuffixOrbitCache BuildSuffixOrbitCache(const FrobeniusPCSParams &params,
     }
   }
   for (long i = 0; i < basis_dimension; ++i) {
-    out.sigma_points_by_i[static_cast<std::size_t>(i)] =
-        ComposePointWithBasisRow(
-            params.precomputed.sigma_basis_rows[static_cast<std::size_t>(i)],
-            out.suffix_coords_by_var, "BuildSuffixOrbitCache");
+    {
+      ScopedTimer timer(profile_targets ? profile_targets->sigma_points_ns
+                                        : nullptr,
+                        profile_targets ? profile_targets->sigma_points_calls
+                                        : nullptr);
+      out.sigma_points_by_i[static_cast<std::size_t>(i)] =
+          ComposePointWithBasisRow(
+              params.precomputed.sigma_basis_rows[static_cast<std::size_t>(i)],
+              out.suffix_coords_by_var, "BuildSuffixOrbitCache");
+    }
     if (build_eq_tables) {
-      const NTL::vec_ZZ_pE eq_table = EqualityTableFromPoint(
-          out.sigma_points_by_i[static_cast<std::size_t>(i)]);
+      NTL::vec_ZZ_pE eq_table;
+      {
+        ScopedTimer timer(profile_targets ? profile_targets->eq_eval_ns
+                                          : nullptr,
+                          profile_targets ? profile_targets->eq_eval_calls
+                                          : nullptr);
+        eq_table = EqualityTableFromPoint(
+            out.sigma_points_by_i[static_cast<std::size_t>(i)]);
+      }
       if (eq_table.length() != num_w) {
         LogicError(
             "BuildSuffixOrbitCache: orbit equality-table width mismatch");
       }
-      for (long w = 0; w < num_w; ++w) {
-        out.sigma_eq_by_w_then_i[static_cast<std::size_t>(w)][i] = eq_table[w];
+      {
+        ScopedTimer timer(profile_targets ? profile_targets->eq_transpose_ns
+                                          : nullptr,
+                          profile_targets ? profile_targets->eq_transpose_calls
+                                          : nullptr);
+        for (long w = 0; w < num_w; ++w) {
+          out.sigma_eq_by_w_then_i[static_cast<std::size_t>(w)][i] = eq_table[w];
+        }
       }
     }
   }
@@ -677,11 +716,30 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
   const std::vector<FieldElement> r_suffix =
       SlicePoint(z, params.kappa, params.ell_prime);
   const SuffixOrbitCache suffix_orbit = [&] {
+    OrbitBuildProfileTargets orbit_profile;
+    if (prof != nullptr) {
+      orbit_profile.recover_coords_ns =
+          &prof->frobenius_outer_prove_orbit_recover_coords_ns;
+      orbit_profile.recover_coords_calls =
+          &prof->frobenius_outer_prove_orbit_recover_coords_calls;
+      orbit_profile.sigma_points_ns =
+          &prof->frobenius_outer_prove_orbit_sigma_points_ns;
+      orbit_profile.sigma_points_calls =
+          &prof->frobenius_outer_prove_orbit_sigma_points_calls;
+      orbit_profile.eq_eval_ns = &prof->frobenius_outer_prove_orbit_eq_eval_ns;
+      orbit_profile.eq_eval_calls =
+          &prof->frobenius_outer_prove_orbit_eq_eval_calls;
+      orbit_profile.eq_transpose_ns =
+          &prof->frobenius_outer_prove_orbit_eq_transpose_ns;
+      orbit_profile.eq_transpose_calls =
+          &prof->frobenius_outer_prove_orbit_eq_transpose_calls;
+    }
     ScopedTimer timer(prof ? &prof->frobenius_outer_prove_orbit_build_ns
                            : nullptr,
                       prof ? &prof->frobenius_outer_prove_orbit_build_calls
                            : nullptr);
-    return BuildSuffixOrbitCache(params, r_suffix, params.ell_prime > 0);
+    return BuildSuffixOrbitCache(params, r_suffix, params.ell_prime > 0,
+                                 prof ? &orbit_profile : nullptr);
   }();
 
   OuterProveEvalResult out;
@@ -728,18 +786,44 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
                            : nullptr,
                       prof ? &prof->frobenius_outer_prove_batch_prep_calls
                            : nullptr);
-    AbsorbPublicInput(transcript, commitment, z, claimed_s);
-    for (const FieldElement &s_i : out.proof.s_by_i) {
-      transcript.AbsorbFieldElement(s_i);
+    {
+      ScopedTimer sub_timer(prof ? &prof->frobenius_outer_prove_batch_absorb_ns
+                                 : nullptr,
+                            prof ? &prof->frobenius_outer_prove_batch_absorb_calls
+                                 : nullptr);
+      AbsorbPublicInput(transcript, commitment, z, claimed_s);
+      for (const FieldElement &s_i : out.proof.s_by_i) {
+        transcript.AbsorbFieldElement(s_i);
+      }
     }
 
-    for (long i = 0; i < params.kappa; ++i) {
-      rprime_prefix[static_cast<std::size_t>(i)] = transcript.ChallengeFieldElement(
-          "rprime/prefix/" + std::to_string(i));
+    {
+      ScopedTimer sub_timer(
+          prof ? &prof->frobenius_outer_prove_batch_prefix_challenge_ns
+               : nullptr,
+          prof ? &prof->frobenius_outer_prove_batch_prefix_challenge_calls
+               : nullptr);
+      for (long i = 0; i < params.kappa; ++i) {
+        rprime_prefix[static_cast<std::size_t>(i)] =
+            transcript.ChallengeFieldElement("rprime/prefix/" +
+                                             std::to_string(i));
+      }
+      lambda_by_i = EqualityTableFromPoint(rprime_prefix);
     }
-    lambda_by_i = EqualityTableFromPoint(rprime_prefix);
-    initial_claim = ComputeInitialBatchedClaim(out.proof.s_by_i, lambda_by_i);
+    {
+      ScopedTimer sub_timer(
+          prof ? &prof->frobenius_outer_prove_batch_initial_claim_ns
+               : nullptr,
+          prof ? &prof->frobenius_outer_prove_batch_initial_claim_calls
+               : nullptr);
+      initial_claim = ComputeInitialBatchedClaim(out.proof.s_by_i, lambda_by_i);
+    }
     if (params.ell_prime > 0) {
+      ScopedTimer sub_timer(
+          prof ? &prof->frobenius_outer_prove_batch_build_g_table_ns
+               : nullptr,
+          prof ? &prof->frobenius_outer_prove_batch_build_g_table_calls
+               : nullptr);
       g_table = BuildBatchedGTable(lambda_by_i, suffix_orbit, params.ell_prime);
     }
   }
