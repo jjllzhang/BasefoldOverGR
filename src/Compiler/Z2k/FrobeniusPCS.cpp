@@ -44,7 +44,8 @@ struct OuterProveEvalResult {
 struct SuffixOrbitCache {
   std::vector<std::vector<ZZ_p>> suffix_coords_by_var;
   std::vector<std::vector<FieldElement>> sigma_points_by_i;
-  std::vector<NTL::vec_ZZ_pE> sigma_eq_by_w_then_i;
+  NTL::vec_ZZ_pE base_eq_table;
+  std::vector<ZZ_p> base_eq_coords_by_w_then_j;
 };
 
 struct OrbitBuildProfileTargets {
@@ -52,10 +53,10 @@ struct OrbitBuildProfileTargets {
   std::uint64_t *recover_coords_calls = nullptr;
   std::uint64_t *sigma_points_ns = nullptr;
   std::uint64_t *sigma_points_calls = nullptr;
-  std::uint64_t *eq_eval_ns = nullptr;
-  std::uint64_t *eq_eval_calls = nullptr;
-  std::uint64_t *eq_transpose_ns = nullptr;
-  std::uint64_t *eq_transpose_calls = nullptr;
+  std::uint64_t *base_eq_table_ns = nullptr;
+  std::uint64_t *base_eq_table_calls = nullptr;
+  std::uint64_t *base_eq_coords_ns = nullptr;
+  std::uint64_t *base_eq_coords_calls = nullptr;
 };
 
 long RotateIndex(long index, long shift, long dimension) {
@@ -405,6 +406,25 @@ std::vector<FieldElement> ComposePointWithBasisRow(
   return out;
 }
 
+const ZZ_p *BaseEqCoordsRowOrThrow(const SuffixOrbitCache &orbit_cache, long w,
+                                   long basis_dimension,
+                                   const char *func_name) {
+  if (basis_dimension < 0) {
+    LogicError((string(func_name) +
+                ": basis dimension must be non-negative")
+                   .c_str());
+  }
+  const size_t row_offset =
+      static_cast<size_t>(w) * static_cast<size_t>(basis_dimension);
+  if (row_offset + static_cast<size_t>(basis_dimension) >
+      orbit_cache.base_eq_coords_by_w_then_j.size()) {
+    LogicError((string(func_name) +
+                ": base equality-coordinate row is out of bounds")
+                   .c_str());
+  }
+  return orbit_cache.base_eq_coords_by_w_then_j.data() + row_offset;
+}
+
 SuffixOrbitCache BuildSuffixOrbitCache(const FrobeniusPCSParams &params,
                                        const std::vector<FieldElement> &r_suffix,
                                        bool build_eq_tables,
@@ -431,10 +451,40 @@ SuffixOrbitCache BuildSuffixOrbitCache(const FrobeniusPCSParams &params,
                          : 0;
   out.sigma_points_by_i.resize(static_cast<std::size_t>(basis_dimension));
   if (build_eq_tables) {
-    out.sigma_eq_by_w_then_i.resize(static_cast<std::size_t>(num_w));
-    for (long w = 0; w < num_w; ++w) {
-      out.sigma_eq_by_w_then_i[static_cast<std::size_t>(w)].SetLength(
-          basis_dimension);
+    {
+      ScopedTimer timer(profile_targets ? profile_targets->base_eq_table_ns
+                                        : nullptr,
+                        profile_targets ? profile_targets->base_eq_table_calls
+                                        : nullptr);
+      out.base_eq_table = EqualityTableFromPoint(r_suffix);
+    }
+    if (out.base_eq_table.length() != num_w) {
+      LogicError("BuildSuffixOrbitCache: base equality-table width mismatch");
+    }
+    out.base_eq_coords_by_w_then_j.resize(
+        static_cast<size_t>(num_w) * static_cast<size_t>(basis_dimension));
+    {
+      ScopedTimer timer(profile_targets ? profile_targets->base_eq_coords_ns
+                                        : nullptr,
+                        profile_targets ? profile_targets->base_eq_coords_calls
+                                        : nullptr);
+      for (long w = 0; w < num_w; ++w) {
+        const std::vector<ZZ_p> coords =
+            ::RecoverNormalBasisCoords(
+                params.basis_data.normal_basis,
+                out.base_eq_table[static_cast<std::size_t>(w)]);
+        if (static_cast<long>(coords.size()) != basis_dimension) {
+          LogicError(
+              "BuildSuffixOrbitCache: base equality-coordinate width mismatch");
+        }
+        const size_t row_offset =
+            static_cast<size_t>(w) * static_cast<size_t>(basis_dimension);
+        for (long j = 0; j < basis_dimension; ++j) {
+          out.base_eq_coords_by_w_then_j[row_offset +
+                                         static_cast<size_t>(j)] =
+              coords[static_cast<std::size_t>(j)];
+        }
+      }
     }
   }
   for (long i = 0; i < basis_dimension; ++i) {
@@ -447,30 +497,6 @@ SuffixOrbitCache BuildSuffixOrbitCache(const FrobeniusPCSParams &params,
           ComposePointWithBasisRow(
               params.precomputed.sigma_basis_rows[static_cast<std::size_t>(i)],
               out.suffix_coords_by_var, "BuildSuffixOrbitCache");
-    }
-    if (build_eq_tables) {
-      NTL::vec_ZZ_pE eq_table;
-      {
-        ScopedTimer timer(profile_targets ? profile_targets->eq_eval_ns
-                                          : nullptr,
-                          profile_targets ? profile_targets->eq_eval_calls
-                                          : nullptr);
-        eq_table = EqualityTableFromPoint(
-            out.sigma_points_by_i[static_cast<std::size_t>(i)]);
-      }
-      if (eq_table.length() != num_w) {
-        LogicError(
-            "BuildSuffixOrbitCache: orbit equality-table width mismatch");
-      }
-      {
-        ScopedTimer timer(profile_targets ? profile_targets->eq_transpose_ns
-                                          : nullptr,
-                          profile_targets ? profile_targets->eq_transpose_calls
-                                          : nullptr);
-        for (long w = 0; w < num_w; ++w) {
-          out.sigma_eq_by_w_then_i[static_cast<std::size_t>(w)][i] = eq_table[w];
-        }
-      }
     }
   }
   return out;
@@ -559,49 +585,67 @@ FieldElement RecombineClaimFromPartials(const std::vector<FieldElement> &partial
   return acc;
 }
 
-std::vector<FieldElement> ComputeSByIFromEqTablesBatched(
-    const NTL::vec_ZZ_pE &t_packed_table, const SuffixOrbitCache &orbit_cache) {
-  const long num_w =
-      static_cast<long>(orbit_cache.sigma_eq_by_w_then_i.size());
+std::vector<FieldElement> ComputeSByIFromBaseEqCoords(
+    const FrobeniusPCSParams &params, const NTL::vec_ZZ_pE &t_packed_table,
+    const SuffixOrbitCache &orbit_cache) {
+  const long num_w = orbit_cache.base_eq_table.length();
   if (t_packed_table.length() != num_w) {
     LogicError(
-        "ComputeSByIFromEqTablesBatched: packed table width mismatch");
+        "ComputeSByIFromBaseEqCoords: packed table width mismatch");
   }
   const long basis_dimension =
-      (num_w > 0)
-          ? orbit_cache.sigma_eq_by_w_then_i[0].length()
-          : static_cast<long>(orbit_cache.sigma_points_by_i.size());
+      static_cast<long>(params.precomputed.sigma_basis_rows.size());
+  if (static_cast<long>(orbit_cache.base_eq_coords_by_w_then_j.size()) !=
+      num_w * basis_dimension) {
+    LogicError(
+        "ComputeSByIFromBaseEqCoords: base equality-coordinate shape mismatch");
+  }
+  std::vector<FieldElement> a_by_j(static_cast<std::size_t>(basis_dimension),
+                                   FieldElement(0));
+  for (long w = 0; w < num_w; ++w) {
+    const ZZ_p *coords = BaseEqCoordsRowOrThrow(
+        orbit_cache, w, basis_dimension, "ComputeSByIFromBaseEqCoords");
+    const FieldElement &packed_eval = t_packed_table[w];
+    for (long j = 0; j < basis_dimension; ++j) {
+      if (coords[j] != 0) {
+        a_by_j[static_cast<std::size_t>(j)] +=
+            packed_eval * BaseRingConstant(coords[j]);
+      }
+    }
+  }
+
   std::vector<FieldElement> s_by_i(static_cast<std::size_t>(basis_dimension),
                                    FieldElement(0));
-
-  // Scan the packed evaluation table once and accumulate all orbit-point claims
-  // against the already-materialized sigma orbit equality table rows.
-  for (long w = 0; w < num_w; ++w) {
-    const NTL::vec_ZZ_pE &eq_by_i =
-        orbit_cache.sigma_eq_by_w_then_i[static_cast<std::size_t>(w)];
-    if (eq_by_i.length() != basis_dimension) {
+  for (long i = 0; i < basis_dimension; ++i) {
+    FieldElement acc = FieldElement(0);
+    const std::vector<FieldElement> &sigma_basis_row =
+        params.precomputed.sigma_basis_rows[static_cast<std::size_t>(i)];
+    if (static_cast<long>(sigma_basis_row.size()) != basis_dimension) {
       LogicError(
-          "ComputeSByIFromEqTablesBatched: orbit equality-table row width mismatch");
+          "ComputeSByIFromBaseEqCoords: sigma basis-row width mismatch");
     }
-    const FieldElement &packed_eval = t_packed_table[w];
-    for (long i = 0; i < basis_dimension; ++i) {
-      s_by_i[static_cast<std::size_t>(i)] += packed_eval * eq_by_i[i];
+    for (long j = 0; j < basis_dimension; ++j) {
+      acc += a_by_j[static_cast<std::size_t>(j)] *
+             sigma_basis_row[static_cast<std::size_t>(j)];
     }
+    s_by_i[static_cast<std::size_t>(i)] = acc;
   }
   return s_by_i;
 }
 
 std::vector<FieldElement> ComputeSByI(
+    const FrobeniusPCSParams &params,
     const NTL::vec_ZZ_pE &t_packed_table,
     const NTL::vec_ZZ_pE &t_packed_monomial_coeffs,
     const SuffixOrbitCache &orbit_cache) {
   const long basis_dimension =
       static_cast<long>(orbit_cache.sigma_points_by_i.size());
-  if (!orbit_cache.sigma_eq_by_w_then_i.empty()) {
-    if (orbit_cache.sigma_eq_by_w_then_i[0].length() != basis_dimension) {
-      LogicError("ComputeSByI: orbit equality-table row width mismatch");
+  if (!orbit_cache.base_eq_coords_by_w_then_j.empty()) {
+    if (static_cast<long>(params.precomputed.sigma_basis_rows.size()) !=
+        basis_dimension) {
+      LogicError("ComputeSByI: sigma basis-row count mismatch");
     }
-    return ComputeSByIFromEqTablesBatched(t_packed_table, orbit_cache);
+    return ComputeSByIFromBaseEqCoords(params, t_packed_table, orbit_cache);
   }
 
   std::vector<FieldElement> s_by_i(static_cast<std::size_t>(basis_dimension),
@@ -615,35 +659,53 @@ std::vector<FieldElement> ComputeSByI(
   return s_by_i;
 }
 
-NTL::vec_ZZ_pE BuildBatchedGTable(const NTL::vec_ZZ_pE &lambda_by_i,
+NTL::vec_ZZ_pE BuildBatchedGTable(const FrobeniusPCSParams &params,
+                                  const NTL::vec_ZZ_pE &lambda_by_i,
                                   const SuffixOrbitCache &orbit_cache,
                                   long ell_prime) {
-  const long num_w =
-      static_cast<long>(orbit_cache.sigma_eq_by_w_then_i.size());
+  const long num_w = orbit_cache.base_eq_table.length();
   const long basis_dimension =
-      (num_w > 0)
-          ? orbit_cache.sigma_eq_by_w_then_i[0].length()
-          : 0;
+      static_cast<long>(params.precomputed.sigma_basis_rows.size());
   if (lambda_by_i.length() != basis_dimension) {
     LogicError("BuildBatchedGTable: prefix equality table length mismatch");
   }
-
   const long expected_num_w = Pow2LongOrThrow(
       ell_prime, "BuildBatchedGTable: ell_prime is too large for long");
   if (num_w != expected_num_w) {
-    LogicError("BuildBatchedGTable: orbit equality-table height mismatch");
+    LogicError("BuildBatchedGTable: base equality-table height mismatch");
   }
+  if (static_cast<long>(orbit_cache.base_eq_coords_by_w_then_j.size()) !=
+      num_w * basis_dimension) {
+    LogicError("BuildBatchedGTable: base equality-coordinate shape mismatch");
+  }
+
+  std::vector<FieldElement> mu_by_j(static_cast<std::size_t>(basis_dimension),
+                                    FieldElement(0));
+  for (long i = 0; i < basis_dimension; ++i) {
+    const std::vector<FieldElement> &sigma_basis_row =
+        params.precomputed.sigma_basis_rows[static_cast<std::size_t>(i)];
+    if (static_cast<long>(sigma_basis_row.size()) != basis_dimension) {
+      LogicError("BuildBatchedGTable: sigma basis-row width mismatch");
+    }
+    const FieldElement &lambda_i = lambda_by_i[i];
+    for (long j = 0; j < basis_dimension; ++j) {
+      mu_by_j[static_cast<std::size_t>(j)] +=
+          lambda_i * sigma_basis_row[static_cast<std::size_t>(j)];
+    }
+  }
+
   NTL::vec_ZZ_pE out;
   out.SetLength(num_w);
   for (long w = 0; w < num_w; ++w) {
-    const NTL::vec_ZZ_pE &eq_by_i =
-        orbit_cache.sigma_eq_by_w_then_i[static_cast<std::size_t>(w)];
-    if (eq_by_i.length() != basis_dimension) {
-      LogicError("BuildBatchedGTable: orbit equality-table row width mismatch");
-    }
+    const ZZ_p *coords =
+        BaseEqCoordsRowOrThrow(orbit_cache, w, basis_dimension,
+                               "BuildBatchedGTable");
     NTL::clear(out[w]);
-    for (long i = 0; i < basis_dimension; ++i) {
-      out[w] += lambda_by_i[i] * eq_by_i[i];
+    for (long j = 0; j < basis_dimension; ++j) {
+      if (coords[j] != 0) {
+        out[w] += BaseRingConstant(coords[j]) *
+                  mu_by_j[static_cast<std::size_t>(j)];
+      }
     }
   }
   return out;
@@ -726,13 +788,14 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
           &prof->frobenius_outer_prove_orbit_sigma_points_ns;
       orbit_profile.sigma_points_calls =
           &prof->frobenius_outer_prove_orbit_sigma_points_calls;
-      orbit_profile.eq_eval_ns = &prof->frobenius_outer_prove_orbit_eq_eval_ns;
-      orbit_profile.eq_eval_calls =
-          &prof->frobenius_outer_prove_orbit_eq_eval_calls;
-      orbit_profile.eq_transpose_ns =
-          &prof->frobenius_outer_prove_orbit_eq_transpose_ns;
-      orbit_profile.eq_transpose_calls =
-          &prof->frobenius_outer_prove_orbit_eq_transpose_calls;
+      orbit_profile.base_eq_table_ns =
+          &prof->frobenius_outer_prove_orbit_base_eq_table_ns;
+      orbit_profile.base_eq_table_calls =
+          &prof->frobenius_outer_prove_orbit_base_eq_table_calls;
+      orbit_profile.base_eq_coords_ns =
+          &prof->frobenius_outer_prove_orbit_base_eq_coords_ns;
+      orbit_profile.base_eq_coords_calls =
+          &prof->frobenius_outer_prove_orbit_base_eq_coords_calls;
     }
     ScopedTimer timer(prof ? &prof->frobenius_outer_prove_orbit_build_ns
                            : nullptr,
@@ -748,7 +811,7 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
                            : nullptr,
                       prof ? &prof->frobenius_outer_prove_compute_s_calls
                            : nullptr);
-    out.proof.s_by_i = ComputeSByI(commit_artifacts.t_packed_table,
+    out.proof.s_by_i = ComputeSByI(params, commit_artifacts.t_packed_table,
                                    commit_artifacts.t_packed_monomial_coeffs,
                                    suffix_orbit);
   }
@@ -824,7 +887,8 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
                : nullptr,
           prof ? &prof->frobenius_outer_prove_batch_build_g_table_calls
                : nullptr);
-      g_table = BuildBatchedGTable(lambda_by_i, suffix_orbit, params.ell_prime);
+      g_table = BuildBatchedGTable(params, lambda_by_i, suffix_orbit,
+                                   params.ell_prime);
     }
   }
 
