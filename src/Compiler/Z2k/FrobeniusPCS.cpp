@@ -20,6 +20,9 @@ using NTL::ZZ;
 using NTL::ZZ_p;
 using NTL::ZZ_pE;
 using NTL::ZZ_pX;
+using NTL::coeff;
+using NTL::deg;
+using NTL::rep;
 using std::size_t;
 using std::string;
 using std::vector;
@@ -172,6 +175,23 @@ FrobeniusPCSPrecomputedTables BuildFrobeniusPCSPrecomputedTables(
           "BuildFrobeniusPCSPrecomputedTables");
     }
   }
+
+  const std::vector<FieldElement> polynomial_basis =
+      ::BuildPolynomialBasis(basis_dimension);
+  out.normal_coord_functionals_by_t_then_j.resize(
+      static_cast<std::size_t>(basis_dimension) *
+      static_cast<std::size_t>(basis_dimension));
+  for (long t = 0; t < basis_dimension; ++t) {
+    const size_t row_offset =
+        static_cast<std::size_t>(t) * static_cast<std::size_t>(basis_dimension);
+    for (long j = 0; j < basis_dimension; ++j) {
+      out.normal_coord_functionals_by_t_then_j[row_offset +
+                                               static_cast<std::size_t>(j)] =
+          TraceToBaseRing(
+              normal_basis.alpha[static_cast<std::size_t>(j)] *
+              polynomial_basis[static_cast<std::size_t>(t)]);
+    }
+  }
   return out;
 }
 
@@ -210,6 +230,11 @@ void ValidatePrecomputedTablesOrThrow(const FrobeniusPCSParams &params) {
       params.precomputed.sigma_basis_rows[0] !=
           params.basis_data.normal_basis.beta) {
     LogicError("ValidatePrecomputedTablesOrThrow: power-0 basis rows must equal beta");
+  }
+  if (static_cast<long>(
+          params.precomputed.normal_coord_functionals_by_t_then_j.size()) !=
+      basis_dimension * basis_dimension) {
+    LogicError("ValidatePrecomputedTablesOrThrow: normal-coordinate functional shape mismatch");
   }
 }
 
@@ -383,13 +408,68 @@ std::vector<FieldElement> SlicePoint(const std::vector<FieldElement> &z,
   return std::vector<FieldElement>(z.begin() + begin, z.begin() + begin + count);
 }
 
+void RecoverNormalBasisCoordsFromPrecomputedFunctionalsInto(
+    const FrobeniusPCSParams &params, const FieldElement &element,
+    ZZ_p *coords_out, const char *func_name) {
+  const long basis_dimension =
+      static_cast<long>(params.basis_data.normal_basis.alpha.size());
+  if (basis_dimension <= 0 ||
+      static_cast<long>(params.basis_data.normal_basis.beta.size()) !=
+          basis_dimension) {
+    LogicError((string(func_name) +
+                ": invalid normal-basis shape")
+                   .c_str());
+  }
+  if (coords_out == nullptr) {
+    LogicError((string(func_name) +
+                ": coords_out must be non-null")
+                   .c_str());
+  }
+  const std::vector<ZZ_p> &functionals =
+      params.precomputed.normal_coord_functionals_by_t_then_j;
+  if (static_cast<long>(functionals.size()) !=
+      basis_dimension * basis_dimension) {
+    LogicError((string(func_name) +
+                ": normal-coordinate functional shape mismatch")
+                   .c_str());
+  }
+
+  for (long j = 0; j < basis_dimension; ++j) {
+    coords_out[j] = ZZ_p(0);
+  }
+
+  const ZZ_pX poly = rep(element);
+  const long degree = deg(poly);
+  if (degree >= basis_dimension) {
+    LogicError((string(func_name) +
+                ": element polynomial degree exceeds basis dimension")
+                   .c_str());
+  }
+  for (long t = 0; t <= degree; ++t) {
+    const ZZ_p coeff_t = coeff(poly, t);
+    if (coeff_t == 0) {
+      continue;
+    }
+    const size_t row_offset =
+        static_cast<std::size_t>(t) * static_cast<std::size_t>(basis_dimension);
+    for (long j = 0; j < basis_dimension; ++j) {
+      coords_out[j] += coeff_t *
+                       functionals[row_offset + static_cast<std::size_t>(j)];
+    }
+  }
+}
+
 std::vector<std::vector<ZZ_p>> RecoverPointNormalBasisCoords(
     const FrobeniusPCSParams &params, const std::vector<FieldElement> &point) {
+  const long basis_dimension =
+      static_cast<long>(params.basis_data.normal_basis.alpha.size());
   std::vector<std::vector<ZZ_p>> coords_by_var(point.size());
   for (long i = 0; i < static_cast<long>(point.size()); ++i) {
-    coords_by_var[static_cast<std::size_t>(i)] =
-        ::RecoverNormalBasisCoords(params.basis_data.normal_basis,
-                                   point[static_cast<std::size_t>(i)]);
+    std::vector<ZZ_p> &coords = coords_by_var[static_cast<std::size_t>(i)];
+    coords.resize(static_cast<std::size_t>(basis_dimension));
+    RecoverNormalBasisCoordsFromPrecomputedFunctionalsInto(
+        params, point[static_cast<std::size_t>(i)],
+        coords.data(), "RecoverPointNormalBasisCoords");
   }
   return coords_by_var;
 }
@@ -469,21 +549,12 @@ SuffixOrbitCache BuildSuffixOrbitCache(const FrobeniusPCSParams &params,
                         profile_targets ? profile_targets->base_eq_coords_calls
                                         : nullptr);
       for (long w = 0; w < num_w; ++w) {
-        const std::vector<ZZ_p> coords =
-            ::RecoverNormalBasisCoords(
-                params.basis_data.normal_basis,
-                out.base_eq_table[static_cast<std::size_t>(w)]);
-        if (static_cast<long>(coords.size()) != basis_dimension) {
-          LogicError(
-              "BuildSuffixOrbitCache: base equality-coordinate width mismatch");
-        }
         const size_t row_offset =
             static_cast<size_t>(w) * static_cast<size_t>(basis_dimension);
-        for (long j = 0; j < basis_dimension; ++j) {
-          out.base_eq_coords_by_w_then_j[row_offset +
-                                         static_cast<size_t>(j)] =
-              coords[static_cast<std::size_t>(j)];
-        }
+        RecoverNormalBasisCoordsFromPrecomputedFunctionalsInto(
+            params, out.base_eq_table[static_cast<std::size_t>(w)],
+            out.base_eq_coords_by_w_then_j.data() + row_offset,
+            "BuildSuffixOrbitCache");
       }
     }
   }
@@ -515,8 +586,11 @@ std::vector<FieldElement> ComputeIndexedTauPowers(
   std::vector<FieldElement> out(static_cast<std::size_t>(basis_dimension),
                                 FieldElement(0));
   for (long i = 0; i < basis_dimension; ++i) {
-    const std::vector<ZZ_p> coords = ::RecoverNormalBasisCoords(
-        params.basis_data.normal_basis, elements[static_cast<std::size_t>(i)]);
+    std::vector<ZZ_p> coords(static_cast<std::size_t>(basis_dimension),
+                             ZZ_p(0));
+    RecoverNormalBasisCoordsFromPrecomputedFunctionalsInto(
+        params, elements[static_cast<std::size_t>(i)], coords.data(),
+        "ComputeIndexedTauPowers");
     out[static_cast<std::size_t>(i)] = ComposeFromCoordsWithBasisRow(
         params.precomputed.tau_basis_rows[static_cast<std::size_t>(i)], coords,
         "ComputeIndexedTauPowers");
@@ -1302,8 +1376,12 @@ NTL::vec_ZZ_pE PackZ2kTableToFrobeniusGREvalsWithTrustedParamsOrThrow(
 NTL::vec_ZZ_pE DecomposeGRElementToBaseCoeffsFrobeniusBasis(
     const FrobeniusPCSParams &params, const ZZ_pE &element) {
   ValidateFrobeniusPCSParamsOrThrow(params);
-  const vector<ZZ_p> coords =
-      ::RecoverNormalBasisCoords(params.basis_data.normal_basis, element);
+  const long basis_dimension =
+      static_cast<long>(params.basis_data.normal_basis.beta.size());
+  vector<ZZ_p> coords(static_cast<std::size_t>(basis_dimension), ZZ_p(0));
+  RecoverNormalBasisCoordsFromPrecomputedFunctionalsInto(
+      params, element, coords.data(),
+      "DecomposeGRElementToBaseCoeffsFrobeniusBasis");
   NTL::vec_ZZ_pE out;
   out.SetLength(static_cast<long>(coords.size()));
   for (long i = 0; i < static_cast<long>(coords.size()); ++i) {

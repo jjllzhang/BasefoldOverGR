@@ -46,6 +46,9 @@ struct FrobeniusPCSPrecomputedTables {
   std::vector<std::vector<NTL::ZZ_pE>> sigma_basis_rows;
   // tau_alpha_by_u_then_i[u][i] = tau^i(alpha_u) for the dual basis alpha.
   std::vector<std::vector<NTL::ZZ_pE>> tau_alpha_by_u_then_i;
+  // normal_coord_functionals_by_t_then_j[t * n + j] = Tr(alpha_j * X^t), where
+  // n = 2^kappa and X^t is the power-basis monomial in ZZ_pE.
+  std::vector<NTL::ZZ_p> normal_coord_functionals_by_t_then_j;
 };
 
 struct FrobeniusPCSParams {

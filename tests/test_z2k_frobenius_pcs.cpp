@@ -183,6 +183,36 @@ ZZ_pE ComposeWithBasisRow(const vector<ZZ_pE> &basis_row,
   return out;
 }
 
+vector<NTL::ZZ_p> RecoverCoordsWithPrecomputedFunctionalsForTest(
+    const basefold::FrobeniusPCSParams &params, const ZZ_pE &element) {
+  const long basis_dimension =
+      static_cast<long>(params.basis_data.normal_basis.beta.size());
+  CHECK_EQ(
+      static_cast<long>(
+          params.precomputed.normal_coord_functionals_by_t_then_j.size()),
+      basis_dimension * basis_dimension);
+  vector<NTL::ZZ_p> coords(static_cast<std::size_t>(basis_dimension),
+                           NTL::ZZ_p(0));
+  const ZZ_pX poly = NTL::rep(element);
+  const long degree = NTL::deg(poly);
+  for (long t = 0; t <= degree; ++t) {
+    const NTL::ZZ_p coeff_t = NTL::coeff(poly, t);
+    if (coeff_t == 0) {
+      continue;
+    }
+    const std::size_t row_offset =
+        static_cast<std::size_t>(t) *
+        static_cast<std::size_t>(basis_dimension);
+    for (long j = 0; j < basis_dimension; ++j) {
+      coords[static_cast<std::size_t>(j)] +=
+          coeff_t *
+          params.precomputed.normal_coord_functionals_by_t_then_j
+              [row_offset + static_cast<std::size_t>(j)];
+    }
+  }
+  return coords;
+}
+
 vector<ZZ_pE> ApplySigmaPowerToPoint(const basefold::FrobeniusPCSParams &params,
                                      const vector<ZZ_pE> &point, long exp) {
   vector<ZZ_pE> out = point;
@@ -557,6 +587,8 @@ void TestFrobeniusPCSSetup_ProvidedBasisAcceptsValidBasis() {
            auto_params.precomputed.sigma_basis_rows);
   CHECK_EQ(provided_params.precomputed.tau_alpha_by_u_then_i,
            auto_params.precomputed.tau_alpha_by_u_then_i);
+  CHECK_EQ(provided_params.precomputed.normal_coord_functionals_by_t_then_j,
+           auto_params.precomputed.normal_coord_functionals_by_t_then_j);
 }
 
 void TestFrobeniusPCSSetup_ProvidedBasisRejectsBrokenDualBasis() {
@@ -959,11 +991,16 @@ void TestFrobeniusPCSSetup_PrecomputedTablesMatchDirectFrobeniusActions() {
            basis_dimension);
   CHECK_EQ(static_cast<long>(params.precomputed.tau_alpha_by_u_then_i.size()),
            basis_dimension);
+  CHECK_EQ(static_cast<long>(
+               params.precomputed.normal_coord_functionals_by_t_then_j.size()),
+           basis_dimension * basis_dimension);
 
   const ZZ_pE sample =
       params.basis_data.teichmuller_generator + alpha + testutil::ConstZZpE(1);
   const vector<NTL::ZZ_p> coords =
       RecoverNormalBasisCoords(params.basis_data.normal_basis, sample);
+  CHECK_EQ(RecoverCoordsWithPrecomputedFunctionalsForTest(params, sample),
+           coords);
   for (long i = 0; i < basis_dimension; ++i) {
     CHECK_EQ(ComposeWithBasisRow(
                  params.precomputed.tau_basis_rows[static_cast<std::size_t>(i)],
