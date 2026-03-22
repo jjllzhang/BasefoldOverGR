@@ -595,6 +595,11 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
     const FieldElement &claimed_s, long num_queries,
     const FrobeniusPCSOuterCommitArtifacts &commit_artifacts,
     bool checked_path, const char *func_name) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer total_timer(prof ? &prof->frobenius_outer_prove_total_ns
+                               : nullptr,
+                          prof ? &prof->frobenius_outer_prove_total_calls
+                               : nullptr);
   if (checked_path) {
     ValidateEvalInputsOrThrow(params, t_table, z, num_queries, func_name);
     ValidateOuterCommitArtifactsOrThrow(params, commit_artifacts, func_name);
@@ -611,16 +616,31 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
   const std::vector<FieldElement> z_prefix = SlicePoint(z, 0, params.kappa);
   const std::vector<FieldElement> r_suffix =
       SlicePoint(z, params.kappa, params.ell_prime);
-  const SuffixOrbitCache suffix_orbit =
-      BuildSuffixOrbitCache(params, r_suffix, params.ell_prime > 0);
+  const SuffixOrbitCache suffix_orbit = [&] {
+    ScopedTimer timer(prof ? &prof->frobenius_outer_prove_orbit_build_ns
+                           : nullptr,
+                      prof ? &prof->frobenius_outer_prove_orbit_build_calls
+                           : nullptr);
+    return BuildSuffixOrbitCache(params, r_suffix, params.ell_prime > 0);
+  }();
 
   OuterProveEvalResult out;
-  out.proof.s_by_i =
-      ComputeSByI(commit_artifacts.t_packed_monomial_coeffs, suffix_orbit);
+  {
+    ScopedTimer timer(prof ? &prof->frobenius_outer_prove_compute_s_ns
+                           : nullptr,
+                      prof ? &prof->frobenius_outer_prove_compute_s_calls
+                           : nullptr);
+    out.proof.s_by_i =
+        ComputeSByI(commit_artifacts.t_packed_monomial_coeffs, suffix_orbit);
+  }
   out.proof.h_by_level.resize(static_cast<std::size_t>(params.ell_prime));
 
-  const std::vector<FieldElement> recovered_partials =
-      RecoverPartialEvaluationsFromSByI(params, out.proof.s_by_i);
+  const std::vector<FieldElement> recovered_partials = [&] {
+    ScopedTimer timer(
+        prof ? &prof->frobenius_outer_prove_recover_partials_ns : nullptr,
+        prof ? &prof->frobenius_outer_prove_recover_partials_calls : nullptr);
+    return RecoverPartialEvaluationsFromSByI(params, out.proof.s_by_i);
+  }();
   if (checked_path) {
     const std::vector<FieldElement> direct_partials =
         ComputeDirectPartialEvaluations(params, t_table, r_suffix);
@@ -637,26 +657,38 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
   }
 
   HashTranscript transcript = MakeFrobeniusTranscript();
-  AbsorbPublicInput(transcript, commitment, z, claimed_s);
-  for (const FieldElement &s_i : out.proof.s_by_i) {
-    transcript.AbsorbFieldElement(s_i);
-  }
-
   std::vector<FieldElement> rprime_prefix(
       static_cast<std::size_t>(params.kappa));
-  for (long i = 0; i < params.kappa; ++i) {
-    rprime_prefix[static_cast<std::size_t>(i)] =
-        transcript.ChallengeFieldElement("rprime/prefix/" + std::to_string(i));
-  }
-  const NTL::vec_ZZ_pE lambda_by_i = EqualityTableFromPoint(rprime_prefix);
+  NTL::vec_ZZ_pE lambda_by_i;
+  FieldElement initial_claim = FieldElement(0);
+  NTL::vec_ZZ_pE g_table;
+  {
+    ScopedTimer timer(prof ? &prof->frobenius_outer_prove_batch_prep_ns
+                           : nullptr,
+                      prof ? &prof->frobenius_outer_prove_batch_prep_calls
+                           : nullptr);
+    AbsorbPublicInput(transcript, commitment, z, claimed_s);
+    for (const FieldElement &s_i : out.proof.s_by_i) {
+      transcript.AbsorbFieldElement(s_i);
+    }
 
-  const FieldElement initial_claim =
-      ComputeInitialBatchedClaim(out.proof.s_by_i, lambda_by_i);
+    for (long i = 0; i < params.kappa; ++i) {
+      rprime_prefix[static_cast<std::size_t>(i)] = transcript.ChallengeFieldElement(
+          "rprime/prefix/" + std::to_string(i));
+    }
+    lambda_by_i = EqualityTableFromPoint(rprime_prefix);
+    initial_claim = ComputeInitialBatchedClaim(out.proof.s_by_i, lambda_by_i);
+    if (params.ell_prime > 0) {
+      g_table = BuildBatchedGTable(lambda_by_i, suffix_orbit, params.ell_prime);
+    }
+  }
 
   out.rprime_suffix.resize(static_cast<std::size_t>(params.ell_prime));
   if (params.ell_prime > 0) {
-    const NTL::vec_ZZ_pE g_table =
-        BuildBatchedGTable(lambda_by_i, suffix_orbit, params.ell_prime);
+    ScopedTimer timer(prof ? &prof->frobenius_outer_prove_sumcheck_ns
+                           : nullptr,
+                      prof ? &prof->frobenius_outer_prove_sumcheck_calls
+                           : nullptr);
     ProductSumcheckProver sumcheck(commit_artifacts.t_packed_table, g_table);
     out.proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)] =
         sumcheck.CurrentPolynomial();
@@ -687,19 +719,25 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
     }
   }
 
-  out.proof.t_star = EvalMultilinearMonomialCoeffs(
-      commit_artifacts.t_packed_monomial_coeffs, out.rprime_suffix);
-  if (checked_path) {
-    const FieldElement g_star =
-        ComputeFinalGStar(lambda_by_i, suffix_orbit, out.rprime_suffix);
-    const FieldElement final_sumcheck_claim =
-        (params.ell_prime == 0)
-            ? initial_claim
-            : out.proof.h_by_level[0].Eval(out.rprime_suffix[0]);
-    if (final_sumcheck_claim != out.proof.t_star * g_star) {
-      LogicError((std::string(func_name) +
-                  ": honest Equality Check 3 failed")
-                     .c_str());
+  {
+    ScopedTimer timer(prof ? &prof->frobenius_outer_prove_final_check_ns
+                           : nullptr,
+                      prof ? &prof->frobenius_outer_prove_final_check_calls
+                           : nullptr);
+    out.proof.t_star = EvalMultilinearMonomialCoeffs(
+        commit_artifacts.t_packed_monomial_coeffs, out.rprime_suffix);
+    if (checked_path) {
+      const FieldElement g_star =
+          ComputeFinalGStar(lambda_by_i, suffix_orbit, out.rprime_suffix);
+      const FieldElement final_sumcheck_claim =
+          (params.ell_prime == 0)
+              ? initial_claim
+              : out.proof.h_by_level[0].Eval(out.rprime_suffix[0]);
+      if (final_sumcheck_claim != out.proof.t_star * g_star) {
+        LogicError((std::string(func_name) +
+                    ": honest Equality Check 3 failed")
+                       .c_str());
+      }
     }
   }
 
@@ -745,6 +783,11 @@ bool VerifyOuterEvalAndMaybeRecoverSuffix(
     const std::vector<FieldElement> &z, const FieldElement &claimed_s,
     long num_queries, const FrobeniusPCSOuterEvalProof &proof,
     std::vector<FieldElement> *rprime_suffix_out) {
+  Profile *prof = ActiveProfile();
+  ScopedTimer total_timer(prof ? &prof->frobenius_outer_verify_total_ns
+                               : nullptr,
+                          prof ? &prof->frobenius_outer_verify_total_calls
+                               : nullptr);
   if (static_cast<long>(z.size()) != params.ell) {
     return false;
   }
@@ -758,35 +801,54 @@ bool VerifyOuterEvalAndMaybeRecoverSuffix(
   const std::vector<FieldElement> z_prefix = SlicePoint(z, 0, params.kappa);
   const std::vector<FieldElement> r_suffix =
       SlicePoint(z, params.kappa, params.ell_prime);
-  const SuffixOrbitCache suffix_orbit =
-      BuildSuffixOrbitCache(params, r_suffix, /*build_eq_tables=*/false);
+  const SuffixOrbitCache suffix_orbit = [&] {
+    ScopedTimer timer(prof ? &prof->frobenius_outer_verify_orbit_build_ns
+                           : nullptr,
+                      prof ? &prof->frobenius_outer_verify_orbit_build_calls
+                           : nullptr);
+    return BuildSuffixOrbitCache(params, r_suffix, /*build_eq_tables=*/false);
+  }();
 
-  const std::vector<FieldElement> recovered_partials =
-      RecoverPartialEvaluationsFromSByI(params, proof.s_by_i);
+  const std::vector<FieldElement> recovered_partials = [&] {
+    ScopedTimer timer(
+        prof ? &prof->frobenius_outer_verify_recover_partials_ns : nullptr,
+        prof ? &prof->frobenius_outer_verify_recover_partials_calls : nullptr);
+    return RecoverPartialEvaluationsFromSByI(params, proof.s_by_i);
+  }();
   if (RecombineClaimFromPartials(recovered_partials, z_prefix) != claimed_s) {
     return false;
   }
 
   HashTranscript transcript = MakeFrobeniusTranscript();
-  AbsorbPublicInput(transcript, commitment, z, claimed_s);
-  for (const FieldElement &s_i : proof.s_by_i) {
-    transcript.AbsorbFieldElement(s_i);
-  }
-
   std::vector<FieldElement> rprime_prefix(
       static_cast<std::size_t>(params.kappa));
-  for (long i = 0; i < params.kappa; ++i) {
-    rprime_prefix[static_cast<std::size_t>(i)] =
-        transcript.ChallengeFieldElement("rprime/prefix/" + std::to_string(i));
-  }
-  const NTL::vec_ZZ_pE lambda_by_i = EqualityTableFromPoint(rprime_prefix);
+  NTL::vec_ZZ_pE lambda_by_i;
+  FieldElement initial_claim = FieldElement(0);
+  {
+    ScopedTimer timer(prof ? &prof->frobenius_outer_verify_prefix_replay_ns
+                           : nullptr,
+                      prof ? &prof->frobenius_outer_verify_prefix_replay_calls
+                           : nullptr);
+    AbsorbPublicInput(transcript, commitment, z, claimed_s);
+    for (const FieldElement &s_i : proof.s_by_i) {
+      transcript.AbsorbFieldElement(s_i);
+    }
 
-  const FieldElement initial_claim =
-      ComputeInitialBatchedClaim(proof.s_by_i, lambda_by_i);
+    for (long i = 0; i < params.kappa; ++i) {
+      rprime_prefix[static_cast<std::size_t>(i)] = transcript.ChallengeFieldElement(
+          "rprime/prefix/" + std::to_string(i));
+    }
+    lambda_by_i = EqualityTableFromPoint(rprime_prefix);
+    initial_claim = ComputeInitialBatchedClaim(proof.s_by_i, lambda_by_i);
+  }
 
   std::vector<FieldElement> rprime_suffix(
       static_cast<std::size_t>(params.ell_prime));
   if (params.ell_prime > 0) {
+    ScopedTimer timer(prof ? &prof->frobenius_outer_verify_sumcheck_replay_ns
+                           : nullptr,
+                      prof ? &prof->frobenius_outer_verify_sumcheck_replay_calls
+                           : nullptr);
     AbsorbQuadraticPoly(
         transcript,
         proof.h_by_level[static_cast<std::size_t>(params.ell_prime - 1)]);
@@ -806,14 +868,20 @@ bool VerifyOuterEvalAndMaybeRecoverSuffix(
     return false;
   }
 
-  const FieldElement g_star =
-      ComputeFinalGStar(lambda_by_i, suffix_orbit, rprime_suffix);
-  const FieldElement final_sumcheck_claim =
-      (params.ell_prime == 0)
-          ? initial_claim
-          : proof.h_by_level[0].Eval(rprime_suffix[0]);
-  if (final_sumcheck_claim != proof.t_star * g_star) {
-    return false;
+  {
+    ScopedTimer timer(prof ? &prof->frobenius_outer_verify_final_check_ns
+                           : nullptr,
+                      prof ? &prof->frobenius_outer_verify_final_check_calls
+                           : nullptr);
+    const FieldElement g_star =
+        ComputeFinalGStar(lambda_by_i, suffix_orbit, rprime_suffix);
+    const FieldElement final_sumcheck_claim =
+        (params.ell_prime == 0)
+            ? initial_claim
+            : proof.h_by_level[0].Eval(rprime_suffix[0]);
+    if (final_sumcheck_claim != proof.t_star * g_star) {
+      return false;
+    }
   }
 
   if (rprime_suffix_out != nullptr) {

@@ -216,7 +216,7 @@ void TestFrobeniusBenchOuterProve_HelpTextIsStable() {
   ExpectCommandSuccessContains(
       exe, {"--help"},
       {"bench_z2k_frobenius_outer_prove", "--queries <int>", "--checked",
-       "unchecked prover hot path", "outer proof generation"},
+       "--profile", "unchecked prover hot path", "outer proof generation"},
       "TestFrobeniusBenchOuterProve_HelpTextIsStable");
 }
 
@@ -227,7 +227,7 @@ void TestFrobeniusBenchOuterVerify_HelpTextIsStable() {
   const fs::path exe = g_executable_dir / "bench_z2k_frobenius_outer_verify";
   ExpectCommandSuccessContains(
       exe, {"--help"},
-      {"bench_z2k_frobenius_outer_verify", "--queries <int>",
+      {"bench_z2k_frobenius_outer_verify", "--queries <int>", "--profile",
        "outer verification"},
       "TestFrobeniusBenchOuterVerify_HelpTextIsStable");
 }
@@ -472,6 +472,21 @@ void TestFrobeniusBenchOuterProve_CheckedFlagAccepted() {
       "TestFrobeniusBenchOuterProve_CheckedFlagAccepted");
 }
 
+void TestFrobeniusBenchOuterProve_ProfileFlagAccepted() {
+  testutil::PrintInfo(
+      "Frobenius bench CLI: outer prove accepts --profile and prints profiler breakdown");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_frobenius_outer_prove";
+  ExpectCommandSuccessContains(
+      exe,
+      {"--profile", "--warmup", "0", "--reps", "1", "--queries", "2",
+       "--seed", "41"},
+      {"[frobenius outer prove]", "[profile-frobenius-outer-prover]",
+       "BuildSuffixOrbitCache", "ComputeSByI", "RecoverPartialsEq1",
+       "BatchPrepPrefix", "SumcheckSuffixRounds", "FinalTstarGstarEq3"},
+      "TestFrobeniusBenchOuterProve_ProfileFlagAccepted");
+}
+
 void TestFrobeniusBenchOuterVerify_SmokeRunPrintsStableFieldsAndSizes() {
   testutil::PrintInfo(
       "Frobenius bench CLI: outer verify smoke run prints stable fields and sane proof sizes");
@@ -511,6 +526,21 @@ void TestFrobeniusBenchOuterVerify_SmokeRunPrintsStableFieldsAndSizes() {
 #endif
 }
 
+void TestFrobeniusBenchOuterVerify_ProfileFlagAccepted() {
+  testutil::PrintInfo(
+      "Frobenius bench CLI: outer verify accepts --profile and prints profiler breakdown");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_frobenius_outer_verify";
+  ExpectCommandSuccessContains(
+      exe,
+      {"--profile", "--warmup", "0", "--reps", "1", "--queries", "2",
+       "--seed", "43"},
+      {"[frobenius outer verify]", "[profile-frobenius-outer-verifier]",
+       "BuildSuffixOrbitCache", "RecoverPartialsEq1", "ReplayPrefixBatching",
+       "ReplaySumcheckChain", "FinalGstarEq3"},
+      "TestFrobeniusBenchOuterVerify_ProfileFlagAccepted");
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -527,12 +557,14 @@ int main(int argc, char **argv) {
   RUN_TEST(TestFrobeniusBenchOuterCommit_SmokeRunPrintsStableFields);
   RUN_TEST(TestFrobeniusBenchBackendEval_SmokeRunPrintsStableFieldsAndSizes);
   RUN_TEST(TestFrobeniusBenchEval_SmokeRunPrintsStableFieldsAndSizes);
-    RUN_TEST(TestFrobeniusBenchEval_HardcodedPresetForGR2P32_64);
-    RUN_TEST(TestFrobeniusBenchEval_CheckedFlagAccepted);
-    RUN_TEST(TestFrobeniusBenchEval_ProfiledBackendVerifyFlagAccepted);
-    RUN_TEST(TestFrobeniusBenchOuterProve_SmokeRunPrintsStableFieldsAndSizes);
+  RUN_TEST(TestFrobeniusBenchEval_HardcodedPresetForGR2P32_64);
+  RUN_TEST(TestFrobeniusBenchEval_CheckedFlagAccepted);
+  RUN_TEST(TestFrobeniusBenchEval_ProfiledBackendVerifyFlagAccepted);
+  RUN_TEST(TestFrobeniusBenchOuterProve_SmokeRunPrintsStableFieldsAndSizes);
   RUN_TEST(TestFrobeniusBenchOuterProve_CheckedFlagAccepted);
+  RUN_TEST(TestFrobeniusBenchOuterProve_ProfileFlagAccepted);
   RUN_TEST(TestFrobeniusBenchOuterVerify_SmokeRunPrintsStableFieldsAndSizes);
+  RUN_TEST(TestFrobeniusBenchOuterVerify_ProfileFlagAccepted);
 
   if (g_test_failure_count != 0) {
     std::cerr << "\n" << g_test_failure_count << " test assertion(s) failed.\n";

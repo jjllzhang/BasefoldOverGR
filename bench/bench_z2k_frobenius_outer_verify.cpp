@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "Compiler/Z2k/FrobeniusProofSerialize.hpp"
+#include "PCS/Common/Profile.hpp"
 #include "bench_z2k_frobenius_common.hpp"
 
 using NTL::ZZ;
@@ -47,13 +48,15 @@ struct BenchResult {
   std::uint64_t proof_size_bytes = 0;
   double proof_size_kb = 0.0;
   std::uint64_t anti_opt_checksum = 0;
+  basefold::Profile verifier_profile;
+  bool has_profile = false;
 };
 
 BenchResult RunVerifyBenchmark(const basefold::FrobeniusPCSParams &params,
                                const vec_ZZ_pE &t_table,
                                const std::vector<ZZ_pE> &z,
                                const ZZ_pE &claimed_s, long num_queries,
-                               int warmup, int reps) {
+                               bool enable_profile, int warmup, int reps) {
   if (warmup < 0) {
     NTL::LogicError("RunVerifyBenchmark: warmup must be >= 0");
   }
@@ -77,12 +80,21 @@ BenchResult RunVerifyBenchmark(const basefold::FrobeniusPCSParams &params,
 
   std::vector<double> verify_ms;
   verify_ms.reserve(static_cast<std::size_t>(reps));
+  basefold::Profile verifier_prof;
+  basefold::ResetProfile(verifier_prof);
   std::uint64_t anti_opt_checksum = proof_size_bytes;
 
   for (int iter = -warmup; iter < reps; ++iter) {
     const auto t0 = std::chrono::steady_clock::now();
-    const bool ok = basefold::FrobeniusPCSVerifyOuterEval(
-        params, commitment, z, claimed_s, num_queries, proof);
+    const bool ok = [&] {
+      if (enable_profile && iter >= 0) {
+        basefold::ProfileGuard guard(&verifier_prof);
+        return basefold::FrobeniusPCSVerifyOuterEval(
+            params, commitment, z, claimed_s, num_queries, proof);
+      }
+      return basefold::FrobeniusPCSVerifyOuterEval(
+          params, commitment, z, claimed_s, num_queries, proof);
+    }();
     const auto t1 = std::chrono::steady_clock::now();
 
     if (!ok) {
@@ -104,6 +116,8 @@ BenchResult RunVerifyBenchmark(const basefold::FrobeniusPCSParams &params,
   out.proof_size_bytes = proof_size_bytes;
   out.proof_size_kb = static_cast<double>(proof_size_bytes) / 1024.0;
   out.anti_opt_checksum = anti_opt_checksum;
+  out.verifier_profile = verifier_prof;
+  out.has_profile = enable_profile;
   return out;
 }
 
@@ -125,6 +139,9 @@ void PrintResult(long c, long ell, long kappa, long queries, int warmup,
   std::cout << "  input proof size " << result.proof_size_kb << " KB  ("
             << result.proof_size_bytes << " B)\n";
   std::cout << "  anti-opt checksum " << result.anti_opt_checksum << "\n";
+  if (result.has_profile) {
+    basefold::PrintProfile(std::cout, result.verifier_profile);
+  }
 }
 
 void PrintHelp() {
@@ -132,7 +149,7 @@ void PrintHelp() {
       << "bench_z2k_frobenius_outer_verify\n\n"
       << "Usage:\n"
       << "  bench_z2k_frobenius_outer_verify [--c <int>] [--ell <int>] [--kappa <int>]\n"
-      << "                                   [--queries <int>] [--warmup <int>] [--reps <int>]\n"
+      << "                                   [--queries <int>] [--warmup <int>] [--reps <int>] [--profile]\n"
       << "                                   [--seed <u64>] [--auto-zeta teich]\n"
       << "                                   [--ring-mod <decimal-int>] [--ring-p <decimal-int>]\n"
       << "                                   [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
@@ -152,6 +169,7 @@ int main(int argc, char **argv) {
   int reps = 3;
   std::uint64_t seed = 0x5eed5678ULL;
   bool auto_zeta_teich = false;
+  bool enable_profile = false;
 
   ContextSpec spec;
   spec.scalar_modulus = to_ZZ(4);
@@ -172,6 +190,8 @@ int main(int argc, char **argv) {
     if (arg == "--help" || arg == "-h") {
       PrintHelp();
       return 0;
+    } else if (arg == "--profile") {
+      enable_profile = true;
     } else if (arg == "--c") {
       if (!ParseLong(need_value("--c"), c)) {
         std::cerr << "Invalid --c\n";
@@ -269,7 +289,8 @@ int main(int argc, char **argv) {
     const ZZ_pE claimed_s = EvalFromBooleanTable(t_table, ell, z);
 
     const BenchResult result = RunVerifyBenchmark(params, t_table, z, claimed_s,
-                                                  queries, warmup, reps);
+                                                  queries, enable_profile,
+                                                  warmup, reps);
     PrintResult(c, ell, kappa, queries, warmup, reps, setup.basis_summary,
                 result);
   } catch (const std::exception &e) {

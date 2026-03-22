@@ -97,6 +97,45 @@ struct Profile {
   std::uint64_t ring_switch_outer_verify_final_check_ns = 0;
   std::uint64_t ring_switch_outer_verify_final_check_calls = 0;
 
+  std::uint64_t frobenius_outer_prove_total_ns = 0;
+  std::uint64_t frobenius_outer_prove_total_calls = 0;
+
+  std::uint64_t frobenius_outer_prove_orbit_build_ns = 0;
+  std::uint64_t frobenius_outer_prove_orbit_build_calls = 0;
+
+  std::uint64_t frobenius_outer_prove_compute_s_ns = 0;
+  std::uint64_t frobenius_outer_prove_compute_s_calls = 0;
+
+  std::uint64_t frobenius_outer_prove_recover_partials_ns = 0;
+  std::uint64_t frobenius_outer_prove_recover_partials_calls = 0;
+
+  std::uint64_t frobenius_outer_prove_batch_prep_ns = 0;
+  std::uint64_t frobenius_outer_prove_batch_prep_calls = 0;
+
+  std::uint64_t frobenius_outer_prove_sumcheck_ns = 0;
+  std::uint64_t frobenius_outer_prove_sumcheck_calls = 0;
+
+  std::uint64_t frobenius_outer_prove_final_check_ns = 0;
+  std::uint64_t frobenius_outer_prove_final_check_calls = 0;
+
+  std::uint64_t frobenius_outer_verify_total_ns = 0;
+  std::uint64_t frobenius_outer_verify_total_calls = 0;
+
+  std::uint64_t frobenius_outer_verify_orbit_build_ns = 0;
+  std::uint64_t frobenius_outer_verify_orbit_build_calls = 0;
+
+  std::uint64_t frobenius_outer_verify_recover_partials_ns = 0;
+  std::uint64_t frobenius_outer_verify_recover_partials_calls = 0;
+
+  std::uint64_t frobenius_outer_verify_prefix_replay_ns = 0;
+  std::uint64_t frobenius_outer_verify_prefix_replay_calls = 0;
+
+  std::uint64_t frobenius_outer_verify_sumcheck_replay_ns = 0;
+  std::uint64_t frobenius_outer_verify_sumcheck_replay_calls = 0;
+
+  std::uint64_t frobenius_outer_verify_final_check_ns = 0;
+  std::uint64_t frobenius_outer_verify_final_check_calls = 0;
+
   std::uint64_t verify_query_merkle_ns = 0;
   std::uint64_t verify_query_merkle_calls = 0;
 
@@ -470,6 +509,96 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
        << ")\n";
     os << "    FinalGstarEq3:                " << final_check_ms << " ms"
        << "  (calls " << p.ring_switch_outer_verify_final_check_calls
+       << ")\n";
+    os << "    Other/unaccounted:            " << other_ms << " ms\n";
+  }
+
+  const bool has_frobenius_outer_prover_breakdown =
+      (p.frobenius_outer_prove_total_calls +
+       p.frobenius_outer_prove_orbit_build_calls +
+       p.frobenius_outer_prove_compute_s_calls +
+       p.frobenius_outer_prove_recover_partials_calls +
+       p.frobenius_outer_prove_batch_prep_calls +
+       p.frobenius_outer_prove_sumcheck_calls +
+       p.frobenius_outer_prove_final_check_calls) > 0;
+  if (has_frobenius_outer_prover_breakdown) {
+    const double orbit_ms = NsToMs(p.frobenius_outer_prove_orbit_build_ns);
+    const double compute_s_ms = NsToMs(p.frobenius_outer_prove_compute_s_ns);
+    const double recover_ms =
+        NsToMs(p.frobenius_outer_prove_recover_partials_ns);
+    const double batch_prep_ms =
+        NsToMs(p.frobenius_outer_prove_batch_prep_ns);
+    const double sumcheck_ms = NsToMs(p.frobenius_outer_prove_sumcheck_ns);
+    const double final_check_ms =
+        NsToMs(p.frobenius_outer_prove_final_check_ns);
+    const double profiled_ms = orbit_ms + compute_s_ms + recover_ms +
+                               batch_prep_ms + sumcheck_ms + final_check_ms;
+    const double total_ms =
+        (p.frobenius_outer_prove_total_calls > 0)
+            ? NsToMs(p.frobenius_outer_prove_total_ns)
+            : profiled_ms;
+    const double other_ms =
+        (total_ms > profiled_ms) ? (total_ms - profiled_ms) : 0.0;
+
+    os << "  [profile-frobenius-outer-prover]\n";
+    os << "    total:                        " << total_ms << " ms\n";
+    os << "    BuildSuffixOrbitCache:        " << orbit_ms << " ms"
+       << "  (calls " << p.frobenius_outer_prove_orbit_build_calls << ")\n";
+    os << "    ComputeSByI:                  " << compute_s_ms << " ms"
+       << "  (calls " << p.frobenius_outer_prove_compute_s_calls << ")\n";
+    os << "    RecoverPartialsEq1:           " << recover_ms << " ms"
+       << "  (calls " << p.frobenius_outer_prove_recover_partials_calls
+       << ")\n";
+    os << "    BatchPrepPrefix:              " << batch_prep_ms << " ms"
+       << "  (calls " << p.frobenius_outer_prove_batch_prep_calls << ")\n";
+    os << "    SumcheckSuffixRounds:         " << sumcheck_ms << " ms"
+       << "  (calls " << p.frobenius_outer_prove_sumcheck_calls << ")\n";
+    os << "    FinalTstarGstarEq3:           " << final_check_ms << " ms"
+       << "  (calls " << p.frobenius_outer_prove_final_check_calls << ")\n";
+    os << "    Other/unaccounted:            " << other_ms << " ms\n";
+  }
+
+  const bool has_frobenius_outer_verifier_breakdown =
+      (p.frobenius_outer_verify_total_calls +
+       p.frobenius_outer_verify_orbit_build_calls +
+       p.frobenius_outer_verify_recover_partials_calls +
+       p.frobenius_outer_verify_prefix_replay_calls +
+       p.frobenius_outer_verify_sumcheck_replay_calls +
+       p.frobenius_outer_verify_final_check_calls) > 0;
+  if (has_frobenius_outer_verifier_breakdown) {
+    const double orbit_ms = NsToMs(p.frobenius_outer_verify_orbit_build_ns);
+    const double recover_ms =
+        NsToMs(p.frobenius_outer_verify_recover_partials_ns);
+    const double prefix_ms =
+        NsToMs(p.frobenius_outer_verify_prefix_replay_ns);
+    const double sumcheck_ms =
+        NsToMs(p.frobenius_outer_verify_sumcheck_replay_ns);
+    const double final_check_ms =
+        NsToMs(p.frobenius_outer_verify_final_check_ns);
+    const double profiled_ms =
+        orbit_ms + recover_ms + prefix_ms + sumcheck_ms + final_check_ms;
+    const double total_ms =
+        (p.frobenius_outer_verify_total_calls > 0)
+            ? NsToMs(p.frobenius_outer_verify_total_ns)
+            : profiled_ms;
+    const double other_ms =
+        (total_ms > profiled_ms) ? (total_ms - profiled_ms) : 0.0;
+
+    os << "  [profile-frobenius-outer-verifier]\n";
+    os << "    total:                        " << total_ms << " ms\n";
+    os << "    BuildSuffixOrbitCache:        " << orbit_ms << " ms"
+       << "  (calls " << p.frobenius_outer_verify_orbit_build_calls << ")\n";
+    os << "    RecoverPartialsEq1:           " << recover_ms << " ms"
+       << "  (calls " << p.frobenius_outer_verify_recover_partials_calls
+       << ")\n";
+    os << "    ReplayPrefixBatching:         " << prefix_ms << " ms"
+       << "  (calls " << p.frobenius_outer_verify_prefix_replay_calls
+       << ")\n";
+    os << "    ReplaySumcheckChain:          " << sumcheck_ms << " ms"
+       << "  (calls " << p.frobenius_outer_verify_sumcheck_replay_calls
+       << ")\n";
+    os << "    FinalGstarEq3:                " << final_check_ms << " ms"
+       << "  (calls " << p.frobenius_outer_verify_final_check_calls
        << ")\n";
     os << "    Other/unaccounted:            " << other_ms << " ms\n";
   }
