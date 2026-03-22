@@ -43,7 +43,7 @@ struct OuterProveEvalResult {
 struct SuffixOrbitCache {
   std::vector<std::vector<ZZ_p>> suffix_coords_by_var;
   std::vector<std::vector<FieldElement>> sigma_points_by_i;
-  std::vector<NTL::vec_ZZ_pE> sigma_eq_tables_by_i;
+  std::vector<NTL::vec_ZZ_pE> sigma_eq_by_w_then_i;
 };
 
 long RotateIndex(long index, long shift, long dimension) {
@@ -404,9 +404,18 @@ SuffixOrbitCache BuildSuffixOrbitCache(const FrobeniusPCSParams &params,
   out.suffix_coords_by_var = RecoverPointNormalBasisCoords(params, r_suffix);
   const long basis_dimension =
       static_cast<long>(params.precomputed.sigma_basis_rows.size());
+  const long num_w = build_eq_tables
+                         ? Pow2LongOrThrow(
+                               params.ell_prime,
+                               "BuildSuffixOrbitCache: ell_prime is too large for long")
+                         : 0;
   out.sigma_points_by_i.resize(static_cast<std::size_t>(basis_dimension));
   if (build_eq_tables) {
-    out.sigma_eq_tables_by_i.resize(static_cast<std::size_t>(basis_dimension));
+    out.sigma_eq_by_w_then_i.resize(static_cast<std::size_t>(num_w));
+    for (long w = 0; w < num_w; ++w) {
+      out.sigma_eq_by_w_then_i[static_cast<std::size_t>(w)].SetLength(
+          basis_dimension);
+    }
   }
   for (long i = 0; i < basis_dimension; ++i) {
     out.sigma_points_by_i[static_cast<std::size_t>(i)] =
@@ -414,9 +423,15 @@ SuffixOrbitCache BuildSuffixOrbitCache(const FrobeniusPCSParams &params,
             params.precomputed.sigma_basis_rows[static_cast<std::size_t>(i)],
             out.suffix_coords_by_var, "BuildSuffixOrbitCache");
     if (build_eq_tables) {
-      out.sigma_eq_tables_by_i[static_cast<std::size_t>(i)] =
-          EqualityTableFromPoint(
-              out.sigma_points_by_i[static_cast<std::size_t>(i)]);
+      const NTL::vec_ZZ_pE eq_table = EqualityTableFromPoint(
+          out.sigma_points_by_i[static_cast<std::size_t>(i)]);
+      if (eq_table.length() != num_w) {
+        LogicError(
+            "BuildSuffixOrbitCache: orbit equality-table width mismatch");
+      }
+      for (long w = 0; w < num_w; ++w) {
+        out.sigma_eq_by_w_then_i[static_cast<std::size_t>(w)][i] = eq_table[w];
+      }
     }
   }
   return out;
@@ -507,27 +522,31 @@ FieldElement RecombineClaimFromPartials(const std::vector<FieldElement> &partial
 
 std::vector<FieldElement> ComputeSByIFromEqTablesBatched(
     const NTL::vec_ZZ_pE &t_packed_table, const SuffixOrbitCache &orbit_cache) {
+  const long num_w =
+      static_cast<long>(orbit_cache.sigma_eq_by_w_then_i.size());
+  if (t_packed_table.length() != num_w) {
+    LogicError(
+        "ComputeSByIFromEqTablesBatched: packed table width mismatch");
+  }
   const long basis_dimension =
-      static_cast<long>(orbit_cache.sigma_eq_tables_by_i.size());
+      (num_w > 0)
+          ? orbit_cache.sigma_eq_by_w_then_i[0].length()
+          : static_cast<long>(orbit_cache.sigma_points_by_i.size());
   std::vector<FieldElement> s_by_i(static_cast<std::size_t>(basis_dimension),
                                    FieldElement(0));
-  const long num_w = t_packed_table.length();
-  for (long i = 0; i < basis_dimension; ++i) {
-    if (orbit_cache.sigma_eq_tables_by_i[static_cast<std::size_t>(i)].length() !=
-        num_w) {
-      LogicError(
-          "ComputeSByIFromEqTablesBatched: orbit equality-table width mismatch");
-    }
-  }
 
   // Scan the packed evaluation table once and accumulate all orbit-point claims
-  // against the already-materialized sigma orbit equality tables.
+  // against the already-materialized sigma orbit equality table rows.
   for (long w = 0; w < num_w; ++w) {
+    const NTL::vec_ZZ_pE &eq_by_i =
+        orbit_cache.sigma_eq_by_w_then_i[static_cast<std::size_t>(w)];
+    if (eq_by_i.length() != basis_dimension) {
+      LogicError(
+          "ComputeSByIFromEqTablesBatched: orbit equality-table row width mismatch");
+    }
     const FieldElement &packed_eval = t_packed_table[w];
     for (long i = 0; i < basis_dimension; ++i) {
-      s_by_i[static_cast<std::size_t>(i)] +=
-          packed_eval *
-          orbit_cache.sigma_eq_tables_by_i[static_cast<std::size_t>(i)][w];
+      s_by_i[static_cast<std::size_t>(i)] += packed_eval * eq_by_i[i];
     }
   }
   return s_by_i;
@@ -539,10 +558,9 @@ std::vector<FieldElement> ComputeSByI(
     const SuffixOrbitCache &orbit_cache) {
   const long basis_dimension =
       static_cast<long>(orbit_cache.sigma_points_by_i.size());
-  if (!orbit_cache.sigma_eq_tables_by_i.empty()) {
-    if (static_cast<long>(orbit_cache.sigma_eq_tables_by_i.size()) !=
-        basis_dimension) {
-      LogicError("ComputeSByI: orbit equality-table count mismatch");
+  if (!orbit_cache.sigma_eq_by_w_then_i.empty()) {
+    if (orbit_cache.sigma_eq_by_w_then_i[0].length() != basis_dimension) {
+      LogicError("ComputeSByI: orbit equality-table row width mismatch");
     }
     return ComputeSByIFromEqTablesBatched(t_packed_table, orbit_cache);
   }
@@ -561,27 +579,32 @@ std::vector<FieldElement> ComputeSByI(
 NTL::vec_ZZ_pE BuildBatchedGTable(const NTL::vec_ZZ_pE &lambda_by_i,
                                   const SuffixOrbitCache &orbit_cache,
                                   long ell_prime) {
+  const long num_w =
+      static_cast<long>(orbit_cache.sigma_eq_by_w_then_i.size());
   const long basis_dimension =
-      static_cast<long>(orbit_cache.sigma_eq_tables_by_i.size());
+      (num_w > 0)
+          ? orbit_cache.sigma_eq_by_w_then_i[0].length()
+          : 0;
   if (lambda_by_i.length() != basis_dimension) {
     LogicError("BuildBatchedGTable: prefix equality table length mismatch");
   }
 
-  const long num_w = Pow2LongOrThrow(
+  const long expected_num_w = Pow2LongOrThrow(
       ell_prime, "BuildBatchedGTable: ell_prime is too large for long");
+  if (num_w != expected_num_w) {
+    LogicError("BuildBatchedGTable: orbit equality-table height mismatch");
+  }
   NTL::vec_ZZ_pE out;
   out.SetLength(num_w);
   for (long w = 0; w < num_w; ++w) {
-    NTL::clear(out[w]);
-  }
-  for (long i = 0; i < basis_dimension; ++i) {
-    const NTL::vec_ZZ_pE &eq_table =
-        orbit_cache.sigma_eq_tables_by_i[static_cast<std::size_t>(i)];
-    if (eq_table.length() != num_w) {
-      LogicError("BuildBatchedGTable: orbit equality-table width mismatch");
+    const NTL::vec_ZZ_pE &eq_by_i =
+        orbit_cache.sigma_eq_by_w_then_i[static_cast<std::size_t>(w)];
+    if (eq_by_i.length() != basis_dimension) {
+      LogicError("BuildBatchedGTable: orbit equality-table row width mismatch");
     }
-    for (long w = 0; w < num_w; ++w) {
-      out[w] += lambda_by_i[i] * eq_table[w];
+    NTL::clear(out[w]);
+    for (long i = 0; i < basis_dimension; ++i) {
+      out[w] += lambda_by_i[i] * eq_by_i[i];
     }
   }
   return out;
