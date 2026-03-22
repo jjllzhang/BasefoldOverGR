@@ -109,11 +109,11 @@ struct Profile {
   std::uint64_t frobenius_outer_prove_orbit_sigma_points_ns = 0;
   std::uint64_t frobenius_outer_prove_orbit_sigma_points_calls = 0;
 
-  std::uint64_t frobenius_outer_prove_orbit_eq_eval_ns = 0;
-  std::uint64_t frobenius_outer_prove_orbit_eq_eval_calls = 0;
+  std::uint64_t frobenius_outer_prove_orbit_base_eq_table_ns = 0;
+  std::uint64_t frobenius_outer_prove_orbit_base_eq_table_calls = 0;
 
-  std::uint64_t frobenius_outer_prove_orbit_eq_transpose_ns = 0;
-  std::uint64_t frobenius_outer_prove_orbit_eq_transpose_calls = 0;
+  std::uint64_t frobenius_outer_prove_orbit_base_eq_coords_ns = 0;
+  std::uint64_t frobenius_outer_prove_orbit_base_eq_coords_calls = 0;
 
   std::uint64_t frobenius_outer_prove_compute_s_ns = 0;
   std::uint64_t frobenius_outer_prove_compute_s_calls = 0;
@@ -542,8 +542,8 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
        p.frobenius_outer_prove_orbit_build_calls +
        p.frobenius_outer_prove_orbit_recover_coords_calls +
        p.frobenius_outer_prove_orbit_sigma_points_calls +
-       p.frobenius_outer_prove_orbit_eq_eval_calls +
-       p.frobenius_outer_prove_orbit_eq_transpose_calls +
+       p.frobenius_outer_prove_orbit_base_eq_table_calls +
+       p.frobenius_outer_prove_orbit_base_eq_coords_calls +
        p.frobenius_outer_prove_compute_s_calls +
        p.frobenius_outer_prove_recover_partials_calls +
        p.frobenius_outer_prove_batch_prep_calls +
@@ -559,12 +559,13 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
         NsToMs(p.frobenius_outer_prove_orbit_recover_coords_ns);
     const double orbit_sigma_ms =
         NsToMs(p.frobenius_outer_prove_orbit_sigma_points_ns);
-    const double orbit_eq_eval_ms =
-        NsToMs(p.frobenius_outer_prove_orbit_eq_eval_ns);
-    const double orbit_eq_transpose_ms =
-        NsToMs(p.frobenius_outer_prove_orbit_eq_transpose_ns);
+    const double orbit_base_eq_table_ms =
+        NsToMs(p.frobenius_outer_prove_orbit_base_eq_table_ns);
+    const double orbit_base_eq_coords_ms =
+        NsToMs(p.frobenius_outer_prove_orbit_base_eq_coords_ns);
     const double orbit_profiled_ms = orbit_recover_ms + orbit_sigma_ms +
-                                     orbit_eq_eval_ms + orbit_eq_transpose_ms;
+                                     orbit_base_eq_table_ms +
+                                     orbit_base_eq_coords_ms;
     const double orbit_other_ms =
         (orbit_ms > orbit_profiled_ms) ? (orbit_ms - orbit_profiled_ms) : 0.0;
     const double compute_s_ms = NsToMs(p.frobenius_outer_prove_compute_s_ns);
@@ -609,13 +610,15 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
       os << "      ComposeSigmaPoints:         " << orbit_sigma_ms << " ms"
          << "  (calls " << p.frobenius_outer_prove_orbit_sigma_points_calls
          << ")\n";
-      os << "      EqTableEval:                " << orbit_eq_eval_ms << " ms"
-         << "  (calls " << p.frobenius_outer_prove_orbit_eq_eval_calls
-         << ")\n";
-      os << "      EqTableTranspose:           " << orbit_eq_transpose_ms
+      os << "      BaseEqTable:               " << orbit_base_eq_table_ms
          << " ms"
          << "  (calls "
-         << p.frobenius_outer_prove_orbit_eq_transpose_calls << ")\n";
+         << p.frobenius_outer_prove_orbit_base_eq_table_calls
+         << ")\n";
+      os << "      BaseEqCoords:              " << orbit_base_eq_coords_ms
+         << " ms"
+         << "  (calls "
+         << p.frobenius_outer_prove_orbit_base_eq_coords_calls << ")\n";
       os << "      Other/orbit-unaccounted:    " << orbit_other_ms
          << " ms\n";
     }
