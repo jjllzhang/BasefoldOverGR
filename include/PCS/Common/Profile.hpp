@@ -103,6 +103,18 @@ struct Profile {
   std::uint64_t frobenius_outer_prove_orbit_build_ns = 0;
   std::uint64_t frobenius_outer_prove_orbit_build_calls = 0;
 
+  std::uint64_t frobenius_outer_prove_orbit_recover_coords_ns = 0;
+  std::uint64_t frobenius_outer_prove_orbit_recover_coords_calls = 0;
+
+  std::uint64_t frobenius_outer_prove_orbit_sigma_points_ns = 0;
+  std::uint64_t frobenius_outer_prove_orbit_sigma_points_calls = 0;
+
+  std::uint64_t frobenius_outer_prove_orbit_eq_eval_ns = 0;
+  std::uint64_t frobenius_outer_prove_orbit_eq_eval_calls = 0;
+
+  std::uint64_t frobenius_outer_prove_orbit_eq_transpose_ns = 0;
+  std::uint64_t frobenius_outer_prove_orbit_eq_transpose_calls = 0;
+
   std::uint64_t frobenius_outer_prove_compute_s_ns = 0;
   std::uint64_t frobenius_outer_prove_compute_s_calls = 0;
 
@@ -111,6 +123,18 @@ struct Profile {
 
   std::uint64_t frobenius_outer_prove_batch_prep_ns = 0;
   std::uint64_t frobenius_outer_prove_batch_prep_calls = 0;
+
+  std::uint64_t frobenius_outer_prove_batch_absorb_ns = 0;
+  std::uint64_t frobenius_outer_prove_batch_absorb_calls = 0;
+
+  std::uint64_t frobenius_outer_prove_batch_prefix_challenge_ns = 0;
+  std::uint64_t frobenius_outer_prove_batch_prefix_challenge_calls = 0;
+
+  std::uint64_t frobenius_outer_prove_batch_initial_claim_ns = 0;
+  std::uint64_t frobenius_outer_prove_batch_initial_claim_calls = 0;
+
+  std::uint64_t frobenius_outer_prove_batch_build_g_table_ns = 0;
+  std::uint64_t frobenius_outer_prove_batch_build_g_table_calls = 0;
 
   std::uint64_t frobenius_outer_prove_sumcheck_ns = 0;
   std::uint64_t frobenius_outer_prove_sumcheck_calls = 0;
@@ -516,18 +540,52 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
   const bool has_frobenius_outer_prover_breakdown =
       (p.frobenius_outer_prove_total_calls +
        p.frobenius_outer_prove_orbit_build_calls +
+       p.frobenius_outer_prove_orbit_recover_coords_calls +
+       p.frobenius_outer_prove_orbit_sigma_points_calls +
+       p.frobenius_outer_prove_orbit_eq_eval_calls +
+       p.frobenius_outer_prove_orbit_eq_transpose_calls +
        p.frobenius_outer_prove_compute_s_calls +
        p.frobenius_outer_prove_recover_partials_calls +
        p.frobenius_outer_prove_batch_prep_calls +
+       p.frobenius_outer_prove_batch_absorb_calls +
+       p.frobenius_outer_prove_batch_prefix_challenge_calls +
+       p.frobenius_outer_prove_batch_initial_claim_calls +
+       p.frobenius_outer_prove_batch_build_g_table_calls +
        p.frobenius_outer_prove_sumcheck_calls +
        p.frobenius_outer_prove_final_check_calls) > 0;
   if (has_frobenius_outer_prover_breakdown) {
     const double orbit_ms = NsToMs(p.frobenius_outer_prove_orbit_build_ns);
+    const double orbit_recover_ms =
+        NsToMs(p.frobenius_outer_prove_orbit_recover_coords_ns);
+    const double orbit_sigma_ms =
+        NsToMs(p.frobenius_outer_prove_orbit_sigma_points_ns);
+    const double orbit_eq_eval_ms =
+        NsToMs(p.frobenius_outer_prove_orbit_eq_eval_ns);
+    const double orbit_eq_transpose_ms =
+        NsToMs(p.frobenius_outer_prove_orbit_eq_transpose_ns);
+    const double orbit_profiled_ms = orbit_recover_ms + orbit_sigma_ms +
+                                     orbit_eq_eval_ms + orbit_eq_transpose_ms;
+    const double orbit_other_ms =
+        (orbit_ms > orbit_profiled_ms) ? (orbit_ms - orbit_profiled_ms) : 0.0;
     const double compute_s_ms = NsToMs(p.frobenius_outer_prove_compute_s_ns);
     const double recover_ms =
         NsToMs(p.frobenius_outer_prove_recover_partials_ns);
     const double batch_prep_ms =
         NsToMs(p.frobenius_outer_prove_batch_prep_ns);
+    const double batch_absorb_ms =
+        NsToMs(p.frobenius_outer_prove_batch_absorb_ns);
+    const double batch_prefix_ms =
+        NsToMs(p.frobenius_outer_prove_batch_prefix_challenge_ns);
+    const double batch_initial_claim_ms =
+        NsToMs(p.frobenius_outer_prove_batch_initial_claim_ns);
+    const double batch_g_table_ms =
+        NsToMs(p.frobenius_outer_prove_batch_build_g_table_ns);
+    const double batch_profiled_ms = batch_absorb_ms + batch_prefix_ms +
+                                     batch_initial_claim_ms + batch_g_table_ms;
+    const double batch_other_ms =
+        (batch_prep_ms > batch_profiled_ms)
+            ? (batch_prep_ms - batch_profiled_ms)
+            : 0.0;
     const double sumcheck_ms = NsToMs(p.frobenius_outer_prove_sumcheck_ns);
     const double final_check_ms =
         NsToMs(p.frobenius_outer_prove_final_check_ns);
@@ -544,6 +602,23 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
     os << "    total:                        " << total_ms << " ms\n";
     os << "    BuildSuffixOrbitCache:        " << orbit_ms << " ms"
        << "  (calls " << p.frobenius_outer_prove_orbit_build_calls << ")\n";
+    if (orbit_profiled_ms > 0.0) {
+      os << "      RecoverPointCoords:         " << orbit_recover_ms << " ms"
+         << "  (calls "
+         << p.frobenius_outer_prove_orbit_recover_coords_calls << ")\n";
+      os << "      ComposeSigmaPoints:         " << orbit_sigma_ms << " ms"
+         << "  (calls " << p.frobenius_outer_prove_orbit_sigma_points_calls
+         << ")\n";
+      os << "      EqTableEval:                " << orbit_eq_eval_ms << " ms"
+         << "  (calls " << p.frobenius_outer_prove_orbit_eq_eval_calls
+         << ")\n";
+      os << "      EqTableTranspose:           " << orbit_eq_transpose_ms
+         << " ms"
+         << "  (calls "
+         << p.frobenius_outer_prove_orbit_eq_transpose_calls << ")\n";
+      os << "      Other/orbit-unaccounted:    " << orbit_other_ms
+         << " ms\n";
+    }
     os << "    ComputeSByI:                  " << compute_s_ms << " ms"
        << "  (calls " << p.frobenius_outer_prove_compute_s_calls << ")\n";
     os << "    RecoverPartialsEq1:           " << recover_ms << " ms"
@@ -551,6 +626,24 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
        << ")\n";
     os << "    BatchPrepPrefix:              " << batch_prep_ms << " ms"
        << "  (calls " << p.frobenius_outer_prove_batch_prep_calls << ")\n";
+    if (batch_profiled_ms > 0.0) {
+      os << "      TranscriptAbsorb:           " << batch_absorb_ms << " ms"
+         << "  (calls " << p.frobenius_outer_prove_batch_absorb_calls
+         << ")\n";
+      os << "      PrefixChallengesLambda:     " << batch_prefix_ms << " ms"
+         << "  (calls "
+         << p.frobenius_outer_prove_batch_prefix_challenge_calls << ")\n";
+      os << "      InitialClaim:               " << batch_initial_claim_ms
+         << " ms"
+         << "  (calls "
+         << p.frobenius_outer_prove_batch_initial_claim_calls << ")\n";
+      os << "      BuildBatchedGTable:         " << batch_g_table_ms
+         << " ms"
+         << "  (calls "
+         << p.frobenius_outer_prove_batch_build_g_table_calls << ")\n";
+      os << "      Other/batch-unaccounted:    " << batch_other_ms
+         << " ms\n";
+    }
     os << "    SumcheckSuffixRounds:         " << sumcheck_ms << " ms"
        << "  (calls " << p.frobenius_outer_prove_sumcheck_calls << ")\n";
     os << "    FinalTstarGstarEq3:           " << final_check_ms << " ms"
