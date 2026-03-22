@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "Compiler/Z2k/FrobeniusProofSerialize.hpp"
+#include "PCS/Common/Profile.hpp"
 #include "bench_z2k_frobenius_common.hpp"
 
 using NTL::ZZ;
@@ -47,14 +48,16 @@ struct BenchResult {
   std::uint64_t proof_size_bytes = 0;
   double proof_size_kb = 0.0;
   std::uint64_t anti_opt_checksum = 0;
+  basefold::Profile prover_profile;
+  bool has_profile = false;
 };
 
 BenchResult RunProveBenchmark(const basefold::FrobeniusPCSParams &params,
                               const vec_ZZ_pE &t_table,
                               const std::vector<ZZ_pE> &z,
                               const ZZ_pE &claimed_s, long num_queries,
-                              bool use_checked_prover_path, int warmup,
-                              int reps) {
+                              bool use_checked_prover_path,
+                              bool enable_profile, int warmup, int reps) {
   if (warmup < 0) {
     NTL::LogicError("RunProveBenchmark: warmup must be >= 0");
   }
@@ -73,18 +76,32 @@ BenchResult RunProveBenchmark(const basefold::FrobeniusPCSParams &params,
   std::vector<double> prove_ms;
   prove_ms.reserve(static_cast<std::size_t>(reps));
 
+  basefold::Profile prover_prof;
+  basefold::ResetProfile(prover_prof);
+
   std::uint64_t anti_opt_checksum = 0;
   std::uint64_t proof_size_bytes = 0;
   for (int iter = -warmup; iter < reps; ++iter) {
     const auto t0 = std::chrono::steady_clock::now();
-    const basefold::FrobeniusPCSOuterEvalProof proof =
-        use_checked_prover_path
-            ? basefold::FrobeniusPCSProveOuterEvalFromCommitArtifacts(
-                  params, t_table, commitment, z, claimed_s, num_queries,
-                  outer_commit_artifacts)
-            : basefold::FrobeniusPCSProveOuterEvalFromCommitArtifactsUnchecked(
-                  params, t_table, commitment, z, claimed_s, num_queries,
-                  outer_commit_artifacts);
+    const basefold::FrobeniusPCSOuterEvalProof proof = [&] {
+      if (enable_profile && iter >= 0) {
+        basefold::ProfileGuard guard(&prover_prof);
+        return use_checked_prover_path
+                   ? basefold::FrobeniusPCSProveOuterEvalFromCommitArtifacts(
+                         params, t_table, commitment, z, claimed_s,
+                         num_queries, outer_commit_artifacts)
+                   : basefold::FrobeniusPCSProveOuterEvalFromCommitArtifactsUnchecked(
+                         params, t_table, commitment, z, claimed_s,
+                         num_queries, outer_commit_artifacts);
+      }
+      return use_checked_prover_path
+                 ? basefold::FrobeniusPCSProveOuterEvalFromCommitArtifacts(
+                       params, t_table, commitment, z, claimed_s, num_queries,
+                       outer_commit_artifacts)
+                 : basefold::FrobeniusPCSProveOuterEvalFromCommitArtifactsUnchecked(
+                       params, t_table, commitment, z, claimed_s, num_queries,
+                       outer_commit_artifacts);
+    }();
     const auto t1 = std::chrono::steady_clock::now();
 
     proof_size_bytes = basefold::FrobeniusPCSOuterProofSizeBytes(params, proof);
@@ -103,6 +120,8 @@ BenchResult RunProveBenchmark(const basefold::FrobeniusPCSParams &params,
   out.proof_size_bytes = proof_size_bytes;
   out.proof_size_kb = static_cast<double>(proof_size_bytes) / 1024.0;
   out.anti_opt_checksum = anti_opt_checksum;
+  out.prover_profile = prover_prof;
+  out.has_profile = enable_profile;
   return out;
 }
 
@@ -124,6 +143,9 @@ void PrintResult(long c, long ell, long kappa, long queries, int warmup,
   std::cout << "  proof size  " << result.proof_size_kb << " KB  ("
             << result.proof_size_bytes << " B)\n";
   std::cout << "  anti-opt checksum " << result.anti_opt_checksum << "\n";
+  if (result.has_profile) {
+    basefold::PrintProfile(std::cout, result.prover_profile);
+  }
 }
 
 void PrintHelp() {
@@ -131,7 +153,7 @@ void PrintHelp() {
       << "bench_z2k_frobenius_outer_prove\n\n"
       << "Usage:\n"
       << "  bench_z2k_frobenius_outer_prove [--c <int>] [--ell <int>] [--kappa <int>]\n"
-      << "                                  [--queries <int>] [--warmup <int>] [--reps <int>] [--checked]\n"
+      << "                                  [--queries <int>] [--warmup <int>] [--reps <int>] [--checked] [--profile]\n"
       << "                                  [--seed <u64>] [--auto-zeta teich]\n"
       << "                                  [--ring-mod <decimal-int>] [--ring-p <decimal-int>]\n"
       << "                                  [--ring-F <a0,a1,...>] [--ring-zeta <b0,b1,...>]\n\n"
@@ -153,6 +175,7 @@ int main(int argc, char **argv) {
   std::uint64_t seed = 0x5eed5678ULL;
   bool auto_zeta_teich = false;
   bool use_checked_prover_path = false;
+  bool enable_profile = false;
 
   ContextSpec spec;
   spec.scalar_modulus = to_ZZ(4);
@@ -175,6 +198,8 @@ int main(int argc, char **argv) {
       return 0;
     } else if (arg == "--checked") {
       use_checked_prover_path = true;
+    } else if (arg == "--profile") {
+      enable_profile = true;
     } else if (arg == "--c") {
       if (!ParseLong(need_value("--c"), c)) {
         std::cerr << "Invalid --c\n";
@@ -273,7 +298,8 @@ int main(int argc, char **argv) {
 
     const BenchResult result =
         RunProveBenchmark(params, t_table, z, claimed_s, queries,
-                          use_checked_prover_path, warmup, reps);
+                          use_checked_prover_path, enable_profile, warmup,
+                          reps);
     PrintResult(c, ell, kappa, queries, warmup, reps, setup.basis_summary,
                 result);
   } catch (const std::exception &e) {
