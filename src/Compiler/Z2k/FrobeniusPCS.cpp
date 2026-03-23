@@ -65,6 +65,8 @@ struct OrbitBuildProfileTargets {
 
 constexpr long kFrobeniusBaseEqCoordsParallelThreshold = 512;
 constexpr long kFrobeniusSigmaPointsParallelThreshold = 8;
+constexpr long kFrobeniusMuByJParallelThreshold = 8;
+constexpr long kFrobeniusBatchedGRowsParallelThreshold = 512;
 
 long RotateIndex(long index, long shift, long dimension) {
   if (dimension <= 0) {
@@ -774,24 +776,33 @@ NTL::vec_ZZ_pE BuildBatchedGTable(const FrobeniusPCSParams &params,
     LogicError("BuildBatchedGTable: base equality-coordinate shape mismatch");
   }
 
+  const bool allow_parallel = (ActiveProfile() == nullptr);
   std::vector<FieldElement> mu_by_j(static_cast<std::size_t>(basis_dimension),
                                     FieldElement(0));
-  for (long i = 0; i < basis_dimension; ++i) {
-    const std::vector<FieldElement> &sigma_basis_row =
-        params.precomputed.sigma_basis_rows[static_cast<std::size_t>(i)];
-    if (static_cast<long>(sigma_basis_row.size()) != basis_dimension) {
-      LogicError("BuildBatchedGTable: sigma basis-row width mismatch");
+  const auto compute_mu_j = [&](long j) {
+    FieldElement acc = FieldElement(0);
+    for (long i = 0; i < basis_dimension; ++i) {
+      const std::vector<FieldElement> &sigma_basis_row =
+          params.precomputed.sigma_basis_rows[static_cast<std::size_t>(i)];
+      if (static_cast<long>(sigma_basis_row.size()) != basis_dimension) {
+        LogicError("BuildBatchedGTable: sigma basis-row width mismatch");
+      }
+      acc += lambda_by_i[i] * sigma_basis_row[static_cast<std::size_t>(j)];
     }
-    const FieldElement &lambda_i = lambda_by_i[i];
+    mu_by_j[static_cast<std::size_t>(j)] = acc;
+  };
+  if (allow_parallel) {
+    pcs_common_internal::ForEachIndexMaybeParallel(
+        0, basis_dimension, kFrobeniusMuByJParallelThreshold, compute_mu_j);
+  } else {
     for (long j = 0; j < basis_dimension; ++j) {
-      mu_by_j[static_cast<std::size_t>(j)] +=
-          lambda_i * sigma_basis_row[static_cast<std::size_t>(j)];
+      compute_mu_j(j);
     }
   }
 
   NTL::vec_ZZ_pE out;
   out.SetLength(num_w);
-  for (long w = 0; w < num_w; ++w) {
+  const auto build_one_row = [&](long w) {
     const ZZ_p *coords =
         BaseEqCoordsRowOrThrow(orbit_cache, w, basis_dimension,
                                "BuildBatchedGTable");
@@ -801,6 +812,14 @@ NTL::vec_ZZ_pE BuildBatchedGTable(const FrobeniusPCSParams &params,
         out[w] += BaseRingConstant(coords[j]) *
                   mu_by_j[static_cast<std::size_t>(j)];
       }
+    }
+  };
+  if (allow_parallel) {
+    pcs_common_internal::ForEachIndexMaybeParallel(
+        0, num_w, kFrobeniusBatchedGRowsParallelThreshold, build_one_row);
+  } else {
+    for (long w = 0; w < num_w; ++w) {
+      build_one_row(w);
     }
   }
   return out;
