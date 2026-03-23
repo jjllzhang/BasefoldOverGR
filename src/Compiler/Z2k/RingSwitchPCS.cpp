@@ -355,9 +355,9 @@ struct RingSwitchSuffixCoordCache {
   long basis_dimension = 0;
   long ell_prime = 0;
   long num_w = 0;
-  // Row-major storage of lifted alpha-basis constants for eq_{z_suffix}(w):
+  // Row-major storage of alpha-basis base-ring coordinates for eq_{z_suffix}(w):
   // row `w`, then column `u`.
-  vec_ZZ_pE alpha_eq_by_w_then_u;
+  std::vector<ZZ_p> alpha_eq_by_w_then_u;
 };
 
 struct SuffixCacheBuildProfileTargets {
@@ -641,8 +641,8 @@ RecombineClaimFromPartials(const std::vector<FieldElement> &partials,
   return acc;
 }
 
-const ZZ_pE *AlphaEqRowOrThrow(const RingSwitchSuffixCoordCache &suffix_cache,
-                               long w, const char *func_name) {
+const ZZ_p *AlphaEqBaseRowOrThrow(const RingSwitchSuffixCoordCache &suffix_cache,
+                                  long w, const char *func_name) {
   if (suffix_cache.basis_dimension < 0) {
     LogicError(
         (std::string(func_name) + ": basis dimension must be non-negative")
@@ -656,12 +656,12 @@ const ZZ_pE *AlphaEqRowOrThrow(const RingSwitchSuffixCoordCache &suffix_cache,
       static_cast<std::size_t>(w) *
       static_cast<std::size_t>(suffix_cache.basis_dimension);
   if (row_offset + static_cast<std::size_t>(suffix_cache.basis_dimension) >
-      static_cast<std::size_t>(suffix_cache.alpha_eq_by_w_then_u.length())) {
+      suffix_cache.alpha_eq_by_w_then_u.size()) {
     LogicError(
         (std::string(func_name) + ": suffix-coordinate row is out of bounds")
             .c_str());
   }
-  return suffix_cache.alpha_eq_by_w_then_u.elts() + row_offset;
+  return suffix_cache.alpha_eq_by_w_then_u.data() + row_offset;
 }
 
 FieldElement OneFieldElement() {
@@ -752,13 +752,17 @@ void RecoverAlphaCoordsToScratchUnchecked(
   }
 }
 
-void LiftAlphaCoordsScratchToRowUnchecked(
-    const std::vector<ZZ_p> &alpha_coords_scratch, ZZ_pE *out_row) {
-  const long basis_dimension = static_cast<long>(alpha_coords_scratch.size());
-  for (long u = 0; u < basis_dimension; ++u) {
-    out_row[u] =
-        BaseRingConstant(alpha_coords_scratch[static_cast<std::size_t>(u)]);
-  }
+void CopyAlphaCoordsScratchToBaseRowUnchecked(
+    const std::vector<ZZ_p> &alpha_coords_scratch, ZZ_p *out_row) {
+  std::copy(alpha_coords_scratch.begin(), alpha_coords_scratch.end(), out_row);
+}
+
+void AddScaledByBaseScalarUnchecked(FieldElement &acc,
+                                    const FieldElement &value,
+                                    const ZZ_p &scalar,
+                                    FieldElement &scratch) {
+  NTL::mul(scratch, value, scalar);
+  acc += scratch;
 }
 
 RingSwitchSuffixCoordCache BuildRingSwitchSuffixCoordCache(
@@ -781,7 +785,7 @@ RingSwitchSuffixCoordCache BuildRingSwitchSuffixCoordCache(
       CheckedMultiplyLong(out.basis_dimension, out.num_w,
                           "BuildRingSwitchSuffixCoordCache: coordinate table "
                           "is too large for long");
-  out.alpha_eq_by_w_then_u.SetLength(total_coeffs);
+  out.alpha_eq_by_w_then_u.resize(static_cast<std::size_t>(total_coeffs));
 
   if (profile_targets != nullptr &&
       profile_targets->eq_table_calls != nullptr) {
@@ -829,8 +833,8 @@ RingSwitchSuffixCoordCache BuildRingSwitchSuffixCoordCache(
         (profile_targets != nullptr && profile_targets->lift_rows_ns != nullptr)
             ? NowNs()
             : 0;
-    LiftAlphaCoordsScratchToRowUnchecked(
-        alpha_coords_scratch, out.alpha_eq_by_w_then_u.elts() + row_offset);
+    CopyAlphaCoordsScratchToBaseRowUnchecked(
+        alpha_coords_scratch, out.alpha_eq_by_w_then_u.data() + row_offset);
     if (profile_targets != nullptr &&
         profile_targets->lift_rows_ns != nullptr) {
       *profile_targets->lift_rows_ns += (NowNs() - lift_rows_start_ns);
@@ -869,16 +873,18 @@ ComputeSByU(const RingSwitchSuffixCoordCache &suffix_cache,
       const int tid = omp_get_thread_num();
       std::vector<FieldElement> &local_s_by_u =
           partial_s_by_u[static_cast<std::size_t>(tid)];
+      FieldElement scaled;
 
 #pragma omp for schedule(static)
       for (long w = 0; w < num_w; ++w) {
-        const ZZ_pE *lifted_row =
-            AlphaEqRowOrThrow(suffix_cache, w, "ComputeSByU");
+        const ZZ_p *base_row =
+            AlphaEqBaseRowOrThrow(suffix_cache, w, "ComputeSByU");
         const FieldElement &packed_eval = t_packed_table[w];
         for (long u = 0; u < num_u; ++u) {
-          if (lifted_row[u] != 0) {
-            local_s_by_u[static_cast<std::size_t>(u)] +=
-                packed_eval * lifted_row[u];
+          if (base_row[u] != 0) {
+            AddScaledByBaseScalarUnchecked(
+                local_s_by_u[static_cast<std::size_t>(u)], packed_eval,
+                base_row[u], scaled);
           }
         }
       }
@@ -896,13 +902,16 @@ ComputeSByU(const RingSwitchSuffixCoordCache &suffix_cache,
   }
 #endif
   if (!accumulated_in_parallel) {
+    FieldElement scaled;
     for (long w = 0; w < num_w; ++w) {
-      const ZZ_pE *lifted_row =
-          AlphaEqRowOrThrow(suffix_cache, w, "ComputeSByU");
+      const ZZ_p *base_row =
+          AlphaEqBaseRowOrThrow(suffix_cache, w, "ComputeSByU");
       const FieldElement &packed_eval = t_packed_table[w];
       for (long u = 0; u < num_u; ++u) {
-        if (lifted_row[u] != 0) {
-          s_by_u[static_cast<std::size_t>(u)] += packed_eval * lifted_row[u];
+        if (base_row[u] != 0) {
+          AddScaledByBaseScalarUnchecked(
+              s_by_u[static_cast<std::size_t>(u)], packed_eval, base_row[u],
+              scaled);
         }
       }
     }
@@ -920,11 +929,12 @@ EvaluateBatchedGRowAtW(const RingSwitchSuffixCoordCache &suffix_cache, long w,
             .c_str());
   }
 
-  const ZZ_pE *lifted_row = AlphaEqRowOrThrow(suffix_cache, w, func_name);
+  const ZZ_p *base_row = AlphaEqBaseRowOrThrow(suffix_cache, w, func_name);
   FieldElement acc = FieldElement(0);
+  FieldElement scaled;
   for (long u = 0; u < num_u; ++u) {
-    if (lifted_row[u] != 0) {
-      acc += lifted_row[u] * eq_prefix[u];
+    if (base_row[u] != 0) {
+      AddScaledByBaseScalarUnchecked(acc, eq_prefix[u], base_row[u], scaled);
     }
   }
   return acc;
@@ -1916,11 +1926,11 @@ BuildRingSwitchComponentTensorInternal(const RingSwitchPCSParams &params,
   }
 
   for (long w = 0; w < num_w; ++w) {
-    const ZZ_pE *lifted_row =
-        AlphaEqRowOrThrow(suffix_cache, w, "BuildRingSwitchComponentTensor");
+    const ZZ_p *base_row = AlphaEqBaseRowOrThrow(
+        suffix_cache, w, "BuildRingSwitchComponentTensor");
     for (long u = 0; u < basis_dimension; ++u) {
       const long row_major_index = u * num_w + w;
-      const ZZ_pE lifted_coeff = lifted_row[u];
+      const ZZ_pE lifted_coeff = BaseRingConstant(base_row[u]);
       tensor.a_by_u_then_w[row_major_index] = lifted_coeff;
       if (materialize_r_evaluation_caches) {
         const long flat_index = u + w * basis_dimension;
