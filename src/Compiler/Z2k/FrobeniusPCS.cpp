@@ -65,6 +65,8 @@ struct OrbitBuildProfileTargets {
 
 constexpr long kFrobeniusBaseEqCoordsParallelThreshold = 512;
 constexpr long kFrobeniusSigmaPointsParallelThreshold = 8;
+constexpr long kFrobeniusComputeSAccumParallelThreshold = 512;
+constexpr long kFrobeniusComputeSRowsParallelThreshold = 8;
 constexpr long kFrobeniusMuByJParallelThreshold = 8;
 constexpr long kFrobeniusBatchedGRowsParallelThreshold = 512;
 
@@ -697,23 +699,72 @@ std::vector<FieldElement> ComputeSByIFromBaseEqCoords(
     LogicError(
         "ComputeSByIFromBaseEqCoords: base equality-coordinate shape mismatch");
   }
+  const bool allow_parallel = (ActiveProfile() == nullptr);
   std::vector<FieldElement> a_by_j(static_cast<std::size_t>(basis_dimension),
                                    FieldElement(0));
-  for (long w = 0; w < num_w; ++w) {
-    const ZZ_p *coords = BaseEqCoordsRowOrThrow(
-        orbit_cache, w, basis_dimension, "ComputeSByIFromBaseEqCoords");
-    const FieldElement &packed_eval = t_packed_table[w];
-    for (long j = 0; j < basis_dimension; ++j) {
-      if (coords[j] != 0) {
-        a_by_j[static_cast<std::size_t>(j)] +=
-            packed_eval * BaseRingConstant(coords[j]);
+  bool accumulated_in_parallel = false;
+#if defined(BASEFOLD_USE_OPENMP)
+  if (allow_parallel) {
+    const int threads_to_use = pcs_common_internal::ChooseElementParallelThreads(
+        num_w, kFrobeniusComputeSAccumParallelThreshold);
+    if (threads_to_use >= 2) {
+      const pcs_common_internal::NtlThreadContextSnapshot ntl_ctx =
+          pcs_common_internal::CaptureNtlThreadContextSnapshot();
+      std::vector<std::vector<FieldElement>> partial_a_by_j(
+          static_cast<std::size_t>(threads_to_use),
+          std::vector<FieldElement>(static_cast<std::size_t>(basis_dimension),
+                                    FieldElement(0)));
+
+#pragma omp parallel num_threads(threads_to_use)
+      {
+        pcs_common_internal::InitNtlThreadContext(ntl_ctx);
+        const int tid = omp_get_thread_num();
+        std::vector<FieldElement> &local_a_by_j =
+            partial_a_by_j[static_cast<std::size_t>(tid)];
+
+#pragma omp for schedule(static)
+        for (long w = 0; w < num_w; ++w) {
+          const ZZ_p *coords = BaseEqCoordsRowOrThrow(
+              orbit_cache, w, basis_dimension, "ComputeSByIFromBaseEqCoords");
+          const FieldElement &packed_eval = t_packed_table[w];
+          for (long j = 0; j < basis_dimension; ++j) {
+            if (coords[j] != 0) {
+              local_a_by_j[static_cast<std::size_t>(j)] +=
+                  packed_eval * BaseRingConstant(coords[j]);
+            }
+          }
+        }
+      }
+
+      for (int tid = 0; tid < threads_to_use; ++tid) {
+        const std::vector<FieldElement> &local_a_by_j =
+            partial_a_by_j[static_cast<std::size_t>(tid)];
+        for (long j = 0; j < basis_dimension; ++j) {
+          a_by_j[static_cast<std::size_t>(j)] +=
+              local_a_by_j[static_cast<std::size_t>(j)];
+        }
+      }
+      accumulated_in_parallel = true;
+    }
+  }
+#endif
+  if (!accumulated_in_parallel) {
+    for (long w = 0; w < num_w; ++w) {
+      const ZZ_p *coords = BaseEqCoordsRowOrThrow(
+          orbit_cache, w, basis_dimension, "ComputeSByIFromBaseEqCoords");
+      const FieldElement &packed_eval = t_packed_table[w];
+      for (long j = 0; j < basis_dimension; ++j) {
+        if (coords[j] != 0) {
+          a_by_j[static_cast<std::size_t>(j)] +=
+              packed_eval * BaseRingConstant(coords[j]);
+        }
       }
     }
   }
 
   std::vector<FieldElement> s_by_i(static_cast<std::size_t>(basis_dimension),
                                    FieldElement(0));
-  for (long i = 0; i < basis_dimension; ++i) {
+  const auto compute_one_s = [&](long i) {
     FieldElement acc = FieldElement(0);
     const std::vector<FieldElement> &sigma_basis_row =
         params.precomputed.sigma_basis_rows[static_cast<std::size_t>(i)];
@@ -726,6 +777,15 @@ std::vector<FieldElement> ComputeSByIFromBaseEqCoords(
              sigma_basis_row[static_cast<std::size_t>(j)];
     }
     s_by_i[static_cast<std::size_t>(i)] = acc;
+  };
+  if (allow_parallel) {
+    pcs_common_internal::ForEachIndexMaybeParallel(
+        0, basis_dimension, kFrobeniusComputeSRowsParallelThreshold,
+        compute_one_s);
+  } else {
+    for (long i = 0; i < basis_dimension; ++i) {
+      compute_one_s(i);
+    }
   }
   return s_by_i;
 }
