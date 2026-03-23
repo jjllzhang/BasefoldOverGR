@@ -310,10 +310,11 @@ void TestRingSwitchBenchOuterProve_ProfileFlagAccepted() {
   ExpectCommandSuccessContains(
       exe, {"--profile", "--warmup", "0", "--reps", "1", "--queries", "2"},
       {"[ring-switch outer prove]", "[profile-ring-switch-outer-prover]",
-       "BuildComponentTensor", "ComputeSByU", "RecoverPartialsEq1",
-       "BatchPrepPrefix", "TranscriptAbsorb", "PrefixChallengesRPrime",
-       "BuildEqPrefixTable", "InitialClaim", "BuildBatchedGTable",
-       "SumcheckSuffixRounds", "FinalTstarGstarEq3"},
+       "BuildComponentTensor", "BuildSuffixEqTable", "RecoverAlphaCoords",
+       "LiftAlphaRows", "ComputeSByU", "RecoverPartialsEq1", "BatchPrepPrefix",
+       "TranscriptAbsorb", "PrefixChallengesRPrime", "BuildEqPrefixTable",
+       "InitialClaim", "BuildBatchedGTable", "SumcheckSuffixRounds",
+       "FinalTstarGstarEq3"},
       "TestRingSwitchBenchOuterProve_ProfileFlagAccepted");
 }
 
@@ -325,7 +326,8 @@ void TestRingSwitchBenchOuterVerify_ProfileFlagAccepted() {
   ExpectCommandSuccessContains(
       exe, {"--profile", "--warmup", "0", "--reps", "1", "--queries", "2"},
       {"[ring-switch outer verify]", "[profile-ring-switch-outer-verifier]",
-       "BuildComponentTensor", "RecoverPartialsEq1", "ReplayPrefixBatching",
+       "BuildComponentTensor", "BuildSuffixEqTable", "RecoverAlphaCoords",
+       "LiftAlphaRows", "RecoverPartialsEq1", "ReplayPrefixBatching",
        "TranscriptAbsorb", "PrefixChallengesRPrime", "BuildEqPrefixTable",
        "InitialClaim", "ReplaySumcheckChain", "FinalGstarEq3",
        "BuildEqSuffixTable", "EvaluateGstar"},

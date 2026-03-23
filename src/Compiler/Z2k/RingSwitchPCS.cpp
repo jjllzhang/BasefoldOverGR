@@ -360,6 +360,15 @@ struct RingSwitchSuffixCoordCache {
   vec_ZZ_pE alpha_eq_by_w_then_u;
 };
 
+struct SuffixCacheBuildProfileTargets {
+  std::uint64_t *eq_table_ns = nullptr;
+  std::uint64_t *eq_table_calls = nullptr;
+  std::uint64_t *alpha_recover_ns = nullptr;
+  std::uint64_t *alpha_recover_calls = nullptr;
+  std::uint64_t *lift_rows_ns = nullptr;
+  std::uint64_t *lift_rows_calls = nullptr;
+};
+
 constexpr long kRingSwitchComputeSAccumParallelThreshold = 512;
 constexpr long kRingSwitchBatchedGRowsParallelThreshold = 512;
 constexpr long kRingSwitchFinalGStarParallelThreshold = 512;
@@ -655,9 +664,10 @@ const ZZ_pE *AlphaEqRowOrThrow(const RingSwitchSuffixCoordCache &suffix_cache,
   return suffix_cache.alpha_eq_by_w_then_u.elts() + row_offset;
 }
 
-RingSwitchSuffixCoordCache
-BuildRingSwitchSuffixCoordCache(const RingSwitchPCSParams &params,
-                                const std::vector<FieldElement> &suffix_point) {
+RingSwitchSuffixCoordCache BuildRingSwitchSuffixCoordCache(
+    const RingSwitchPCSParams &params,
+    const std::vector<FieldElement> &suffix_point,
+    const SuffixCacheBuildProfileTargets *profile_targets = nullptr) {
   if (static_cast<long>(suffix_point.size()) != params.ell_prime) {
     LogicError("BuildRingSwitchSuffixCoordCache: suffix point dimension must "
                "equal ell_prime");
@@ -676,13 +686,37 @@ BuildRingSwitchSuffixCoordCache(const RingSwitchPCSParams &params,
                           "is too large for long");
   out.alpha_eq_by_w_then_u.SetLength(total_coeffs);
 
+  if (profile_targets != nullptr &&
+      profile_targets->eq_table_calls != nullptr) {
+    ++(*profile_targets->eq_table_calls);
+  }
+  const std::uint64_t eq_table_start_ns =
+      (profile_targets != nullptr && profile_targets->eq_table_ns != nullptr)
+          ? NowNs()
+          : 0;
   const vec_ZZ_pE eq_suffix_table = EqualityTableFromPoint(suffix_point);
+  if (profile_targets != nullptr && profile_targets->eq_table_ns != nullptr) {
+    *profile_targets->eq_table_ns += (NowNs() - eq_table_start_ns);
+  }
   if (eq_suffix_table.length() != out.num_w) {
     LogicError(
         "BuildRingSwitchSuffixCoordCache: equality table length mismatch");
   }
 
+  if (profile_targets != nullptr &&
+      profile_targets->alpha_recover_calls != nullptr) {
+    ++(*profile_targets->alpha_recover_calls);
+  }
+  if (profile_targets != nullptr &&
+      profile_targets->lift_rows_calls != nullptr) {
+    ++(*profile_targets->lift_rows_calls);
+  }
   for (long w = 0; w < out.num_w; ++w) {
+    const std::uint64_t alpha_recover_start_ns =
+        (profile_targets != nullptr &&
+         profile_targets->alpha_recover_ns != nullptr)
+            ? NowNs()
+            : 0;
     const std::vector<ZZ_p> eq_power_coords = ExtractPowerBasisCoordsUnchecked(
         out.basis_dimension, eq_suffix_table[w]);
     const std::vector<ZZ_p> alpha_coords =
@@ -691,12 +725,24 @@ BuildRingSwitchSuffixCoordCache(const RingSwitchPCSParams &params,
             : ApplyRecoverRowsUnchecked(
                   params.precomputed.alpha_recover_from_power_rows,
                   eq_power_coords);
+    if (profile_targets != nullptr &&
+        profile_targets->alpha_recover_ns != nullptr) {
+      *profile_targets->alpha_recover_ns += (NowNs() - alpha_recover_start_ns);
+    }
     const std::size_t row_offset =
         static_cast<std::size_t>(w) *
         static_cast<std::size_t>(out.basis_dimension);
+    const std::uint64_t lift_rows_start_ns =
+        (profile_targets != nullptr && profile_targets->lift_rows_ns != nullptr)
+            ? NowNs()
+            : 0;
     for (long u = 0; u < out.basis_dimension; ++u) {
       out.alpha_eq_by_w_then_u[row_offset + static_cast<std::size_t>(u)] =
           BaseRingConstant(alpha_coords[static_cast<std::size_t>(u)]);
+    }
+    if (profile_targets != nullptr &&
+        profile_targets->lift_rows_ns != nullptr) {
+      *profile_targets->lift_rows_ns += (NowNs() - lift_rows_start_ns);
     }
   }
 
@@ -936,6 +982,23 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
     ScopedTimer timer(
         prof ? &prof->ring_switch_outer_prove_tensor_build_ns : nullptr,
         prof ? &prof->ring_switch_outer_prove_tensor_build_calls : nullptr);
+    SuffixCacheBuildProfileTargets profile_targets;
+    if (prof != nullptr) {
+      profile_targets.eq_table_ns =
+          &prof->ring_switch_outer_prove_tensor_eq_table_ns;
+      profile_targets.eq_table_calls =
+          &prof->ring_switch_outer_prove_tensor_eq_table_calls;
+      profile_targets.alpha_recover_ns =
+          &prof->ring_switch_outer_prove_tensor_alpha_recover_ns;
+      profile_targets.alpha_recover_calls =
+          &prof->ring_switch_outer_prove_tensor_alpha_recover_calls;
+      profile_targets.lift_rows_ns =
+          &prof->ring_switch_outer_prove_tensor_lift_rows_ns;
+      profile_targets.lift_rows_calls =
+          &prof->ring_switch_outer_prove_tensor_lift_rows_calls;
+      return BuildRingSwitchSuffixCoordCache(params, z_suffix,
+                                             &profile_targets);
+    }
     return BuildRingSwitchSuffixCoordCache(params, z_suffix);
   }();
 
@@ -1151,6 +1214,23 @@ bool VerifyOuterEvalAndMaybeRecoverSuffix(
     ScopedTimer timer(
         prof ? &prof->ring_switch_outer_verify_tensor_build_ns : nullptr,
         prof ? &prof->ring_switch_outer_verify_tensor_build_calls : nullptr);
+    SuffixCacheBuildProfileTargets profile_targets;
+    if (prof != nullptr) {
+      profile_targets.eq_table_ns =
+          &prof->ring_switch_outer_verify_tensor_eq_table_ns;
+      profile_targets.eq_table_calls =
+          &prof->ring_switch_outer_verify_tensor_eq_table_calls;
+      profile_targets.alpha_recover_ns =
+          &prof->ring_switch_outer_verify_tensor_alpha_recover_ns;
+      profile_targets.alpha_recover_calls =
+          &prof->ring_switch_outer_verify_tensor_alpha_recover_calls;
+      profile_targets.lift_rows_ns =
+          &prof->ring_switch_outer_verify_tensor_lift_rows_ns;
+      profile_targets.lift_rows_calls =
+          &prof->ring_switch_outer_verify_tensor_lift_rows_calls;
+      return BuildRingSwitchSuffixCoordCache(params, z_suffix,
+                                             &profile_targets);
+    }
     return BuildRingSwitchSuffixCoordCache(params, z_suffix);
   }();
 
