@@ -64,6 +64,15 @@ struct Profile {
   std::uint64_t ring_switch_outer_prove_tensor_build_ns = 0;
   std::uint64_t ring_switch_outer_prove_tensor_build_calls = 0;
 
+  std::uint64_t ring_switch_outer_prove_tensor_eq_table_ns = 0;
+  std::uint64_t ring_switch_outer_prove_tensor_eq_table_calls = 0;
+
+  std::uint64_t ring_switch_outer_prove_tensor_alpha_recover_ns = 0;
+  std::uint64_t ring_switch_outer_prove_tensor_alpha_recover_calls = 0;
+
+  std::uint64_t ring_switch_outer_prove_tensor_lift_rows_ns = 0;
+  std::uint64_t ring_switch_outer_prove_tensor_lift_rows_calls = 0;
+
   std::uint64_t ring_switch_outer_prove_compute_s_ns = 0;
   std::uint64_t ring_switch_outer_prove_compute_s_calls = 0;
 
@@ -99,6 +108,15 @@ struct Profile {
 
   std::uint64_t ring_switch_outer_verify_tensor_build_ns = 0;
   std::uint64_t ring_switch_outer_verify_tensor_build_calls = 0;
+
+  std::uint64_t ring_switch_outer_verify_tensor_eq_table_ns = 0;
+  std::uint64_t ring_switch_outer_verify_tensor_eq_table_calls = 0;
+
+  std::uint64_t ring_switch_outer_verify_tensor_alpha_recover_ns = 0;
+  std::uint64_t ring_switch_outer_verify_tensor_alpha_recover_calls = 0;
+
+  std::uint64_t ring_switch_outer_verify_tensor_lift_rows_ns = 0;
+  std::uint64_t ring_switch_outer_verify_tensor_lift_rows_calls = 0;
 
   std::uint64_t ring_switch_outer_verify_recover_partials_ns = 0;
   std::uint64_t ring_switch_outer_verify_recover_partials_calls = 0;
@@ -402,6 +420,9 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
   const bool has_ring_switch_outer_prover_breakdown =
       (p.ring_switch_outer_prove_total_calls +
        p.ring_switch_outer_prove_tensor_build_calls +
+       p.ring_switch_outer_prove_tensor_eq_table_calls +
+       p.ring_switch_outer_prove_tensor_alpha_recover_calls +
+       p.ring_switch_outer_prove_tensor_lift_rows_calls +
        p.ring_switch_outer_prove_compute_s_calls +
        p.ring_switch_outer_prove_recover_partials_calls +
        p.ring_switch_outer_prove_batch_prep_calls +
@@ -414,6 +435,12 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
        p.ring_switch_outer_prove_final_check_calls) > 0;
   if (has_ring_switch_outer_prover_breakdown) {
     const double tensor_ms = NsToMs(p.ring_switch_outer_prove_tensor_build_ns);
+    const double tensor_eq_table_ms =
+        NsToMs(p.ring_switch_outer_prove_tensor_eq_table_ns);
+    const double tensor_alpha_recover_ms =
+        NsToMs(p.ring_switch_outer_prove_tensor_alpha_recover_ns);
+    const double tensor_lift_rows_ms =
+        NsToMs(p.ring_switch_outer_prove_tensor_lift_rows_ns);
     const double compute_s_ms = NsToMs(p.ring_switch_outer_prove_compute_s_ns);
     const double recover_ms =
         NsToMs(p.ring_switch_outer_prove_recover_partials_ns);
@@ -442,6 +469,11 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
     const double batch_profiled_ms =
         batch_absorb_ms + batch_challenge_ms + batch_eq_prefix_ms +
         batch_initial_claim_ms + batch_build_g_table_ms;
+    const double tensor_profiled_ms =
+        tensor_eq_table_ms + tensor_alpha_recover_ms + tensor_lift_rows_ms;
+    const double tensor_other_ms = (tensor_ms > tensor_profiled_ms)
+                                       ? (tensor_ms - tensor_profiled_ms)
+                                       : 0.0;
     const double batch_other_ms = (batch_prep_ms > batch_profiled_ms)
                                       ? (batch_prep_ms - batch_profiled_ms)
                                       : 0.0;
@@ -450,6 +482,17 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
     os << "    total:                        " << total_ms << " ms\n";
     os << "    BuildComponentTensor:         " << tensor_ms << " ms"
        << "  (calls " << p.ring_switch_outer_prove_tensor_build_calls << ")\n";
+    os << "      BuildSuffixEqTable:         " << tensor_eq_table_ms << " ms"
+       << "  (calls " << p.ring_switch_outer_prove_tensor_eq_table_calls
+       << ")\n";
+    os << "      RecoverAlphaCoords:         " << tensor_alpha_recover_ms
+       << " ms"
+       << "  (calls " << p.ring_switch_outer_prove_tensor_alpha_recover_calls
+       << ")\n";
+    os << "      LiftAlphaRows:              " << tensor_lift_rows_ms << " ms"
+       << "  (calls " << p.ring_switch_outer_prove_tensor_lift_rows_calls
+       << ")\n";
+    os << "      Other/tensor-unaccounted:   " << tensor_other_ms << " ms\n";
     os << "    ComputeSByU:                  " << compute_s_ms << " ms"
        << "  (calls " << p.ring_switch_outer_prove_compute_s_calls << ")\n";
     os << "    RecoverPartialsEq1:           " << recover_ms << " ms"
@@ -553,6 +596,9 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
   const bool has_ring_switch_outer_verifier_breakdown =
       (p.ring_switch_outer_verify_total_calls +
        p.ring_switch_outer_verify_tensor_build_calls +
+       p.ring_switch_outer_verify_tensor_eq_table_calls +
+       p.ring_switch_outer_verify_tensor_alpha_recover_calls +
+       p.ring_switch_outer_verify_tensor_lift_rows_calls +
        p.ring_switch_outer_verify_recover_partials_calls +
        p.ring_switch_outer_verify_prefix_replay_calls +
        p.ring_switch_outer_verify_prefix_absorb_calls +
@@ -565,6 +611,12 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
        p.ring_switch_outer_verify_final_g_star_calls) > 0;
   if (has_ring_switch_outer_verifier_breakdown) {
     const double tensor_ms = NsToMs(p.ring_switch_outer_verify_tensor_build_ns);
+    const double tensor_eq_table_ms =
+        NsToMs(p.ring_switch_outer_verify_tensor_eq_table_ns);
+    const double tensor_alpha_recover_ms =
+        NsToMs(p.ring_switch_outer_verify_tensor_alpha_recover_ns);
+    const double tensor_lift_rows_ms =
+        NsToMs(p.ring_switch_outer_verify_tensor_lift_rows_ns);
     const double recover_ms =
         NsToMs(p.ring_switch_outer_verify_recover_partials_ns);
     const double prefix_ms =
@@ -595,6 +647,11 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
     const double prefix_profiled_ms = prefix_absorb_ms + prefix_challenge_ms +
                                       prefix_eq_prefix_ms +
                                       prefix_initial_claim_ms;
+    const double tensor_profiled_ms =
+        tensor_eq_table_ms + tensor_alpha_recover_ms + tensor_lift_rows_ms;
+    const double tensor_other_ms = (tensor_ms > tensor_profiled_ms)
+                                       ? (tensor_ms - tensor_profiled_ms)
+                                       : 0.0;
     const double prefix_other_ms = (prefix_ms > prefix_profiled_ms)
                                        ? (prefix_ms - prefix_profiled_ms)
                                        : 0.0;
@@ -607,6 +664,17 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
     os << "    total:                        " << total_ms << " ms\n";
     os << "    BuildComponentTensor:         " << tensor_ms << " ms"
        << "  (calls " << p.ring_switch_outer_verify_tensor_build_calls << ")\n";
+    os << "      BuildSuffixEqTable:         " << tensor_eq_table_ms << " ms"
+       << "  (calls " << p.ring_switch_outer_verify_tensor_eq_table_calls
+       << ")\n";
+    os << "      RecoverAlphaCoords:         " << tensor_alpha_recover_ms
+       << " ms"
+       << "  (calls " << p.ring_switch_outer_verify_tensor_alpha_recover_calls
+       << ")\n";
+    os << "      LiftAlphaRows:              " << tensor_lift_rows_ms << " ms"
+       << "  (calls " << p.ring_switch_outer_verify_tensor_lift_rows_calls
+       << ")\n";
+    os << "      Other/tensor-unaccounted:   " << tensor_other_ms << " ms\n";
     os << "    RecoverPartialsEq1:           " << recover_ms << " ms"
        << "  (calls " << p.ring_switch_outer_verify_recover_partials_calls
        << ")\n";
