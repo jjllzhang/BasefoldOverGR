@@ -350,6 +350,15 @@ struct PackedCommitInputs {
   vec_ZZ_pE t_packed_monomial_coeffs;
 };
 
+struct RingSwitchSuffixCoordCache {
+  long basis_dimension = 0;
+  long ell_prime = 0;
+  long num_w = 0;
+  // Row-major storage of lifted alpha-basis constants for eq_{z_suffix}(w):
+  // row `w`, then column `u`.
+  vec_ZZ_pE alpha_eq_by_w_then_u;
+};
+
 std::vector<ZZ_p>
 ApplyRecoverRowsUnchecked(const std::vector<std::vector<ZZ_p>> &recover_rows,
                           const std::vector<ZZ_p> &power_coords) {
@@ -618,45 +627,129 @@ RecombineClaimFromPartials(const std::vector<FieldElement> &partials,
   return acc;
 }
 
-std::vector<FieldElement> ComputeSByU(const RingSwitchComponentTensor &tensor,
-                                      const vec_ZZ_pE &t_packed_table) {
-  const long num_u = tensor.basis_dimension;
-  const long num_w = Pow2LongOrThrow(
-      tensor.ell_prime, "ComputeSByU: ell_prime is too large for long");
+const ZZ_pE *AlphaEqRowOrThrow(const RingSwitchSuffixCoordCache &suffix_cache,
+                               long w, const char *func_name) {
+  if (suffix_cache.basis_dimension < 0) {
+    LogicError(
+        (std::string(func_name) + ": basis dimension must be non-negative")
+            .c_str());
+  }
+  if (w < 0) {
+    LogicError(
+        (std::string(func_name) + ": row index must be non-negative").c_str());
+  }
+  const std::size_t row_offset =
+      static_cast<std::size_t>(w) *
+      static_cast<std::size_t>(suffix_cache.basis_dimension);
+  if (row_offset + static_cast<std::size_t>(suffix_cache.basis_dimension) >
+      static_cast<std::size_t>(suffix_cache.alpha_eq_by_w_then_u.length())) {
+    LogicError(
+        (std::string(func_name) + ": suffix-coordinate row is out of bounds")
+            .c_str());
+  }
+  return suffix_cache.alpha_eq_by_w_then_u.elts() + row_offset;
+}
+
+RingSwitchSuffixCoordCache
+BuildRingSwitchSuffixCoordCache(const RingSwitchPCSParams &params,
+                                const std::vector<FieldElement> &suffix_point) {
+  if (static_cast<long>(suffix_point.size()) != params.ell_prime) {
+    LogicError("BuildRingSwitchSuffixCoordCache: suffix point dimension must "
+               "equal ell_prime");
+  }
+
+  RingSwitchSuffixCoordCache out;
+  out.basis_dimension = BasisDimensionOrThrow(
+      params.alpha_basis, "alpha_basis", "BuildRingSwitchSuffixCoordCache");
+  out.ell_prime = params.ell_prime;
+  out.num_w = Pow2LongOrThrow(
+      params.ell_prime,
+      "BuildRingSwitchSuffixCoordCache: ell_prime is too large for long");
+  const long total_coeffs =
+      CheckedMultiplyLong(out.basis_dimension, out.num_w,
+                          "BuildRingSwitchSuffixCoordCache: coordinate table "
+                          "is too large for long");
+  out.alpha_eq_by_w_then_u.SetLength(total_coeffs);
+
+  const vec_ZZ_pE eq_suffix_table = EqualityTableFromPoint(suffix_point);
+  if (eq_suffix_table.length() != out.num_w) {
+    LogicError(
+        "BuildRingSwitchSuffixCoordCache: equality table length mismatch");
+  }
+
+  for (long w = 0; w < out.num_w; ++w) {
+    const std::vector<ZZ_p> eq_power_coords = ExtractPowerBasisCoordsUnchecked(
+        out.basis_dimension, eq_suffix_table[w]);
+    const std::vector<ZZ_p> alpha_coords =
+        params.precomputed.alpha_is_polynomial_basis
+            ? eq_power_coords
+            : ApplyRecoverRowsUnchecked(
+                  params.precomputed.alpha_recover_from_power_rows,
+                  eq_power_coords);
+    const std::size_t row_offset =
+        static_cast<std::size_t>(w) *
+        static_cast<std::size_t>(out.basis_dimension);
+    for (long u = 0; u < out.basis_dimension; ++u) {
+      out.alpha_eq_by_w_then_u[row_offset + static_cast<std::size_t>(u)] =
+          BaseRingConstant(alpha_coords[static_cast<std::size_t>(u)]);
+    }
+  }
+
+  return out;
+}
+
+std::vector<FieldElement>
+ComputeSByU(const RingSwitchSuffixCoordCache &suffix_cache,
+            const vec_ZZ_pE &t_packed_table) {
+  const long num_u = suffix_cache.basis_dimension;
+  const long num_w = suffix_cache.num_w;
   if (t_packed_table.length() != num_w) {
     LogicError("ComputeSByU: t_packed_table length mismatch");
   }
 
   std::vector<FieldElement> s_by_u(static_cast<std::size_t>(num_u),
                                    FieldElement(0));
-  for (long u = 0; u < num_u; ++u) {
-    FieldElement acc = FieldElement(0);
-    for (long w = 0; w < num_w; ++w) {
-      acc += tensor.a_by_u_then_w[u * num_w + w] * t_packed_table[w];
+  for (long w = 0; w < num_w; ++w) {
+    const ZZ_pE *lifted_row = AlphaEqRowOrThrow(suffix_cache, w, "ComputeSByU");
+    const FieldElement &packed_eval = t_packed_table[w];
+    for (long u = 0; u < num_u; ++u) {
+      if (lifted_row[u] != 0) {
+        s_by_u[static_cast<std::size_t>(u)] += packed_eval * lifted_row[u];
+      }
     }
-    s_by_u[static_cast<std::size_t>(u)] = acc;
   }
   return s_by_u;
 }
 
-vec_ZZ_pE BuildBatchedGTable(const RingSwitchComponentTensor &tensor,
+FieldElement
+EvaluateBatchedGRowAtW(const RingSwitchSuffixCoordCache &suffix_cache, long w,
+                       const vec_ZZ_pE &eq_prefix, const char *func_name) {
+  const long num_u = suffix_cache.basis_dimension;
+  if (eq_prefix.length() != num_u) {
+    LogicError(
+        (std::string(func_name) + ": prefix equality table length mismatch")
+            .c_str());
+  }
+
+  const ZZ_pE *lifted_row = AlphaEqRowOrThrow(suffix_cache, w, func_name);
+  FieldElement acc = FieldElement(0);
+  for (long u = 0; u < num_u; ++u) {
+    if (lifted_row[u] != 0) {
+      acc += lifted_row[u] * eq_prefix[u];
+    }
+  }
+  return acc;
+}
+
+vec_ZZ_pE BuildBatchedGTable(const RingSwitchSuffixCoordCache &suffix_cache,
                              const vec_ZZ_pE &eq_prefix) {
-  const long num_u = tensor.basis_dimension;
-  const long num_w = Pow2LongOrThrow(
-      tensor.ell_prime, "BuildBatchedGTable: ell_prime is too large for long");
+  const long num_w = suffix_cache.num_w;
   vec_ZZ_pE out;
   out.SetLength(num_w);
 
-  if (eq_prefix.length() != num_u) {
-    LogicError("BuildBatchedGTable: prefix equality table length mismatch");
-  }
-
   for (long w = 0; w < num_w; ++w) {
-    FieldElement acc = FieldElement(0);
-    for (long u = 0; u < num_u; ++u) {
-      acc += tensor.a_by_u_then_w[u * num_w + w] * eq_prefix[u];
-    }
-    out[w] = acc;
+    out[w] = EvaluateBatchedGRowAtW(suffix_cache, w, eq_prefix,
+                                    "BuildBatchedGTable");
   }
   return out;
 }
@@ -676,28 +769,24 @@ FieldElement EvaluateBooleanTableAtEqualityTable(const vec_ZZ_pE &table,
 }
 
 FieldElement
-EvaluateGStarFromTensorEqTables(const RingSwitchComponentTensor &tensor,
-                                const vec_ZZ_pE &eq_prefix,
-                                const vec_ZZ_pE &eq_suffix) {
-  const long num_u = tensor.basis_dimension;
-  const long num_w = Pow2LongOrThrow(
-      tensor.ell_prime,
-      "EvaluateGStarFromTensorEqTables: ell_prime is too large for long");
+EvaluateGStarFromSuffixCoords(const RingSwitchSuffixCoordCache &suffix_cache,
+                              const vec_ZZ_pE &eq_prefix,
+                              const vec_ZZ_pE &eq_suffix) {
+  const long num_u = suffix_cache.basis_dimension;
+  const long num_w = suffix_cache.num_w;
   if (eq_prefix.length() != num_u) {
-    LogicError("EvaluateGStarFromTensorEqTables: prefix equality table length "
+    LogicError("EvaluateGStarFromSuffixCoords: prefix equality table length "
                "mismatch");
   }
   if (eq_suffix.length() != num_w) {
-    LogicError("EvaluateGStarFromTensorEqTables: suffix equality table length "
+    LogicError("EvaluateGStarFromSuffixCoords: suffix equality table length "
                "mismatch");
   }
 
   FieldElement acc = FieldElement(0);
   for (long w = 0; w < num_w; ++w) {
-    FieldElement g_at_w = FieldElement(0);
-    for (long u = 0; u < num_u; ++u) {
-      g_at_w += tensor.a_by_u_then_w[u * num_w + w] * eq_prefix[u];
-    }
+    const FieldElement g_at_w = EvaluateBatchedGRowAtW(
+        suffix_cache, w, eq_prefix, "EvaluateGStarFromSuffixCoords");
     acc += g_at_w * eq_suffix[w];
   }
   return acc;
@@ -756,12 +845,11 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
   const std::vector<FieldElement> z_prefix = SlicePoint(z, 0, params.kappa);
   const std::vector<FieldElement> z_suffix =
       SlicePoint(z, params.kappa, params.ell_prime);
-  const RingSwitchComponentTensor tensor = [&] {
+  const RingSwitchSuffixCoordCache suffix_cache = [&] {
     ScopedTimer timer(
         prof ? &prof->ring_switch_outer_prove_tensor_build_ns : nullptr,
         prof ? &prof->ring_switch_outer_prove_tensor_build_calls : nullptr);
-    return BuildRingSwitchComponentTensorInternal(
-        params, z_suffix, /*materialize_r_evaluation_caches=*/false);
+    return BuildRingSwitchSuffixCoordCache(params, z_suffix);
   }();
 
   OuterProveEvalResult out;
@@ -769,7 +857,8 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
     ScopedTimer timer(
         prof ? &prof->ring_switch_outer_prove_compute_s_ns : nullptr,
         prof ? &prof->ring_switch_outer_prove_compute_s_calls : nullptr);
-    out.proof.s_by_u = ComputeSByU(tensor, commit_artifacts.t_packed_table);
+    out.proof.s_by_u =
+        ComputeSByU(suffix_cache, commit_artifacts.t_packed_table);
   }
   out.proof.h_by_level.resize(static_cast<std::size_t>(params.ell_prime));
 
@@ -784,10 +873,10 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
       const std::vector<FieldElement> direct_partials =
           ComputeDirectPartialEvaluations(params, t_table, z_suffix);
       if (recovered_partials != direct_partials) {
-        LogicError(
-            (std::string(func_name) + ": recovered partial evaluations do not "
-                                      "match Appendix C.1 reconstruction")
-                .c_str());
+        LogicError((std::string(func_name) +
+                    ": recovered partial evaluations do not "
+                    "match Appendix C.1 reconstruction")
+                       .c_str());
       }
       if (RecombineClaimFromPartials(recovered_partials, z_prefix) !=
           claimed_s) {
@@ -852,7 +941,7 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
                : nullptr,
           prof ? &prof->ring_switch_outer_prove_batch_build_g_table_calls
                : nullptr);
-      g_table = BuildBatchedGTable(tensor, eq_prefix);
+      g_table = BuildBatchedGTable(suffix_cache, eq_prefix);
     }
   }
 
@@ -971,12 +1060,11 @@ bool VerifyOuterEvalAndMaybeRecoverSuffix(
   const std::vector<FieldElement> z_prefix = SlicePoint(z, 0, params.kappa);
   const std::vector<FieldElement> z_suffix =
       SlicePoint(z, params.kappa, params.ell_prime);
-  const RingSwitchComponentTensor tensor = [&] {
+  const RingSwitchSuffixCoordCache suffix_cache = [&] {
     ScopedTimer timer(
         prof ? &prof->ring_switch_outer_verify_tensor_build_ns : nullptr,
         prof ? &prof->ring_switch_outer_verify_tensor_build_calls : nullptr);
-    return BuildRingSwitchComponentTensorInternal(
-        params, z_suffix, /*materialize_r_evaluation_caches=*/false);
+    return BuildRingSwitchSuffixCoordCache(params, z_suffix);
   }();
 
   {
@@ -1081,7 +1169,8 @@ bool VerifyOuterEvalAndMaybeRecoverSuffix(
       ScopedTimer sub_timer(
           prof ? &prof->ring_switch_outer_verify_final_g_star_ns : nullptr,
           prof ? &prof->ring_switch_outer_verify_final_g_star_calls : nullptr);
-      g_star = EvaluateGStarFromTensorEqTables(tensor, eq_prefix, eq_suffix);
+      g_star =
+          EvaluateGStarFromSuffixCoords(suffix_cache, eq_prefix, eq_suffix);
     }
     const FieldElement final_sumcheck_claim =
         (params.ell_prime == 0) ? initial_claim
@@ -1548,12 +1637,10 @@ BuildRingSwitchComponentTensorInternal(const RingSwitchPCSParams &params,
     LogicError("BuildRingSwitchComponentTensor: r_suffix dimension must equal "
                "ell_prime");
   }
-
-  const long basis_dimension = BasisDimensionOrThrow(
-      params.alpha_basis, "alpha_basis", "BuildRingSwitchComponentTensor");
-  const long num_w = Pow2LongOrThrow(
-      params.ell_prime,
-      "BuildRingSwitchComponentTensor: ell_prime is too large for long");
+  const RingSwitchSuffixCoordCache suffix_cache =
+      BuildRingSwitchSuffixCoordCache(params, r_suffix);
+  const long basis_dimension = suffix_cache.basis_dimension;
+  const long num_w = suffix_cache.num_w;
   const long total_coeffs =
       CheckedMultiplyLong(basis_dimension, num_w,
                           "BuildRingSwitchComponentTensor: coefficient table "
@@ -1567,25 +1654,12 @@ BuildRingSwitchComponentTensorInternal(const RingSwitchPCSParams &params,
     tensor.r_table.SetLength(total_coeffs);
   }
 
-  const vec_ZZ_pE eq_suffix_table = EqualityTableFromPoint(r_suffix);
-  if (eq_suffix_table.length() != num_w) {
-    LogicError(
-        "BuildRingSwitchComponentTensor: equality table length mismatch");
-  }
-
   for (long w = 0; w < num_w; ++w) {
-    const std::vector<ZZ_p> eq_power_coords =
-        ExtractPowerBasisCoordsUnchecked(basis_dimension, eq_suffix_table[w]);
-    const std::vector<ZZ_p> alpha_coords =
-        params.precomputed.alpha_is_polynomial_basis
-            ? eq_power_coords
-            : ApplyRecoverRowsUnchecked(
-                  params.precomputed.alpha_recover_from_power_rows,
-                  eq_power_coords);
+    const ZZ_pE *lifted_row =
+        AlphaEqRowOrThrow(suffix_cache, w, "BuildRingSwitchComponentTensor");
     for (long u = 0; u < basis_dimension; ++u) {
       const long row_major_index = u * num_w + w;
-      const ZZ_pE lifted_coeff =
-          BaseRingConstant(alpha_coords[static_cast<std::size_t>(u)]);
+      const ZZ_pE lifted_coeff = lifted_row[u];
       tensor.a_by_u_then_w[row_major_index] = lifted_coeff;
       if (materialize_r_evaluation_caches) {
         const long flat_index = u + w * basis_dimension;
