@@ -86,7 +86,7 @@
 
 - `128-bit prime`（`field-prime128-ext`）
   - `--mode field`
-  - `--field-mod = 326594724262804054738278293730872375507`
+  - `--field-mod = 340282366920938463463374607431768211297`（`2^128 - 159`）
   - `--field-F = 1,1`
   - `--field-zeta = 0,1`
   - 使用扩域挑战（`--use-extension-challenges` + 二次扩展挑战多项式）

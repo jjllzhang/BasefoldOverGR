@@ -44,21 +44,56 @@ class SeriesData:
 
 METRIC_CATALOG = {
     "commit": MetricSpec(
-        key="commit_mean_ms",
+        key="commit",
         y_label="Commit time (ms)",
         output_tag="commit_time_vs_log2_poly_dim",
     ),
+    "open": MetricSpec(
+        key="open",
+        y_label="Open time (ms)",
+        output_tag="open_time_vs_log2_poly_dim",
+    ),
     "prover": MetricSpec(
-        key="prove_phase_mean_ms",
+        key="prover",
         y_label="Prover time (ms)",
         output_tag="prover_time_vs_log2_poly_dim",
     ),
     "verifier": MetricSpec(
-        key="verifier_mean_ms",
+        key="verifier",
         y_label="Verifier time (ms)",
         output_tag="verifier_time_vs_log2_poly_dim",
     ),
 }
+
+BACKEND_METRIC_COLUMNS = {
+    "commit": "commit_mean_ms",
+    "open": "open_mean_ms",
+    "prover": "prove_mean_ms",
+    "verifier": "verifier_mean_ms",
+    "proof_size": "proof_size_kb",
+}
+
+COMPILER_METRIC_COLUMNS = {
+    "commit": "commit_total_mean_ms",
+    "open": "open_total_mean_ms",
+    "prover": "prove_total_mean_ms",
+    "verifier": "verify_total_mean_ms",
+    "proof_size": "total_proof_size_kb",
+}
+
+DEFAULT_METRIC_NAMES = ["commit", "prover", "verifier", "proof_size"]
+
+
+def _detect_metric_columns(fieldnames: Iterable[str]) -> Dict[str, str]:
+    field_set = set(fieldnames)
+    if set(BACKEND_METRIC_COLUMNS.values()).issubset(field_set):
+        return BACKEND_METRIC_COLUMNS
+    if set(COMPILER_METRIC_COLUMNS.values()).issubset(field_set):
+        return COMPILER_METRIC_COLUMNS
+    raise ValueError(
+        "Unsupported CSV schema. Expected latest backend_eval_results.csv or "
+        "compiler_eval_results.csv columns."
+    )
 
 
 def _parse_float(raw: str | None) -> float | None:
@@ -102,6 +137,23 @@ _EXT_CHALLENGE_MARKER_RE = re.compile(
 )
 _GR_NOTATION_RE = re.compile(r"GR\(([^()]+)\)")
 
+_BACKEND_CONTEXT_DOMAIN_LABELS = {
+    "field-255": r"$F_{2^{255}-19}$",
+    "field-f2p256": r"$F_{2^{256}}$",
+    "field-prime64-ext": r"$F_{2^{64}-59}$",
+    "field-f2p64-ext": r"$F_{2^{64}}$",
+    "field-prime128-ext": r"$F_{2^{128}-159}$",
+    "field-f2p128-ext": r"$F_{2^{128}}$",
+    "field-f3p40-ext": r"$F_{3^{40}}$",
+    "field-f3p81-ext": r"$F_{3^{81}}$",
+    "ring-gr-2p16-162": r"$\mathrm{GR}(2^{16}, 162)$",
+    "ring-gr-2p2-162": r"$\mathrm{GR}(2^{2}, 162)$",
+    "ring-gr-2p16-64-ext": r"$\mathrm{GR}(2^{16}, 64)$",
+    "ring-gr-2p16-128-ext": r"$\mathrm{GR}(2^{16}, 128)$",
+    "ring-gr-2p2-64-ext": r"$\mathrm{GR}(2^{2}, 64)$",
+    "ring-gr-2p2-128-ext": r"$\mathrm{GR}(2^{2}, 128)$",
+}
+
 
 def _strip_ext_challenge_marker(label: str) -> str:
     return _EXT_CHALLENGE_MARKER_RE.sub("", label).strip()
@@ -118,20 +170,109 @@ def _normalize_gr_notation(label: str) -> str:
     return _GR_NOTATION_RE.sub(_replace, label)
 
 
-def _series_label(csv_path: Path, labels: set[str]) -> str:
+def _context_series_label(csv_path: Path, labels: set[str]) -> str:
     if len(labels) == 1:
         raw_label = next(iter(labels))
     else:
         raw_label = csv_path.stem
 
     raw_label = _strip_ext_challenge_marker(raw_label)
-    raw_label = _normalize_gr_notation(raw_label)
-    lower_label = raw_label.lower()
-    if "fri-based" in lower_label or "ligero-based" in lower_label:
-        return raw_label
-    if lower_label.startswith("basefold over "):
-        return raw_label
-    return f"Basefold over {raw_label}"
+    return _normalize_gr_notation(raw_label)
+
+
+def _display_family_name(raw_family: str | None) -> str | None:
+    if not raw_family:
+        return None
+    words = raw_family.replace("_", " ").split()
+    if not words:
+        return None
+    return " ".join(word.capitalize() for word in words)
+
+
+def _stable_values(rows: Sequence[dict[str, str]], field: str) -> set[str]:
+    return {
+        (row.get(field) or "").strip()
+        for row in rows
+        if (row.get(field) or "").strip()
+    }
+
+
+def _format_split_field_value(csv_path: Path, field: str, value: str) -> str:
+    if field == "display_name":
+        return value
+    if field == "family":
+        return _display_family_name(value) or value
+    if field in ("context_label", "context_id"):
+        return _context_series_label(csv_path, {value})
+    if field == "mode":
+        return value
+    return value
+
+
+def _backend_domain_label(csv_path: Path, rows: Sequence[dict[str, str]]) -> str | None:
+    if _stable_values(rows, "family") != {"basefold"}:
+        return None
+
+    context_ids = _stable_values(rows, "context_id")
+    if len(context_ids) != 1:
+        return None
+    context_id = next(iter(context_ids))
+
+    domain_label = _BACKEND_CONTEXT_DOMAIN_LABELS.get(context_id)
+    if domain_label is not None:
+        return domain_label
+
+    context_labels = _stable_values(rows, "context_label")
+    if len(context_labels) == 1:
+        return _context_series_label(csv_path, context_labels)
+    return None
+
+
+def _series_label(
+    csv_path: Path,
+    rows: Sequence[dict[str, str]],
+    split_fields: Sequence[str],
+    include_source_label: bool = False,
+) -> str:
+    backend_domain_label = _backend_domain_label(csv_path, rows)
+    if backend_domain_label is not None:
+        if include_source_label:
+            return f"{csv_path.stem} | {backend_domain_label}"
+        return backend_domain_label
+
+    parts: List[str] = []
+    for field in split_fields:
+        values = _stable_values(rows, field)
+        if len(values) != 1:
+            continue
+        rendered = _format_split_field_value(csv_path, field, next(iter(values)))
+        if rendered:
+            parts.append(rendered)
+
+    if not parts:
+        display_names = _stable_values(rows, "display_name")
+        if len(display_names) == 1:
+            parts.append(next(iter(display_names)))
+        else:
+            families = _stable_values(rows, "family")
+            if len(families) == 1:
+                family_label = _display_family_name(next(iter(families)))
+                if family_label:
+                    parts.append(family_label)
+
+    label = " | ".join(parts) if parts else csv_path.stem
+    if include_source_label:
+        return f"{csv_path.stem} | {label}"
+    return label
+
+
+def _select_split_fields(rows: Sequence[dict[str, str]]) -> tuple[str, ...]:
+    split_fields: List[str] = []
+    for field in ("display_name", "family", "context_id", "mode"):
+        values = _stable_values(rows, field)
+        if len(values) > 1:
+            split_fields.append(field)
+    return tuple(split_fields)
 
 
 def _format_power_of_two(value: float, _pos: int) -> str:
@@ -144,28 +285,43 @@ def _format_power_of_two(value: float, _pos: int) -> str:
     return ""
 
 
-def load_series_from_csv(csv_path: Path, metric_keys: Iterable[str]) -> SeriesData:
-    metric_values: Dict[str, Dict[float, List[float]]] = {
-        key: defaultdict(list) for key in metric_keys
-    }
-    labels: set[str] = set()
-    metric_aliases = {
-        "prove_phase_mean_ms": ("prove_phase_mean_ms", "prover_mean_ms"),
-    }
+def load_series_from_csv(
+    csv_path: Path,
+    metric_keys: Iterable[str],
+    proof_size_column: str | None = None,
+    include_source_label: bool = False,
+) -> List[SeriesData]:
+    metric_keys = list(metric_keys)
+    valid_rows: List[dict[str, str]] = []
 
     with csv_path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         if not reader.fieldnames:
             raise ValueError(f"CSV has no header: {csv_path}")
 
+        metric_columns = _detect_metric_columns(reader.fieldnames)
+        resolved_columns = {
+            metric_key: (
+                proof_size_column
+                if metric_key == "proof_size" and proof_size_column is not None
+                else metric_columns[metric_key]
+            )
+            for metric_key in metric_keys
+        }
+        missing_columns = [
+            column_name
+            for column_name in resolved_columns.values()
+            if column_name not in reader.fieldnames
+        ]
+        if missing_columns:
+            raise ValueError(
+                f"{csv_path}: missing expected columns: {', '.join(sorted(set(missing_columns)))}"
+            )
+
         for row_index, row in enumerate(reader, start=2):
             status = (row.get("status") or "ok").strip().lower()
             if status not in ("ok", "success", ""):
                 continue
-
-            label = (row.get("context_label") or row.get("context_id") or "").strip()
-            if label:
-                labels.add(label)
 
             try:
                 x_value = _log2_power_of_two(row.get("poly_dim"))
@@ -176,27 +332,55 @@ def load_series_from_csv(csv_path: Path, metric_keys: Iterable[str]) -> SeriesDa
             if x_value is None:
                 continue
 
+            normalized_row = dict(row)
+            normalized_row["__x_value"] = str(x_value)
+            valid_rows.append(normalized_row)
+
+    split_fields = _select_split_fields(valid_rows)
+    grouped_rows: Dict[tuple[str, ...], List[dict[str, str]]] = defaultdict(list)
+    for row in valid_rows:
+        group_key = tuple((row.get(field) or "").strip() for field in split_fields)
+        grouped_rows[group_key].append(row)
+
+    series_list: List[SeriesData] = []
+    for group_key in sorted(grouped_rows):
+        rows = grouped_rows[group_key]
+        metric_values: Dict[str, Dict[float, List[float]]] = {
+            key: defaultdict(list) for key in metric_keys
+        }
+        for row in rows:
+            x_value = float(row["__x_value"])
             for metric_key in metric_keys:
-                raw_value = None
-                for candidate_key in metric_aliases.get(metric_key, (metric_key,)):
-                    raw_value = row.get(candidate_key)
-                    if raw_value not in (None, "", "-"):
-                        break
+                raw_value = row.get(resolved_columns[metric_key])
                 metric_value = _parse_float(raw_value)
                 if metric_value is not None:
                     metric_values[metric_key][x_value].append(metric_value)
 
-    points_by_metric: Dict[str, List[Tuple[float, float]]] = {}
-    for metric_key, by_d in metric_values.items():
-        points = [(d, mean(values)) for d, values in by_d.items()]
-        points.sort(key=lambda pair: pair[0])
-        points_by_metric[metric_key] = points
+        points_by_metric: Dict[str, List[Tuple[float, float]]] = {}
+        for metric_key, by_d in metric_values.items():
+            points = [(d, mean(values)) for d, values in by_d.items()]
+            points.sort(key=lambda pair: pair[0])
+            points_by_metric[metric_key] = points
 
-    return SeriesData(label=_series_label(csv_path, labels), points_by_metric=points_by_metric)
+        series_list.append(
+            SeriesData(
+                label=_series_label(
+                    csv_path,
+                    rows,
+                    split_fields,
+                    include_source_label=include_source_label,
+                ),
+                points_by_metric=points_by_metric,
+            )
+        )
+
+    return series_list
 
 
 def plot_metric_vs_log2_poly_dim(
-    series_list: Sequence[SeriesData], metric: MetricSpec, output_path: Path
+    series_list: Sequence[SeriesData],
+    metric: MetricSpec,
+    output_path: Path,
 ) -> None:
     fig, ax = plt.subplots(figsize=(8, 5))
     plotted_count = 0
@@ -285,22 +469,31 @@ def plot_benchmark_metrics(
     csv_paths: Sequence[Path],
     output_dir: Path,
     output_prefix: str = "benchmark",
-    proof_size_column: str = "proof_size_kb",
+    proof_size_column: str | None = None,
     metrics_to_plot: Sequence[str] | None = None,
 ) -> List[Path]:
     metric_catalog = {
         **METRIC_CATALOG,
         "proof_size": MetricSpec(
-            key=proof_size_column,
+            key="proof_size",
             y_label="Proof size (KB)",
             output_tag="proof_size_vs_log2_poly_dim",
         ),
     }
-    metric_order = list(metric_catalog.keys())
-    selected_names = list(metrics_to_plot) if metrics_to_plot else metric_order
+    selected_names = list(metrics_to_plot) if metrics_to_plot else DEFAULT_METRIC_NAMES
     metrics = [metric_catalog[name] for name in selected_names]
     metric_keys = [metric.key for metric in metrics]
-    series_list = [load_series_from_csv(csv_path, metric_keys) for csv_path in csv_paths]
+    include_source_label = len(csv_paths) > 1
+    series_list: List[SeriesData] = []
+    for csv_path in csv_paths:
+        series_list.extend(
+            load_series_from_csv(
+                csv_path,
+                metric_keys,
+                proof_size_column=proof_size_column,
+                include_source_label=include_source_label,
+            )
+        )
 
     output_paths: List[Path] = []
     for metric in metrics:
@@ -314,7 +507,7 @@ def plot_benchmark_metrics(
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Plot commit/prover/verifier/proof-size vs log2(poly_dim) from one or more benchmark CSV files."
+            "Plot commit/open/prover/verifier/proof-size vs log2(poly_dim) from one or more benchmark CSV files. Each line in a figure is one experiment, and a single CSV is automatically split when display_name, family, context_id, or mode varies."
         )
     )
     parser.add_argument("inputs", nargs="+", help="Input CSV file paths.")
@@ -333,17 +526,17 @@ def _parse_args() -> argparse.Namespace:
         "--proof-size-column",
         "--communication-column",
         dest="proof_size_column",
-        default="proof_size_kb",
+        default=None,
         help=(
             "Column to use for proof size "
-            "(default: proof_size_kb; use total_proof_size_kb for compiler_eval_results.csv)."
+            "(default: auto-select proof_size_kb for backend_eval_results.csv and total_proof_size_kb for compiler_eval_results.csv)."
         ),
     )
     parser.add_argument(
         "--metrics",
         nargs="+",
         help=(
-            "Metrics to plot. Use names from: commit, prover, verifier, proof_size. "
+            "Metrics to plot. Use names from: commit, open, prover, verifier, proof_size. "
             "Supports comma-separated tokens."
         ),
     )
@@ -351,10 +544,12 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _select_metrics(args: argparse.Namespace) -> List[str]:
-    default_metrics = ["commit", "prover", "verifier", "proof_size"]
+    default_metrics = DEFAULT_METRIC_NAMES
     alias_map = {
         "commit": "commit",
         "commit_time": "commit",
+        "open": "open",
+        "open_time": "open",
         "prover": "prover",
         "prover_time": "prover",
         "verifier": "verifier",

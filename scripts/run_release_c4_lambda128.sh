@@ -97,7 +97,7 @@ F2_256_F_DEFAULT='1,0,1,0,0,1,0,0,1,0,1,0,0,1,1,0,1,0,1,1,0,0,1,0,1,0,0,0,0,0,1,
 F2_256_F="${F2_256_F:-$F2_256_F_DEFAULT}"
 F2_256_ZETA="${F2_256_ZETA:-0,1}"  # x
 
-FIELD128_MOD="${FIELD128_MOD:-326594724262804054738278293730872375507}"  # 128-bit prime
+FIELD128_MOD="${FIELD128_MOD:-340282366920938463463374607431768211297}"  # 128-bit prime: 2^128 - 159
 FIELD128_F="${FIELD128_F:-1,1}"  # x + 1
 FIELD128_ZETA="${FIELD128_ZETA:-0,1}"  # x
 
@@ -502,7 +502,7 @@ CSV
 fi
 
 cat > "$BACKEND_EVAL_RESULT_CSV" <<CSV
-family,context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_ms,open_mean_ms,total_mean_ms,verifier_mean_ms,proof_size_kb,proof_size_bytes,status,error
+family,context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_ms,open_mean_ms,prove_mean_ms,verifier_mean_ms,proof_size_kb,proof_size_bytes,status,error
 CSV
 
 run_and_log() {
@@ -1305,7 +1305,7 @@ if (( RUN_BASEFOLD_RELEASE )); then
     fi
     if (( ENABLE_FIELD128_EXT )); then
       run_one_context_d \
-        "field-prime128-ext" "Field-Prime128 (ext-challenge)" "field" "$d" \
+        "field-prime128-ext" "Field-Prime128 (2^128-159, ext-challenge)" "field" "$d" \
         --field-mod "$FIELD128_MOD" \
         --field-F "$FIELD128_F" \
         --field-zeta "$FIELD128_ZETA"
