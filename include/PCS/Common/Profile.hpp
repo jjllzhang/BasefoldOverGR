@@ -37,6 +37,15 @@ struct Profile {
   std::uint64_t sumcheck_receive_challenge_ns = 0;
   std::uint64_t sumcheck_receive_challenge_calls = 0;
 
+  std::uint64_t product_sumcheck_init_ns = 0;
+  std::uint64_t product_sumcheck_init_calls = 0;
+
+  std::uint64_t product_sumcheck_current_poly_ns = 0;
+  std::uint64_t product_sumcheck_current_poly_calls = 0;
+
+  std::uint64_t product_sumcheck_receive_challenge_ns = 0;
+  std::uint64_t product_sumcheck_receive_challenge_calls = 0;
+
   std::uint64_t prover_commit_round_ns = 0;
   std::uint64_t prover_commit_round_calls = 0;
 
@@ -457,6 +466,11 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
     const double batch_build_g_table_ms =
         NsToMs(p.ring_switch_outer_prove_batch_build_g_table_ns);
     const double sumcheck_ms = NsToMs(p.ring_switch_outer_prove_sumcheck_ns);
+    const double product_sumcheck_init_ms = NsToMs(p.product_sumcheck_init_ns);
+    const double product_sumcheck_poly_ms =
+        NsToMs(p.product_sumcheck_current_poly_ns);
+    const double product_sumcheck_recv_ms =
+        NsToMs(p.product_sumcheck_receive_challenge_ns);
     const double final_check_ms =
         NsToMs(p.ring_switch_outer_prove_final_check_ns);
     const double profiled_ms = tensor_ms + compute_s_ms + recover_ms +
@@ -477,6 +491,13 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
     const double batch_other_ms = (batch_prep_ms > batch_profiled_ms)
                                       ? (batch_prep_ms - batch_profiled_ms)
                                       : 0.0;
+    const double product_sumcheck_profiled_ms = product_sumcheck_init_ms +
+                                                product_sumcheck_poly_ms +
+                                                product_sumcheck_recv_ms;
+    const double product_sumcheck_other_ms =
+        (sumcheck_ms > product_sumcheck_profiled_ms)
+            ? (sumcheck_ms - product_sumcheck_profiled_ms)
+            : 0.0;
 
     os << "  [profile-ring-switch-outer-prover]\n";
     os << "    total:                        " << total_ms << " ms\n";
@@ -519,6 +540,17 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
     os << "      Other/batch-unaccounted:    " << batch_other_ms << " ms\n";
     os << "    SumcheckSuffixRounds:         " << sumcheck_ms << " ms"
        << "  (calls " << p.ring_switch_outer_prove_sumcheck_calls << ")\n";
+    os << "      ProductSumcheckInit:        " << product_sumcheck_init_ms
+       << " ms"
+       << "  (calls " << p.product_sumcheck_init_calls << ")\n";
+    os << "      CurrentPolynomial:         " << product_sumcheck_poly_ms
+       << " ms"
+       << "  (calls " << p.product_sumcheck_current_poly_calls << ")\n";
+    os << "      ReceiveChallenge:          " << product_sumcheck_recv_ms
+       << " ms"
+       << "  (calls " << p.product_sumcheck_receive_challenge_calls << ")\n";
+    os << "      Other/sumcheck-unaccounted: " << product_sumcheck_other_ms
+       << " ms\n";
     os << "    FinalTstarGstarEq3:           " << final_check_ms << " ms"
        << "  (calls " << p.ring_switch_outer_prove_final_check_calls << ")\n";
     os << "    Other/unaccounted:            " << other_ms << " ms\n";
