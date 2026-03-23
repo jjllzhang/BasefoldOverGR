@@ -14,6 +14,7 @@
 #include "GaloisRing/Basis.hpp"
 #include "PCS/Common/Hash.hpp"
 #include "PCS/Common/Multilinear.hpp"
+#include "PCS/Common/NtlParallel.hpp"
 #include "PCS/Common/Profile.hpp"
 #include "PCS/Common/Transcript.hpp"
 
@@ -358,6 +359,10 @@ struct RingSwitchSuffixCoordCache {
   // row `w`, then column `u`.
   vec_ZZ_pE alpha_eq_by_w_then_u;
 };
+
+constexpr long kRingSwitchComputeSAccumParallelThreshold = 512;
+constexpr long kRingSwitchBatchedGRowsParallelThreshold = 512;
+constexpr long kRingSwitchFinalGStarParallelThreshold = 512;
 
 std::vector<ZZ_p>
 ApplyRecoverRowsUnchecked(const std::vector<std::vector<ZZ_p>> &recover_rows,
@@ -709,12 +714,59 @@ ComputeSByU(const RingSwitchSuffixCoordCache &suffix_cache,
 
   std::vector<FieldElement> s_by_u(static_cast<std::size_t>(num_u),
                                    FieldElement(0));
-  for (long w = 0; w < num_w; ++w) {
-    const ZZ_pE *lifted_row = AlphaEqRowOrThrow(suffix_cache, w, "ComputeSByU");
-    const FieldElement &packed_eval = t_packed_table[w];
-    for (long u = 0; u < num_u; ++u) {
-      if (lifted_row[u] != 0) {
-        s_by_u[static_cast<std::size_t>(u)] += packed_eval * lifted_row[u];
+  bool accumulated_in_parallel = false;
+#if defined(BASEFOLD_USE_OPENMP)
+  const int threads_to_use = pcs_common_internal::ChooseElementParallelThreads(
+      num_w, kRingSwitchComputeSAccumParallelThreshold);
+  if (threads_to_use >= 2) {
+    const pcs_common_internal::NtlThreadContextSnapshot ntl_ctx =
+        pcs_common_internal::CaptureNtlThreadContextSnapshot();
+    std::vector<std::vector<FieldElement>> partial_s_by_u(
+        static_cast<std::size_t>(threads_to_use),
+        std::vector<FieldElement>(static_cast<std::size_t>(num_u),
+                                  FieldElement(0)));
+
+#pragma omp parallel num_threads(threads_to_use)
+    {
+      pcs_common_internal::InitNtlThreadContext(ntl_ctx);
+      const int tid = omp_get_thread_num();
+      std::vector<FieldElement> &local_s_by_u =
+          partial_s_by_u[static_cast<std::size_t>(tid)];
+
+#pragma omp for schedule(static)
+      for (long w = 0; w < num_w; ++w) {
+        const ZZ_pE *lifted_row =
+            AlphaEqRowOrThrow(suffix_cache, w, "ComputeSByU");
+        const FieldElement &packed_eval = t_packed_table[w];
+        for (long u = 0; u < num_u; ++u) {
+          if (lifted_row[u] != 0) {
+            local_s_by_u[static_cast<std::size_t>(u)] +=
+                packed_eval * lifted_row[u];
+          }
+        }
+      }
+    }
+
+    for (int tid = 0; tid < threads_to_use; ++tid) {
+      const std::vector<FieldElement> &local_s_by_u =
+          partial_s_by_u[static_cast<std::size_t>(tid)];
+      for (long u = 0; u < num_u; ++u) {
+        s_by_u[static_cast<std::size_t>(u)] +=
+            local_s_by_u[static_cast<std::size_t>(u)];
+      }
+    }
+    accumulated_in_parallel = true;
+  }
+#endif
+  if (!accumulated_in_parallel) {
+    for (long w = 0; w < num_w; ++w) {
+      const ZZ_pE *lifted_row =
+          AlphaEqRowOrThrow(suffix_cache, w, "ComputeSByU");
+      const FieldElement &packed_eval = t_packed_table[w];
+      for (long u = 0; u < num_u; ++u) {
+        if (lifted_row[u] != 0) {
+          s_by_u[static_cast<std::size_t>(u)] += packed_eval * lifted_row[u];
+        }
       }
     }
   }
@@ -747,10 +799,12 @@ vec_ZZ_pE BuildBatchedGTable(const RingSwitchSuffixCoordCache &suffix_cache,
   vec_ZZ_pE out;
   out.SetLength(num_w);
 
-  for (long w = 0; w < num_w; ++w) {
+  const auto build_one_row = [&](long w) {
     out[w] = EvaluateBatchedGRowAtW(suffix_cache, w, eq_prefix,
                                     "BuildBatchedGTable");
-  }
+  };
+  pcs_common_internal::ForEachIndexMaybeParallel(
+      0, num_w, kRingSwitchBatchedGRowsParallelThreshold, build_one_row);
   return out;
 }
 
@@ -784,10 +838,43 @@ EvaluateGStarFromSuffixCoords(const RingSwitchSuffixCoordCache &suffix_cache,
   }
 
   FieldElement acc = FieldElement(0);
-  for (long w = 0; w < num_w; ++w) {
-    const FieldElement g_at_w = EvaluateBatchedGRowAtW(
-        suffix_cache, w, eq_prefix, "EvaluateGStarFromSuffixCoords");
-    acc += g_at_w * eq_suffix[w];
+  bool accumulated_in_parallel = false;
+#if defined(BASEFOLD_USE_OPENMP)
+  const int threads_to_use = pcs_common_internal::ChooseElementParallelThreads(
+      num_w, kRingSwitchFinalGStarParallelThreshold);
+  if (threads_to_use >= 2) {
+    const pcs_common_internal::NtlThreadContextSnapshot ntl_ctx =
+        pcs_common_internal::CaptureNtlThreadContextSnapshot();
+    std::vector<FieldElement> partial_acc(
+        static_cast<std::size_t>(threads_to_use), FieldElement(0));
+
+#pragma omp parallel num_threads(threads_to_use)
+    {
+      pcs_common_internal::InitNtlThreadContext(ntl_ctx);
+      const int tid = omp_get_thread_num();
+      FieldElement local_acc = FieldElement(0);
+
+#pragma omp for schedule(static)
+      for (long w = 0; w < num_w; ++w) {
+        const FieldElement g_at_w = EvaluateBatchedGRowAtW(
+            suffix_cache, w, eq_prefix, "EvaluateGStarFromSuffixCoords");
+        local_acc += g_at_w * eq_suffix[w];
+      }
+      partial_acc[static_cast<std::size_t>(tid)] = local_acc;
+    }
+
+    for (int tid = 0; tid < threads_to_use; ++tid) {
+      acc += partial_acc[static_cast<std::size_t>(tid)];
+    }
+    accumulated_in_parallel = true;
+  }
+#endif
+  if (!accumulated_in_parallel) {
+    for (long w = 0; w < num_w; ++w) {
+      const FieldElement g_at_w = EvaluateBatchedGRowAtW(
+          suffix_cache, w, eq_prefix, "EvaluateGStarFromSuffixCoords");
+      acc += g_at_w * eq_suffix[w];
+    }
   }
   return acc;
 }
