@@ -330,7 +330,7 @@ void TestRingSwitchBenchOuterVerify_ProfileFlagAccepted() {
        "LiftAlphaRows", "RecoverPartialsEq1", "ReplayPrefixBatching",
        "TranscriptAbsorb", "PrefixChallengesRPrime", "BuildEqPrefixTable",
        "InitialClaim", "ReplaySumcheckChain", "FinalGstarEq3",
-       "BuildEqSuffixTable", "EvaluateGstar"},
+       "FoldSuffixPoint", "EvaluateGstar"},
       "TestRingSwitchBenchOuterVerify_ProfileFlagAccepted");
 }
 

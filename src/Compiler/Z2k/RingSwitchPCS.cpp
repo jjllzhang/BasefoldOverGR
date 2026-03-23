@@ -664,6 +664,59 @@ const ZZ_pE *AlphaEqRowOrThrow(const RingSwitchSuffixCoordCache &suffix_cache,
   return suffix_cache.alpha_eq_by_w_then_u.elts() + row_offset;
 }
 
+FieldElement OneFieldElement() {
+  FieldElement one;
+  NTL::set(one);
+  return one;
+}
+
+long CeilLog2AtLeastOne(long n) {
+  if (n <= 1) {
+    return 0;
+  }
+  long bits = 0;
+  long value = 1;
+  while (value < n) {
+    value <<= 1;
+    ++bits;
+  }
+  return bits;
+}
+
+FieldElement
+FoldBooleanHypercubeSliceAtPointInPlace(FieldElement *values, long dimension,
+                                        const std::vector<FieldElement> &point,
+                                        long point_offset,
+                                        const char *func_name) {
+  if (dimension < 0) {
+    LogicError(
+        (std::string(func_name) + ": dimension must be non-negative").c_str());
+  }
+  if (point_offset < 0 ||
+      point_offset + dimension > static_cast<long>(point.size())) {
+    LogicError(
+        (std::string(func_name) + ": point slice is out of bounds").c_str());
+  }
+
+  const FieldElement one = OneFieldElement();
+  long cur_len =
+      Pow2LongOrThrow(dimension, (std::string(func_name) +
+                                  ": folded table length is too large for long")
+                                     .c_str());
+  for (long var = 0; var < dimension; ++var) {
+    const FieldElement &z_i =
+        point[static_cast<std::size_t>(point_offset + var)];
+    const FieldElement zero_branch = one - z_i;
+    const FieldElement one_branch = z_i;
+    const long half = cur_len / 2;
+    for (long i = 0; i < half; ++i) {
+      values[i] = values[2 * i] * zero_branch + values[2 * i + 1] * one_branch;
+    }
+    cur_len = half;
+  }
+  return values[0];
+}
+
 void RecoverAlphaCoordsToScratchUnchecked(
     const RingSwitchPCSParams &params, long basis_dimension,
     const ZZ_pE &element, std::vector<ZZ_p> &alpha_coords_scratch) {
@@ -906,61 +959,76 @@ FieldElement EvaluateBooleanTableAtEqualityTable(const vec_ZZ_pE &table,
   return acc;
 }
 
-FieldElement
-EvaluateGStarFromSuffixCoords(const RingSwitchSuffixCoordCache &suffix_cache,
-                              const vec_ZZ_pE &eq_prefix,
-                              const vec_ZZ_pE &eq_suffix) {
+FieldElement EvaluateGStarAtSuffixPoint(
+    const RingSwitchSuffixCoordCache &suffix_cache, const vec_ZZ_pE &eq_prefix,
+    const std::vector<FieldElement> &suffix_point,
+    std::uint64_t *fold_suffix_point_ns, std::uint64_t *evaluate_g_rows_ns) {
   const long num_u = suffix_cache.basis_dimension;
   const long num_w = suffix_cache.num_w;
+  const long suffix_dimension = static_cast<long>(suffix_point.size());
   if (eq_prefix.length() != num_u) {
-    LogicError("EvaluateGStarFromSuffixCoords: prefix equality table length "
+    LogicError("EvaluateGStarAtSuffixPoint: prefix equality table length "
                "mismatch");
   }
-  if (eq_suffix.length() != num_w) {
-    LogicError("EvaluateGStarFromSuffixCoords: suffix equality table length "
-               "mismatch");
+  if (suffix_dimension != suffix_cache.ell_prime) {
+    LogicError("EvaluateGStarAtSuffixPoint: suffix point dimension mismatch");
+  }
+  if (num_w !=
+      Pow2LongOrThrow(suffix_dimension,
+                      "EvaluateGStarAtSuffixPoint: suffix dimension is too "
+                      "large for long")) {
+    LogicError("EvaluateGStarAtSuffixPoint: suffix cache width mismatch");
   }
 
-  FieldElement acc = FieldElement(0);
-  bool accumulated_in_parallel = false;
+  int threads_to_use = 1;
 #if defined(BASEFOLD_USE_OPENMP)
-  const int threads_to_use = pcs_common_internal::ChooseElementParallelThreads(
+  threads_to_use = pcs_common_internal::ChooseElementParallelThreads(
       num_w, kRingSwitchFinalGStarParallelThreshold);
-  if (threads_to_use >= 2) {
-    const pcs_common_internal::NtlThreadContextSnapshot ntl_ctx =
-        pcs_common_internal::CaptureNtlThreadContextSnapshot();
-    std::vector<FieldElement> partial_acc(
-        static_cast<std::size_t>(threads_to_use), FieldElement(0));
-
-#pragma omp parallel num_threads(threads_to_use)
-    {
-      pcs_common_internal::InitNtlThreadContext(ntl_ctx);
-      const int tid = omp_get_thread_num();
-      FieldElement local_acc = FieldElement(0);
-
-#pragma omp for schedule(static)
-      for (long w = 0; w < num_w; ++w) {
-        const FieldElement g_at_w = EvaluateBatchedGRowAtW(
-            suffix_cache, w, eq_prefix, "EvaluateGStarFromSuffixCoords");
-        local_acc += g_at_w * eq_suffix[w];
-      }
-      partial_acc[static_cast<std::size_t>(tid)] = local_acc;
-    }
-
-    for (int tid = 0; tid < threads_to_use; ++tid) {
-      acc += partial_acc[static_cast<std::size_t>(tid)];
-    }
-    accumulated_in_parallel = true;
-  }
 #endif
-  if (!accumulated_in_parallel) {
-    for (long w = 0; w < num_w; ++w) {
-      const FieldElement g_at_w = EvaluateBatchedGRowAtW(
-          suffix_cache, w, eq_prefix, "EvaluateGStarFromSuffixCoords");
-      acc += g_at_w * eq_suffix[w];
-    }
+  const long parallel_bits = std::min<long>(
+      suffix_dimension, CeilLog2AtLeastOne(static_cast<long>(threads_to_use)));
+  const long block_dimension = suffix_dimension - parallel_bits;
+  const long block_size = Pow2LongOrThrow(
+      block_dimension,
+      "EvaluateGStarAtSuffixPoint: block dimension is too large for long");
+  const long num_blocks = Pow2LongOrThrow(
+      parallel_bits,
+      "EvaluateGStarAtSuffixPoint: parallel bits are too large for long");
+  std::vector<FieldElement> block_values(static_cast<std::size_t>(num_blocks),
+                                         FieldElement(0));
+  std::vector<FieldElement> g_rows(static_cast<std::size_t>(num_w),
+                                   FieldElement(0));
+
+  const std::uint64_t eval_start_ns =
+      (evaluate_g_rows_ns != nullptr) ? NowNs() : 0;
+  pcs_common_internal::ForEachIndexMaybeParallel(
+      0, num_w, kRingSwitchFinalGStarParallelThreshold, [&](long w) {
+        g_rows[static_cast<std::size_t>(w)] = EvaluateBatchedGRowAtW(
+            suffix_cache, w, eq_prefix, "EvaluateGStarAtSuffixPoint");
+      });
+  if (evaluate_g_rows_ns != nullptr) {
+    *evaluate_g_rows_ns += (NowNs() - eval_start_ns);
   }
-  return acc;
+
+  const std::uint64_t fold_start_ns =
+      (fold_suffix_point_ns != nullptr) ? NowNs() : 0;
+  pcs_common_internal::ForEachIndexMaybeParallel(
+      0, num_blocks, 2, [&](long block) {
+        FieldElement *block_rows =
+            g_rows.data() + static_cast<std::size_t>(block * block_size);
+        block_values[static_cast<std::size_t>(block)] =
+            FoldBooleanHypercubeSliceAtPointInPlace(
+                block_rows, block_dimension, suffix_point, 0,
+                "EvaluateGStarAtSuffixPoint");
+      });
+
+  const FieldElement g_star = FoldBooleanHypercubeSliceAtPointInPlace(
+      block_values.data(), parallel_bits, suffix_point, block_dimension,
+      "EvaluateGStarAtSuffixPoint");
+  if (fold_suffix_point_ns != nullptr) {
+    *fold_suffix_point_ns += (NowNs() - fold_start_ns);
+  }
+  return g_star;
 }
 
 FieldElement ComputeInitialBatchedClaim(const std::vector<FieldElement> &s_by_u,
@@ -1360,22 +1428,17 @@ bool VerifyOuterEvalAndMaybeRecoverSuffix(
     ScopedTimer timer(
         prof ? &prof->ring_switch_outer_verify_final_check_ns : nullptr,
         prof ? &prof->ring_switch_outer_verify_final_check_calls : nullptr);
-    vec_ZZ_pE eq_suffix;
-    {
-      ScopedTimer sub_timer(
-          prof ? &prof->ring_switch_outer_verify_final_eq_suffix_table_ns
-               : nullptr,
-          prof ? &prof->ring_switch_outer_verify_final_eq_suffix_table_calls
-               : nullptr);
-      eq_suffix = EqualityTableFromPoint(rprime_suffix);
-    }
     FieldElement g_star;
     {
-      ScopedTimer sub_timer(
-          prof ? &prof->ring_switch_outer_verify_final_g_star_ns : nullptr,
-          prof ? &prof->ring_switch_outer_verify_final_g_star_calls : nullptr);
-      g_star =
-          EvaluateGStarFromSuffixCoords(suffix_cache, eq_prefix, eq_suffix);
+      if (prof != nullptr) {
+        ++prof->ring_switch_outer_verify_final_eq_suffix_table_calls;
+        ++prof->ring_switch_outer_verify_final_g_star_calls;
+      }
+      g_star = EvaluateGStarAtSuffixPoint(
+          suffix_cache, eq_prefix, rprime_suffix,
+          prof ? &prof->ring_switch_outer_verify_final_eq_suffix_table_ns
+               : nullptr,
+          prof ? &prof->ring_switch_outer_verify_final_g_star_ns : nullptr);
     }
     const FieldElement final_sumcheck_claim =
         (params.ell_prime == 0) ? initial_claim

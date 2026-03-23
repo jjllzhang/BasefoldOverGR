@@ -700,7 +700,7 @@ inline void PrintProfile(std::ostream &os, const Profile &p) {
        << ")\n";
     os << "    FinalGstarEq3:                " << final_check_ms << " ms"
        << "  (calls " << p.ring_switch_outer_verify_final_check_calls << ")\n";
-    os << "      BuildEqSuffixTable:         " << final_eq_suffix_ms << " ms"
+    os << "      FoldSuffixPoint:            " << final_eq_suffix_ms << " ms"
        << "  (calls " << p.ring_switch_outer_verify_final_eq_suffix_table_calls
        << ")\n";
     os << "      EvaluateGstar:              " << final_g_star_ms << " ms"
