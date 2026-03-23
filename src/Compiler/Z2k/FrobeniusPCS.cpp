@@ -11,6 +11,7 @@
 
 #include "GaloisRing/Basis.hpp"
 #include "PCS/Common/Multilinear.hpp"
+#include "PCS/Common/NtlParallel.hpp"
 #include "PCS/Common/Profile.hpp"
 #include "PCS/Common/Transcript.hpp"
 
@@ -61,6 +62,9 @@ struct OrbitBuildProfileTargets {
   std::uint64_t *base_eq_coords_ns = nullptr;
   std::uint64_t *base_eq_coords_calls = nullptr;
 };
+
+constexpr long kFrobeniusBaseEqCoordsParallelThreshold = 512;
+constexpr long kFrobeniusSigmaPointsParallelThreshold = 8;
 
 long RotateIndex(long index, long shift, long dimension) {
   if (dimension <= 0) {
@@ -529,6 +533,7 @@ SuffixOrbitCache BuildSuffixOrbitCache(const FrobeniusPCSParams &params,
                                params.ell_prime,
                                "BuildSuffixOrbitCache: ell_prime is too large for long")
                          : 0;
+  const bool allow_parallel = (ActiveProfile() == nullptr);
   out.sigma_points_by_i.resize(static_cast<std::size_t>(basis_dimension));
   if (build_eq_tables) {
     {
@@ -548,26 +553,42 @@ SuffixOrbitCache BuildSuffixOrbitCache(const FrobeniusPCSParams &params,
                                         : nullptr,
                         profile_targets ? profile_targets->base_eq_coords_calls
                                         : nullptr);
-      for (long w = 0; w < num_w; ++w) {
+      const auto recover_one_row = [&](long w) {
         const size_t row_offset =
             static_cast<size_t>(w) * static_cast<size_t>(basis_dimension);
         RecoverNormalBasisCoordsFromPrecomputedFunctionalsInto(
             params, out.base_eq_table[static_cast<std::size_t>(w)],
             out.base_eq_coords_by_w_then_j.data() + row_offset,
             "BuildSuffixOrbitCache");
+      };
+      if (allow_parallel) {
+        pcs_common_internal::ForEachIndexMaybeParallel(
+            0, num_w, kFrobeniusBaseEqCoordsParallelThreshold, recover_one_row);
+      } else {
+        for (long w = 0; w < num_w; ++w) {
+          recover_one_row(w);
+        }
       }
     }
   }
-  for (long i = 0; i < basis_dimension; ++i) {
-    {
-      ScopedTimer timer(profile_targets ? profile_targets->sigma_points_ns
-                                        : nullptr,
-                        profile_targets ? profile_targets->sigma_points_calls
-                                        : nullptr);
-      out.sigma_points_by_i[static_cast<std::size_t>(i)] =
-          ComposePointWithBasisRow(
-              params.precomputed.sigma_basis_rows[static_cast<std::size_t>(i)],
-              out.suffix_coords_by_var, "BuildSuffixOrbitCache");
+  const auto compose_sigma_point = [&](long i) {
+    out.sigma_points_by_i[static_cast<std::size_t>(i)] = ComposePointWithBasisRow(
+        params.precomputed.sigma_basis_rows[static_cast<std::size_t>(i)],
+        out.suffix_coords_by_var, "BuildSuffixOrbitCache");
+  };
+  if (allow_parallel) {
+    pcs_common_internal::ForEachIndexMaybeParallel(
+        0, basis_dimension, kFrobeniusSigmaPointsParallelThreshold,
+        compose_sigma_point);
+  } else {
+    for (long i = 0; i < basis_dimension; ++i) {
+      {
+        ScopedTimer timer(profile_targets ? profile_targets->sigma_points_ns
+                                          : nullptr,
+                          profile_targets ? profile_targets->sigma_points_calls
+                                          : nullptr);
+        compose_sigma_point(i);
+      }
     }
   }
   return out;
