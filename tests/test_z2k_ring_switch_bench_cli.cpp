@@ -17,7 +17,8 @@ namespace {
 namespace fs = std::filesystem;
 
 constexpr const char *kRingF64 =
-    "1,1,1,0,0,1,1,1,0,1,1,1,1,0,1,1,0,0,1,0,1,0,0,0,1,0,1,0,0,0,0,0,1,1,0,1,0,0,0,0,0,0,0,1,0,0,1,1,1,0,1,0,1,0,0,1,1,0,0,0,0,0,1,0,1";
+    "1,1,1,0,0,1,1,1,0,1,1,1,1,0,1,1,0,0,1,0,1,0,0,0,1,0,1,0,0,0,0,0,1,1,0,1,0,"
+    "0,0,0,0,0,0,1,0,0,1,1,1,0,1,0,1,0,0,1,1,0,0,0,0,0,1,0,1";
 
 fs::path g_executable_dir;
 
@@ -40,7 +41,8 @@ CommandResult RunCommandCapture(const fs::path &exe,
 #if defined(__unix__) || defined(__APPLE__)
   int pipe_fds[2];
   CHECK_MSG(pipe(pipe_fds) == 0,
-            std::string("RunCommandCapture: pipe() failed for ") + exe.string());
+            std::string("RunCommandCapture: pipe() failed for ") +
+                exe.string());
   if (g_test_failure_count != 0) {
     return result;
   }
@@ -48,8 +50,8 @@ CommandResult RunCommandCapture(const fs::path &exe,
   std::cout.flush();
   std::cerr.flush();
   const pid_t pid = fork();
-  CHECK_MSG(pid >= 0,
-            std::string("RunCommandCapture: fork() failed for ") + exe.string());
+  CHECK_MSG(pid >= 0, std::string("RunCommandCapture: fork() failed for ") +
+                          exe.string());
   if (g_test_failure_count != 0) {
     close(pipe_fds[0]);
     close(pipe_fds[1]);
@@ -94,7 +96,8 @@ CommandResult RunCommandCapture(const fs::path &exe,
 
   int status = 0;
   CHECK_MSG(waitpid(pid, &status, 0) == pid,
-            std::string("RunCommandCapture: waitpid() failed for ") + exe.string());
+            std::string("RunCommandCapture: waitpid() failed for ") +
+                exe.string());
   if (g_test_failure_count != 0) {
     return result;
   }
@@ -127,31 +130,34 @@ void ExpectCommandSuccessContains(const fs::path &exe,
   (void)exe;
   (void)args;
   (void)needles;
-  testutil::PrintInfo(label + ": skipped subprocess assertion on this platform");
+  testutil::PrintInfo(label +
+                      ": skipped subprocess assertion on this platform");
 #endif
 }
 
 void TestRingSwitchBenchCommit_HelpTextIsStable() {
-  testutil::PrintInfo("Ring-switch bench CLI: commit --help prints stable usage anchors");
+  testutil::PrintInfo(
+      "Ring-switch bench CLI: commit --help prints stable usage anchors");
 
   const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_commit";
-  ExpectCommandSuccessContains(
-      exe, {"--help"},
-      {"bench_z2k_ring_switch_commit", "--basis-mode <default|provided>",
-       "hardcoded bench presets"},
-      "TestRingSwitchBenchCommit_HelpTextIsStable");
+  ExpectCommandSuccessContains(exe, {"--help"},
+                               {"bench_z2k_ring_switch_commit",
+                                "--basis-mode <default|provided>",
+                                "hardcoded bench presets"},
+                               "TestRingSwitchBenchCommit_HelpTextIsStable");
 }
 
 void TestRingSwitchBenchEval_HelpTextIsStable() {
-  testutil::PrintInfo("Ring-switch bench CLI: eval --help prints stable usage anchors");
+  testutil::PrintInfo(
+      "Ring-switch bench CLI: eval --help prints stable usage anchors");
 
   const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_eval";
-  ExpectCommandSuccessContains(
-      exe, {"--help"},
-      {"bench_z2k_ring_switch_eval", "--queries <int>", "--checked",
-       "--profiled-backend-verify", "unchecked prover hot path",
-       "hardcoded bench presets"},
-      "TestRingSwitchBenchEval_HelpTextIsStable");
+  ExpectCommandSuccessContains(exe, {"--help"},
+                               {"bench_z2k_ring_switch_eval", "--queries <int>",
+                                "--checked", "--profiled-backend-verify",
+                                "unchecked prover hot path",
+                                "hardcoded bench presets"},
+                               "TestRingSwitchBenchEval_HelpTextIsStable");
 }
 
 void TestRingSwitchBenchBackendEval_HelpTextIsStable() {
@@ -191,8 +197,8 @@ void TestRingSwitchBenchOuterProve_HelpTextIsStable() {
 }
 
 void TestRingSwitchBenchCommit_DefaultPresetForGR2p16r64() {
-  testutil::PrintInfo(
-      "Ring-switch bench CLI: commit smoke run picks the GR(2^16,64) commit-like preset");
+  testutil::PrintInfo("Ring-switch bench CLI: commit smoke run picks the "
+                      "GR(2^16,64) commit-like preset");
 
   const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_commit";
   ExpectCommandSuccessContains(
@@ -200,15 +206,16 @@ void TestRingSwitchBenchCommit_DefaultPresetForGR2p16r64() {
       {"--ell", "7", "--kappa", "6", "--warmup", "0", "--reps", "1",
        "--ring-mod", "65536", "--ring-p", "2", "--ring-F", kRingF64,
        "--ring-zeta", "0,1"},
-      {"[ring-switch commit]", "basis mode default (bench-fixed commit-like preset)",
+      {"[ring-switch commit]",
+       "basis mode default (bench-fixed commit-like preset)",
        "default alpha preset poly", "default beta preset lower_16",
        "packing mean", "commit  mean"},
       "TestRingSwitchBenchCommit_DefaultPresetForGR2p16r64");
 }
 
 void TestRingSwitchBenchOuterCommit_DefaultPresetForGR2p16r64() {
-  testutil::PrintInfo(
-      "Ring-switch bench CLI: outer commit smoke run prints stable result fields");
+  testutil::PrintInfo("Ring-switch bench CLI: outer commit smoke run prints "
+                      "stable result fields");
 
   const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_outer_commit";
   ExpectCommandSuccessContains(
@@ -224,16 +231,17 @@ void TestRingSwitchBenchOuterCommit_DefaultPresetForGR2p16r64() {
 }
 
 void TestRingSwitchBenchEval_DefaultPresetForGR2p32r64() {
-  testutil::PrintInfo(
-      "Ring-switch bench CLI: eval smoke run picks the GR(2^32,64) eval-like preset");
+  testutil::PrintInfo("Ring-switch bench CLI: eval smoke run picks the "
+                      "GR(2^32,64) eval-like preset");
 
   const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_eval";
   ExpectCommandSuccessContains(
       exe,
       {"--ell", "7", "--kappa", "6", "--queries", "2", "--warmup", "0",
-       "--reps", "1", "--ring-mod", "4294967296", "--ring-p", "2",
-       "--ring-F", kRingF64, "--ring-zeta", "0,1"},
-      {"[ring-switch eval]", "basis mode default (bench-fixed eval-like preset)",
+       "--reps", "1", "--ring-mod", "4294967296", "--ring-p", "2", "--ring-F",
+       kRingF64, "--ring-zeta", "0,1"},
+      {"[ring-switch eval]",
+       "basis mode default (bench-fixed eval-like preset)",
        "default alpha preset poly_dual", "default beta preset lower_16",
        "outer commit mean", "backend commit mean", "commit total mean",
        "prove-phase mean", "verifier mean"},
@@ -241,15 +249,15 @@ void TestRingSwitchBenchEval_DefaultPresetForGR2p32r64() {
 }
 
 void TestRingSwitchBenchBackendEval_DefaultPresetForGR2p32r64() {
-  testutil::PrintInfo(
-      "Ring-switch bench CLI: backend eval smoke run prints stable result fields");
+  testutil::PrintInfo("Ring-switch bench CLI: backend eval smoke run prints "
+                      "stable result fields");
 
   const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_backend_eval";
   ExpectCommandSuccessContains(
       exe,
       {"--ell", "7", "--kappa", "6", "--queries", "2", "--warmup", "0",
-       "--reps", "1", "--ring-mod", "4294967296", "--ring-p", "2",
-       "--ring-F", kRingF64, "--ring-zeta", "0,1"},
+       "--reps", "1", "--ring-mod", "4294967296", "--ring-p", "2", "--ring-F",
+       kRingF64, "--ring-zeta", "0,1"},
       {"[ring-switch backend eval]",
        "basis mode default (bench-fixed eval-like preset)",
        "backend commit mean", "prove-phase mean", "verifier mean",
@@ -258,44 +266,73 @@ void TestRingSwitchBenchBackendEval_DefaultPresetForGR2p32r64() {
 }
 
 void TestRingSwitchBenchEval_CheckedFlagAccepted() {
-  testutil::PrintInfo(
-      "Ring-switch bench CLI: eval accepts --checked and still prints stable fields");
+  testutil::PrintInfo("Ring-switch bench CLI: eval accepts --checked and still "
+                      "prints stable fields");
 
   const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_eval";
   ExpectCommandSuccessContains(
-      exe,
-      {"--checked", "--warmup", "0", "--reps", "1", "--queries", "2"},
+      exe, {"--checked", "--warmup", "0", "--reps", "1", "--queries", "2"},
       {"[ring-switch eval]", "prove-phase mean", "verifier mean"},
       "TestRingSwitchBenchEval_CheckedFlagAccepted");
 }
 
 void TestRingSwitchBenchEval_ProfiledBackendVerifyFlagAccepted() {
   testutil::PrintInfo(
-      "Ring-switch bench CLI: eval accepts --profiled-backend-verify and still prints stable fields");
+      "Ring-switch bench CLI: eval accepts --profiled-backend-verify and still "
+      "prints stable fields");
 
   const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_eval";
   ExpectCommandSuccessContains(
       exe,
-      {"--profiled-backend-verify", "--warmup", "0", "--reps", "1",
-       "--queries", "2"},
+      {"--profiled-backend-verify", "--warmup", "0", "--reps", "1", "--queries",
+       "2"},
       {"[ring-switch eval]", "backend verify timing profiled-subcall",
        "backend verifier mean"},
       "TestRingSwitchBenchEval_ProfiledBackendVerifyFlagAccepted");
 }
 
 void TestRingSwitchBenchOuterProve_CheckedFlagAccepted() {
-  testutil::PrintInfo(
-      "Ring-switch bench CLI: outer prove accepts --checked and still prints stable fields");
+  testutil::PrintInfo("Ring-switch bench CLI: outer prove accepts --checked "
+                      "and still prints stable fields");
 
   const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_outer_prove";
   ExpectCommandSuccessContains(
-      exe,
-      {"--checked", "--warmup", "0", "--reps", "1", "--queries", "2"},
+      exe, {"--checked", "--warmup", "0", "--reps", "1", "--queries", "2"},
       {"[ring-switch outer prove]", "prove-phase mean", "proof size"},
       "TestRingSwitchBenchOuterProve_CheckedFlagAccepted");
 }
 
-}  // namespace
+void TestRingSwitchBenchOuterProve_ProfileFlagAccepted() {
+  testutil::PrintInfo("Ring-switch bench CLI: outer prove accepts --profile "
+                      "and prints detailed profile buckets");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_outer_prove";
+  ExpectCommandSuccessContains(
+      exe, {"--profile", "--warmup", "0", "--reps", "1", "--queries", "2"},
+      {"[ring-switch outer prove]", "[profile-ring-switch-outer-prover]",
+       "BuildComponentTensor", "ComputeSByU", "RecoverPartialsEq1",
+       "BatchPrepPrefix", "TranscriptAbsorb", "PrefixChallengesRPrime",
+       "BuildEqPrefixTable", "InitialClaim", "BuildBatchedGTable",
+       "SumcheckSuffixRounds", "FinalTstarGstarEq3"},
+      "TestRingSwitchBenchOuterProve_ProfileFlagAccepted");
+}
+
+void TestRingSwitchBenchOuterVerify_ProfileFlagAccepted() {
+  testutil::PrintInfo("Ring-switch bench CLI: outer verify accepts --profile "
+                      "and prints detailed profile buckets");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_outer_verify";
+  ExpectCommandSuccessContains(
+      exe, {"--profile", "--warmup", "0", "--reps", "1", "--queries", "2"},
+      {"[ring-switch outer verify]", "[profile-ring-switch-outer-verifier]",
+       "BuildComponentTensor", "RecoverPartialsEq1", "ReplayPrefixBatching",
+       "TranscriptAbsorb", "PrefixChallengesRPrime", "BuildEqPrefixTable",
+       "InitialClaim", "ReplaySumcheckChain", "FinalGstarEq3",
+       "BuildEqSuffixTable", "EvaluateGstar"},
+      "TestRingSwitchBenchOuterVerify_ProfileFlagAccepted");
+}
+
+} // namespace
 
 int main(int argc, char **argv) {
   g_executable_dir = DetectExecutableDir(argc > 0 ? argv[0] : nullptr);
@@ -311,9 +348,12 @@ int main(int argc, char **argv) {
   TestRingSwitchBenchEval_CheckedFlagAccepted();
   TestRingSwitchBenchEval_ProfiledBackendVerifyFlagAccepted();
   TestRingSwitchBenchOuterProve_CheckedFlagAccepted();
+  TestRingSwitchBenchOuterProve_ProfileFlagAccepted();
+  TestRingSwitchBenchOuterVerify_ProfileFlagAccepted();
 
   if (g_test_failure_count != 0) {
-    std::cerr << g_test_failure_count << " ring-switch bench CLI test(s) failed\n";
+    std::cerr << g_test_failure_count
+              << " ring-switch bench CLI test(s) failed\n";
     return 1;
   }
   std::cout << "All ring-switch bench CLI tests passed\n";
