@@ -5,6 +5,8 @@
 #include <cstddef>
 #include <limits>
 
+#include "PCS/Common/NtlParallel.hpp"
+
 using NTL::LogicError;
 using NTL::vec_ZZ_pE;
 using NTL::ZZ_pE;
@@ -12,12 +14,13 @@ using NTL::ZZ_pE;
 namespace basefold {
 namespace {
 
-bool IsPowerOfTwoLong(long n) {
-  return n > 0 && (n & (n - 1)) == 0;
-}
+constexpr long kEqualityTableParallelThreshold = 256;
+
+bool IsPowerOfTwoLong(long n) { return n > 0 && (n & (n - 1)) == 0; }
 
 long Log2ExactPowerOfTwoLong(long n) {
-  if (!IsPowerOfTwoLong(n)) LogicError("Log2ExactPowerOfTwoLong: not a power of two");
+  if (!IsPowerOfTwoLong(n))
+    LogicError("Log2ExactPowerOfTwoLong: not a power of two");
   long d = 0;
   while (n > 1) {
     n >>= 1;
@@ -32,12 +35,14 @@ ZZ_pE One() {
   return one;
 }
 
-}  // namespace
+} // namespace
 
-FieldElement EvalMultilinearMonomialCoeffs(
-    const FieldVec &coeffs, const std::vector<FieldElement> &point) {
+FieldElement
+EvalMultilinearMonomialCoeffs(const FieldVec &coeffs,
+                              const std::vector<FieldElement> &point) {
   const long n = coeffs.length();
-  if (!IsPowerOfTwoLong(n)) LogicError("EvalMultilinearMonomialCoeffs: coeffs length must be 2^d");
+  if (!IsPowerOfTwoLong(n))
+    LogicError("EvalMultilinearMonomialCoeffs: coeffs length must be 2^d");
   const long d = Log2ExactPowerOfTwoLong(n);
   if (point.size() != static_cast<std::size_t>(d)) {
     LogicError("EvalMultilinearMonomialCoeffs: point dimension mismatch");
@@ -63,7 +68,8 @@ FieldElement EqFactor(const FieldElement &z_i, const FieldElement &x_i) {
 
 FieldElement EqPolynomial(const std::vector<FieldElement> &z,
                           const std::vector<FieldElement> &x) {
-  if (z.size() != x.size()) LogicError("EqPolynomial: dimension mismatch");
+  if (z.size() != x.size())
+    LogicError("EqPolynomial: dimension mismatch");
 
   ZZ_pE acc = One();
   for (std::size_t i = 0; i < z.size(); ++i) {
@@ -90,15 +96,18 @@ FieldVec EqualityTableFromPoint(const std::vector<FieldElement> &point) {
   for (std::size_t var = 0; var < point.size(); ++var) {
     const ZZ_pE zero_branch = one - point[var];
     const ZZ_pE one_branch = point[var];
-    for (long idx = filled; idx-- > 0;) {
+    const long block_size = filled;
+    const auto expand_one_entry = [&](long idx) {
       const ZZ_pE prev = table[idx];
-      table[idx + filled] = prev * one_branch;
+      table[idx + block_size] = prev * one_branch;
       table[idx] = prev * zero_branch;
-    }
+    };
+    pcs_common_internal::ForEachIndexMaybeParallel(
+        0, block_size, kEqualityTableParallelThreshold, expand_one_entry);
     filled *= 2;
   }
 
   return table;
 }
 
-}  // namespace basefold
+} // namespace basefold

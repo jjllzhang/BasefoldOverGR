@@ -231,7 +231,7 @@ DecomposeGRElementToBaseCoeffsPolynomialBasisUnchecked(long basis_dimension,
 std::vector<ZZ_p> ExtractPowerBasisCoordsUnchecked(long basis_dimension,
                                                    const ZZ_pE &element) {
   std::vector<ZZ_p> coeffs(static_cast<std::size_t>(basis_dimension), ZZ_p(0));
-  const ZZ_pX poly = NTL::rep(element);
+  const ZZ_pX &poly = NTL::rep(element);
   const long degree = std::min<long>(NTL::deg(poly), basis_dimension - 1);
   for (long i = 0; i <= degree; ++i) {
     coeffs[static_cast<std::size_t>(i)] = NTL::coeff(poly, i);
@@ -664,6 +664,50 @@ const ZZ_pE *AlphaEqRowOrThrow(const RingSwitchSuffixCoordCache &suffix_cache,
   return suffix_cache.alpha_eq_by_w_then_u.elts() + row_offset;
 }
 
+void RecoverAlphaCoordsToScratchUnchecked(
+    const RingSwitchPCSParams &params, long basis_dimension,
+    const ZZ_pE &element, std::vector<ZZ_p> &alpha_coords_scratch) {
+  if (static_cast<long>(alpha_coords_scratch.size()) != basis_dimension) {
+    LogicError("RecoverAlphaCoordsToScratchUnchecked: scratch size must equal "
+               "basis dimension");
+  }
+
+  const ZZ_pX &poly = NTL::rep(element);
+  const long degree = std::min<long>(NTL::deg(poly), basis_dimension - 1);
+  if (params.precomputed.alpha_is_polynomial_basis) {
+    std::fill(alpha_coords_scratch.begin(), alpha_coords_scratch.end(),
+              ZZ_p(0));
+    for (long power = 0; power <= degree; ++power) {
+      alpha_coords_scratch[static_cast<std::size_t>(power)] =
+          NTL::coeff(poly, power);
+    }
+    return;
+  }
+
+  const auto &recover_rows = params.precomputed.alpha_recover_from_power_rows;
+  for (long u = 0; u < basis_dimension; ++u) {
+    ZZ_p acc(0);
+    const std::vector<ZZ_p> &recover_row =
+        recover_rows[static_cast<std::size_t>(u)];
+    for (long power = 0; power <= degree; ++power) {
+      const ZZ_p coeff = NTL::coeff(poly, power);
+      if (coeff != 0 && recover_row[static_cast<std::size_t>(power)] != 0) {
+        acc += recover_row[static_cast<std::size_t>(power)] * coeff;
+      }
+    }
+    alpha_coords_scratch[static_cast<std::size_t>(u)] = acc;
+  }
+}
+
+void LiftAlphaCoordsScratchToRowUnchecked(
+    const std::vector<ZZ_p> &alpha_coords_scratch, ZZ_pE *out_row) {
+  const long basis_dimension = static_cast<long>(alpha_coords_scratch.size());
+  for (long u = 0; u < basis_dimension; ++u) {
+    out_row[u] =
+        BaseRingConstant(alpha_coords_scratch[static_cast<std::size_t>(u)]);
+  }
+}
+
 RingSwitchSuffixCoordCache BuildRingSwitchSuffixCoordCache(
     const RingSwitchPCSParams &params,
     const std::vector<FieldElement> &suffix_point,
@@ -711,20 +755,16 @@ RingSwitchSuffixCoordCache BuildRingSwitchSuffixCoordCache(
       profile_targets->lift_rows_calls != nullptr) {
     ++(*profile_targets->lift_rows_calls);
   }
+  std::vector<ZZ_p> alpha_coords_scratch(
+      static_cast<std::size_t>(out.basis_dimension), ZZ_p(0));
   for (long w = 0; w < out.num_w; ++w) {
     const std::uint64_t alpha_recover_start_ns =
         (profile_targets != nullptr &&
          profile_targets->alpha_recover_ns != nullptr)
             ? NowNs()
             : 0;
-    const std::vector<ZZ_p> eq_power_coords = ExtractPowerBasisCoordsUnchecked(
-        out.basis_dimension, eq_suffix_table[w]);
-    const std::vector<ZZ_p> alpha_coords =
-        params.precomputed.alpha_is_polynomial_basis
-            ? eq_power_coords
-            : ApplyRecoverRowsUnchecked(
-                  params.precomputed.alpha_recover_from_power_rows,
-                  eq_power_coords);
+    RecoverAlphaCoordsToScratchUnchecked(
+        params, out.basis_dimension, eq_suffix_table[w], alpha_coords_scratch);
     if (profile_targets != nullptr &&
         profile_targets->alpha_recover_ns != nullptr) {
       *profile_targets->alpha_recover_ns += (NowNs() - alpha_recover_start_ns);
@@ -736,10 +776,8 @@ RingSwitchSuffixCoordCache BuildRingSwitchSuffixCoordCache(
         (profile_targets != nullptr && profile_targets->lift_rows_ns != nullptr)
             ? NowNs()
             : 0;
-    for (long u = 0; u < out.basis_dimension; ++u) {
-      out.alpha_eq_by_w_then_u[row_offset + static_cast<std::size_t>(u)] =
-          BaseRingConstant(alpha_coords[static_cast<std::size_t>(u)]);
-    }
+    LiftAlphaCoordsScratchToRowUnchecked(
+        alpha_coords_scratch, out.alpha_eq_by_w_then_u.elts() + row_offset);
     if (profile_targets != nullptr &&
         profile_targets->lift_rows_ns != nullptr) {
       *profile_targets->lift_rows_ns += (NowNs() - lift_rows_start_ns);
