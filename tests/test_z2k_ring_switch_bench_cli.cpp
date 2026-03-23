@@ -314,6 +314,7 @@ void TestRingSwitchBenchOuterProve_ProfileFlagAccepted() {
        "LiftAlphaRows", "ComputeSByU", "RecoverPartialsEq1", "BatchPrepPrefix",
        "TranscriptAbsorb", "PrefixChallengesRPrime", "BuildEqPrefixTable",
        "InitialClaim", "BuildBatchedGTable", "SumcheckSuffixRounds",
+       "ProductSumcheckInit", "CurrentPolynomial", "ReceiveChallenge",
        "FinalTstarGstarEq3"},
       "TestRingSwitchBenchOuterProve_ProfileFlagAccepted");
 }
