@@ -492,7 +492,7 @@ COMPILER_SWEEP_LAYOUT_SOURCE="compiler_* rows use fixed COMPILER_KAPPA with ell 
 COMPILER_BACKEND_SOURCE="current z2k compiler benches build BaseFold backend params with k0=1 only"
 
 cat > "$COMPILER_EVAL_RESULT_CSV" <<CSV
-family,context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,compiler_ell,ell_prime,compiler_kappa,outer_commit_mean_ms,backend_commit_mean_ms,commit_total_mean_ms,prove_total_mean_ms,prove_outer_mean_ms,prove_backend_mean_ms,verify_total_mean_ms,verify_outer_mean_ms,verify_backend_mean_ms,outer_proof_size_kb,outer_proof_size_bytes,total_proof_size_kb,total_proof_size_bytes,status,error
+family,context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,compiler_ell,ell_prime,compiler_kappa,outer_commit_mean_ms,backend_commit_mean_ms,commit_total_mean_ms,open_total_mean_ms,prove_total_mean_ms,open_outer_mean_ms,prove_outer_mean_ms,open_backend_mean_ms,prove_backend_mean_ms,verify_total_mean_ms,verify_outer_mean_ms,verify_backend_mean_ms,outer_proof_size_kb,outer_proof_size_bytes,total_proof_size_kb,total_proof_size_bytes,status,error
 CSV
 
 if (( RUN_COMPILER_OUTER_COMMIT )); then
@@ -502,7 +502,7 @@ CSV
 fi
 
 cat > "$BACKEND_EVAL_RESULT_CSV" <<CSV
-family,context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_ms,prove_phase_mean_ms,verifier_mean_ms,proof_size_kb,proof_size_bytes,status,error
+family,context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_ms,open_mean_ms,total_mean_ms,verifier_mean_ms,proof_size_kb,proof_size_bytes,status,error
 CSV
 
 run_and_log() {
@@ -567,6 +567,20 @@ parse_size_bytes() {
     }' "$file"
 }
 
+sum_ms_values() {
+  local lhs="$1"
+  local rhs="$2"
+  awk -v a="$lhs" -v b="$rhs" '
+    BEGIN {
+      number = "^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$"
+      if (a == "" || b == "" || a == "NA" || b == "NA" || a !~ number || b !~ number) {
+        print "NA"
+        exit
+      }
+      printf "%.15g\n", (a + 0) + (b + 0)
+    }'
+}
+
 first_error_line() {
   local file="$1"
   local line
@@ -624,22 +638,25 @@ write_compiler_eval_row() {
   local outer_commit_ms="${12}"
   local backend_commit_ms="${13}"
   local commit_total_ms="${14}"
-  local prove_total_ms="${15}"
-  local prove_outer_ms="${16}"
-  local prove_backend_ms="${17}"
-  local verify_total_ms="${18}"
-  local verify_outer_ms="${19}"
-  local verify_backend_ms="${20}"
-  local outer_proof_kb="${21}"
-  local outer_proof_bytes="${22}"
-  local total_proof_kb="${23}"
-  local total_proof_bytes="${24}"
-  local status="${25}"
-  local error="${26}"
+  local open_total_ms="${15}"
+  local prove_total_ms="${16}"
+  local open_outer_ms="${17}"
+  local prove_outer_ms="${18}"
+  local open_backend_ms="${19}"
+  local prove_backend_ms="${20}"
+  local verify_total_ms="${21}"
+  local verify_outer_ms="${22}"
+  local verify_backend_ms="${23}"
+  local outer_proof_kb="${24}"
+  local outer_proof_bytes="${25}"
+  local total_proof_kb="${26}"
+  local total_proof_bytes="${27}"
+  local status="${28}"
+  local error="${29}"
   local context_label_csv="${context_label//,/;}"
   local error_csv="${error//,/;}"
 
-  echo "${family},${context_id},${context_label_csv},${mode},${d},${poly_dim},${C},${K0},${LAMBDA},${gamma},${queries},${compiler_ell},${ell_prime},${compiler_kappa},${outer_commit_ms},${backend_commit_ms},${commit_total_ms},${prove_total_ms},${prove_outer_ms},${prove_backend_ms},${verify_total_ms},${verify_outer_ms},${verify_backend_ms},${outer_proof_kb},${outer_proof_bytes},${total_proof_kb},${total_proof_bytes},${status},${error_csv}" >> "$COMPILER_EVAL_RESULT_CSV"
+  echo "${family},${context_id},${context_label_csv},${mode},${d},${poly_dim},${C},${K0},${LAMBDA},${gamma},${queries},${compiler_ell},${ell_prime},${compiler_kappa},${outer_commit_ms},${backend_commit_ms},${commit_total_ms},${open_total_ms},${prove_total_ms},${open_outer_ms},${prove_outer_ms},${open_backend_ms},${prove_backend_ms},${verify_total_ms},${verify_outer_ms},${verify_backend_ms},${outer_proof_kb},${outer_proof_bytes},${total_proof_kb},${total_proof_bytes},${status},${error_csv}" >> "$COMPILER_EVAL_RESULT_CSV"
 }
 
 write_backend_eval_row() {
@@ -652,16 +669,17 @@ write_backend_eval_row() {
   local gamma="$7"
   local queries="$8"
   local commit_ms="$9"
-  local prove_ms="${10}"
-  local verify_ms="${11}"
-  local proof_kb="${12}"
-  local proof_bytes="${13}"
-  local status="${14}"
-  local error="${15}"
+  local open_ms="${10}"
+  local total_ms="${11}"
+  local verify_ms="${12}"
+  local proof_kb="${13}"
+  local proof_bytes="${14}"
+  local status="${15}"
+  local error="${16}"
   local context_label_csv="${context_label//,/;}"
   local error_csv="${error//,/;}"
 
-  echo "${family},${context_id},${context_label_csv},${mode},${d},${poly_dim},${C},${K0},${LAMBDA},${gamma},${queries},${commit_ms},${prove_ms},${verify_ms},${proof_kb},${proof_bytes},${status},${error_csv}" >> "$BACKEND_EVAL_RESULT_CSV"
+  echo "${family},${context_id},${context_label_csv},${mode},${d},${poly_dim},${C},${K0},${LAMBDA},${gamma},${queries},${commit_ms},${open_ms},${total_ms},${verify_ms},${proof_kb},${proof_bytes},${status},${error_csv}" >> "$BACKEND_EVAL_RESULT_CSV"
 }
 
 write_compiler_outer_commit_row() {
@@ -720,26 +738,14 @@ run_compiler_eval_row() {
       ;;
   esac
 
-  local status=""
-  local error=""
-  IFS=',' read -r status error < <(compiler_precheck "$family" "$context_extension_degree" "$compiler_kappa" "$context_scalar_modulus")
-  if [[ "$status" != "ok" ]]; then
-    write_compiler_eval_row "$family" "$context_id" "$context_label" "$mode" "$d" "$poly_dim" "$gamma" "$queries" "$compiler_ell" "$ell_prime" "$compiler_kappa" "NA" "NA" "NA" "NA" "NA" "NA" "NA" "NA" "NA" "NA" "NA" "NA" "NA" "$status" "$error"
-    maybe_abort "$status" "${context_label} d=${d} ${family}:eval status=${status}"
-    return
-  fi
-  if [[ "$query_status" != "ok" ]]; then
-    write_compiler_eval_row "$family" "$context_id" "$context_label" "$mode" "$d" "$poly_dim" "$gamma" "$queries" "$compiler_ell" "$ell_prime" "$compiler_kappa" "NA" "NA" "NA" "NA" "NA" "NA" "NA" "NA" "NA" "NA" "NA" "NA" "NA" "$query_status" "$query_error"
-    maybe_abort "$query_status" "${context_label} d=${d} ${family}:eval status=${query_status}"
-    return
-  fi
-
-  local log_file="$OUT_DIR/logs/${context_id}_d${d}_${family}_eval.log"
   local outer_commit_ms="NA"
   local backend_commit_ms="NA"
   local commit_total_ms="NA"
+  local open_total_ms="NA"
   local prove_total_ms="NA"
+  local open_outer_ms="NA"
   local prove_outer_ms="NA"
+  local open_backend_ms="NA"
   local prove_backend_ms="NA"
   local verify_total_ms="NA"
   local verify_outer_ms="NA"
@@ -748,27 +754,37 @@ run_compiler_eval_row() {
   local outer_proof_bytes="NA"
   local total_proof_kb="NA"
   local total_proof_bytes="NA"
-  status="ok"
-  error="-"
+  local status="ok"
+  local error="-"
+
+  IFS=',' read -r status error < <(compiler_precheck "$family" "$context_extension_degree" "$compiler_kappa" "$context_scalar_modulus")
+  if [[ "$status" != "ok" ]]; then
+    write_compiler_eval_row "$family" "$context_id" "$context_label" "$mode" "$d" "$poly_dim" "$gamma" "$queries" "$compiler_ell" "$ell_prime" "$compiler_kappa" "$outer_commit_ms" "$backend_commit_ms" "$commit_total_ms" "$open_total_ms" "$prove_total_ms" "$open_outer_ms" "$prove_outer_ms" "$open_backend_ms" "$prove_backend_ms" "$verify_total_ms" "$verify_outer_ms" "$verify_backend_ms" "$outer_proof_kb" "$outer_proof_bytes" "$total_proof_kb" "$total_proof_bytes" "$status" "$error"
+    maybe_abort "$status" "${context_label} d=${d} ${family}:eval status=${status}"
+    return
+  fi
+  if [[ "$query_status" != "ok" ]]; then
+    status="$query_status"
+    error="$query_error"
+    write_compiler_eval_row "$family" "$context_id" "$context_label" "$mode" "$d" "$poly_dim" "$gamma" "$queries" "$compiler_ell" "$ell_prime" "$compiler_kappa" "$outer_commit_ms" "$backend_commit_ms" "$commit_total_ms" "$open_total_ms" "$prove_total_ms" "$open_outer_ms" "$prove_outer_ms" "$open_backend_ms" "$prove_backend_ms" "$verify_total_ms" "$verify_outer_ms" "$verify_backend_ms" "$outer_proof_kb" "$outer_proof_bytes" "$total_proof_kb" "$total_proof_bytes" "$status" "$error"
+    maybe_abort "$status" "${context_label} d=${d} ${family}:eval status=${status}"
+    return
+  fi
+
+  local log_file="$OUT_DIR/logs/${context_id}_d${d}_${family}_eval.log"
 
   # Release sweep intentionally relies on each compiler bench's default
   # unchecked hot path and never passes --checked here.
-  if ! run_and_log "$log_file" \
-      "$BUILD_DIR/$eval_bin" \
-      "${bench_args[@]}" \
-      --c "$C" --ell "$compiler_ell" --kappa "$compiler_kappa" \
-      --queries "$queries" \
-      --warmup "$EVAL_WARMUP" --reps "$EVAL_REPS" \
-      --seed "$SEED"; then
+  if ! run_and_log "$log_file"       "$BUILD_DIR/$eval_bin"       "${bench_args[@]}"       --c "$C" --ell "$compiler_ell" --kappa "$compiler_kappa"       --queries "$queries"       --warmup "$EVAL_WARMUP" --reps "$EVAL_REPS"       --seed "$SEED"; then
     status="${family}_eval_failed"
     error="$(first_error_line "$log_file")"
   else
     outer_commit_ms="$(parse_first "outer commit mean" 4 "$log_file")"
     backend_commit_ms="$(parse_first "backend commit mean" 4 "$log_file")"
     commit_total_ms="$(parse_first "commit total mean" 4 "$log_file")"
-    prove_total_ms="$(parse_first "prove-phase mean" 3 "$log_file")"
-    prove_outer_ms="$(parse_first "outer prover mean" 4 "$log_file")"
-    prove_backend_ms="$(parse_first "backend prover mean" 4 "$log_file")"
+    open_total_ms="$(parse_first "prove-phase mean" 3 "$log_file")"
+    open_outer_ms="$(parse_first "outer prover mean" 4 "$log_file")"
+    open_backend_ms="$(parse_first "backend prover mean" 4 "$log_file")"
     verify_total_ms="$(parse_first "verifier mean" 3 "$log_file")"
     verify_outer_ms="$(parse_first "outer verifier mean" 4 "$log_file")"
     verify_backend_ms="$(parse_first "backend verifier mean" 4 "$log_file")"
@@ -779,9 +795,9 @@ run_compiler_eval_row() {
     [[ -n "$outer_commit_ms" ]] || outer_commit_ms="NA"
     [[ -n "$backend_commit_ms" ]] || backend_commit_ms="NA"
     [[ -n "$commit_total_ms" ]] || commit_total_ms="NA"
-    [[ -n "$prove_total_ms" ]] || prove_total_ms="NA"
-    [[ -n "$prove_outer_ms" ]] || prove_outer_ms="NA"
-    [[ -n "$prove_backend_ms" ]] || prove_backend_ms="NA"
+    [[ -n "$open_total_ms" ]] || open_total_ms="NA"
+    [[ -n "$open_outer_ms" ]] || open_outer_ms="NA"
+    [[ -n "$open_backend_ms" ]] || open_backend_ms="NA"
     [[ -n "$verify_total_ms" ]] || verify_total_ms="NA"
     [[ -n "$verify_outer_ms" ]] || verify_outer_ms="NA"
     [[ -n "$verify_backend_ms" ]] || verify_backend_ms="NA"
@@ -789,9 +805,12 @@ run_compiler_eval_row() {
     [[ -n "$outer_proof_bytes" ]] || outer_proof_bytes="NA"
     [[ -n "$total_proof_kb" ]] || total_proof_kb="NA"
     [[ -n "$total_proof_bytes" ]] || total_proof_bytes="NA"
+    prove_total_ms="$(sum_ms_values "$commit_total_ms" "$open_total_ms")"
+    prove_outer_ms="$(sum_ms_values "$outer_commit_ms" "$open_outer_ms")"
+    prove_backend_ms="$(sum_ms_values "$backend_commit_ms" "$open_backend_ms")"
   fi
 
-  write_compiler_eval_row "$family" "$context_id" "$context_label" "$mode" "$d" "$poly_dim" "$gamma" "$queries" "$compiler_ell" "$ell_prime" "$compiler_kappa" "$outer_commit_ms" "$backend_commit_ms" "$commit_total_ms" "$prove_total_ms" "$prove_outer_ms" "$prove_backend_ms" "$verify_total_ms" "$verify_outer_ms" "$verify_backend_ms" "$outer_proof_kb" "$outer_proof_bytes" "$total_proof_kb" "$total_proof_bytes" "$status" "$error"
+  write_compiler_eval_row "$family" "$context_id" "$context_label" "$mode" "$d" "$poly_dim" "$gamma" "$queries" "$compiler_ell" "$ell_prime" "$compiler_kappa" "$outer_commit_ms" "$backend_commit_ms" "$commit_total_ms" "$open_total_ms" "$prove_total_ms" "$open_outer_ms" "$prove_outer_ms" "$open_backend_ms" "$prove_backend_ms" "$verify_total_ms" "$verify_outer_ms" "$verify_backend_ms" "$outer_proof_kb" "$outer_proof_bytes" "$total_proof_kb" "$total_proof_bytes" "$status" "$error"
   maybe_abort "$status" "${context_label} d=${d} ${family}:eval status=${status}"
 }
 
@@ -1001,7 +1020,8 @@ run_one_context_d() {
   fi
 
   local basefold_commit_ms="NA"
-  local basefold_prove_ms="NA"
+  local basefold_open_ms="NA"
+  local basefold_total_ms="NA"
   local basefold_verify_ms="NA"
   local basefold_proof_kb="NA"
   local basefold_proof_bytes="NA"
@@ -1050,18 +1070,20 @@ run_one_context_d() {
         basefold_error="$(first_error_line "$eval_log")"
       fi
     else
-      basefold_prove_ms="$(parse_first "prove-phase mean" 3 "$eval_log")"
+      basefold_open_ms="$(parse_first "prove-phase mean" 3 "$eval_log")"
       basefold_verify_ms="$(parse_first "verifier mean" 3 "$eval_log")"
       basefold_proof_kb="$(parse_size_kb "^  proof size" "$eval_log")"
       basefold_proof_bytes="$(parse_size_bytes "^  proof size" "$eval_log")"
-      [[ -n "$basefold_prove_ms" ]] || basefold_prove_ms="NA"
+      [[ -n "$basefold_open_ms" ]] || basefold_open_ms="NA"
       [[ -n "$basefold_verify_ms" ]] || basefold_verify_ms="NA"
       [[ -n "$basefold_proof_kb" ]] || basefold_proof_kb="NA"
       [[ -n "$basefold_proof_bytes" ]] || basefold_proof_bytes="NA"
     fi
   fi
 
-  write_backend_eval_row "basefold" "$context_id" "$context_label" "$mode" "$d" "$poly_dim" "$gamma" "$release_queries" "$basefold_commit_ms" "$basefold_prove_ms" "$basefold_verify_ms" "$basefold_proof_kb" "$basefold_proof_bytes" "$basefold_status" "$basefold_error"
+  basefold_total_ms="$(sum_ms_values "$basefold_commit_ms" "$basefold_open_ms")"
+
+  write_backend_eval_row "basefold" "$context_id" "$context_label" "$mode" "$d" "$poly_dim" "$gamma" "$release_queries" "$basefold_commit_ms" "$basefold_open_ms" "$basefold_total_ms" "$basefold_verify_ms" "$basefold_proof_kb" "$basefold_proof_bytes" "$basefold_status" "$basefold_error"
   maybe_abort "$basefold_status" "${context_label} d=${d} basefold status=${basefold_status}"
 }
 
@@ -1460,15 +1482,15 @@ echo "[4/4] Build markdown summary"
   echo ""
   echo "## Backend Eval"
   echo ""
-  echo "| family | context | d | poly_dim | gamma | queries | commit ms | prove ms | verify ms | proof KB | status |"
-  echo "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
-  tail -n +2 "$BACKEND_EVAL_RESULT_CSV" | awk -F',' '{printf "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", $1, $3, $5, $6, $10, $11, $12, $13, $14, $15, $17}'
+  echo "| family | context | d | poly_dim | gamma | queries | commit ms | open ms | prove total ms | verify ms | proof KB | status |"
+  echo "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
+  tail -n +2 "$BACKEND_EVAL_RESULT_CSV" | awk -F',' '{printf "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", $1, $3, $5, $6, $10, $11, $12, $13, $14, $15, $16, $18}'
   echo ""
   echo "## Compiler Eval"
   echo ""
-  echo "| family | context | d | poly_dim | queries | ell | ell' | kappa | outer commit ms | backend commit ms | commit total ms | prove total ms | verify total ms | outer proof KB | total proof KB | status |"
-  echo "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
-  tail -n +2 "$COMPILER_EVAL_RESULT_CSV" | awk -F',' '{printf "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", $1, $3, $5, $6, $11, $12, $13, $14, $15, $16, $17, $18, $21, $24, $26, $28}'
+  echo "| family | context | d | poly_dim | queries | ell | ell' | kappa | outer commit ms | backend commit ms | commit total ms | open total ms | prove total ms | verify total ms | outer proof KB | total proof KB | status |"
+  echo "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
+  tail -n +2 "$COMPILER_EVAL_RESULT_CSV" | awk -F',' '{printf "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", $1, $3, $5, $6, $11, $12, $13, $14, $15, $16, $17, $18, $19, $24, $27, $29, $31}'
   echo ""
   if (( RUN_COMPILER_OUTER_COMMIT )); then
     echo "## Compiler Outer Commit"
@@ -1481,10 +1503,10 @@ echo "[4/4] Build markdown summary"
   echo "## Status Counts"
   echo ""
   echo "### Backend Eval"
-  tail -n +2 "$BACKEND_EVAL_RESULT_CSV" | awk -F',' '{cnt[$17]++} END {for (k in cnt) printf "- %s: %d\n", k, cnt[k]}'
+  tail -n +2 "$BACKEND_EVAL_RESULT_CSV" | awk -F',' '{cnt[$18]++} END {for (k in cnt) printf "- %s: %d\n", k, cnt[k]}'
   echo ""
   echo "### Compiler Eval"
-  tail -n +2 "$COMPILER_EVAL_RESULT_CSV" | awk -F',' '{cnt[$28]++} END {for (k in cnt) printf "- %s: %d\n", k, cnt[k]}'
+  tail -n +2 "$COMPILER_EVAL_RESULT_CSV" | awk -F',' '{cnt[$31]++} END {for (k in cnt) printf "- %s: %d\n", k, cnt[k]}'
   echo ""
   if (( RUN_COMPILER_OUTER_COMMIT )); then
     echo "### Compiler Outer Commit"
