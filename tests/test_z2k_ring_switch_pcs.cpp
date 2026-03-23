@@ -3395,9 +3395,14 @@ void TestProductSumcheckProver_BooleanTablesPasses() {
       basefold::BooleanHypercubeTableToMonomialCoeffs(f_table);
   const vec_ZZ_pE g_monomial =
       basefold::BooleanHypercubeTableToMonomialCoeffs(g_table);
-  const ZZ_pE expected_final =
-      basefold::EvalMultilinearMonomialCoeffs(f_monomial, r_by_level) *
+  const ZZ_pE expected_f_final =
+      basefold::EvalMultilinearMonomialCoeffs(f_monomial, r_by_level);
+  const ZZ_pE expected_g_final =
       basefold::EvalMultilinearMonomialCoeffs(g_monomial, r_by_level);
+  const ZZ_pE expected_final =
+      expected_f_final * expected_g_final;
+  CHECK_EQ(prover.FinalFValueOrThrow(), expected_f_final);
+  CHECK_EQ(prover.FinalGValueOrThrow(), expected_g_final);
   CHECK_EQ(h_by_level[0].Eval(r_by_level[0]), expected_final);
 }
 
@@ -3511,6 +3516,9 @@ void TestProductSumcheckProver_FromMonomialCoeffsMatchesTables() {
 
   from_tables.ReceiveChallenge(r_by_level[0]);
   from_coeffs.ReceiveChallenge(r_by_level[0]);
+
+  CHECK_EQ(from_tables.FinalFValueOrThrow(), from_coeffs.FinalFValueOrThrow());
+  CHECK_EQ(from_tables.FinalGValueOrThrow(), from_coeffs.FinalGValueOrThrow());
 }
 
 void TestProductSumcheckProver_DimensionZeroUsesNoRounds() {
@@ -3541,6 +3549,8 @@ void TestProductSumcheckProver_DimensionZeroUsesNoRounds() {
   basefold::ProductSumcheckProver prover(f_table, g_table);
   CHECK_EQ(prover.Dimension(), 0L);
   CHECK_EQ(prover.RemainingVars(), 0L);
+  CHECK_EQ(prover.FinalFValueOrThrow(), f_table[0]);
+  CHECK_EQ(prover.FinalGValueOrThrow(), g_table[0]);
 
   std::vector<basefold::QuadraticPoly> h_by_level;
   std::vector<ZZ_pE> r_by_level;

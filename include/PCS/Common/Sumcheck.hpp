@@ -42,6 +42,12 @@ class ProductSumcheckProver {
   // updating internal state to the next round (cur_k_ := cur_k_-1).
   void ReceiveChallenge(const FieldElement &r_kminus1);
 
+  // Returns f(r) after all verifier challenges have been applied.
+  FieldElement FinalFValueOrThrow() const;
+
+  // Returns g(r) after all verifier challenges have been applied.
+  FieldElement FinalGValueOrThrow() const;
+
  private:
   long d_ = 0;
   long cur_k_ = 0;

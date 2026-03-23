@@ -945,20 +945,6 @@ vec_ZZ_pE BuildBatchedGTable(const RingSwitchSuffixCoordCache &suffix_cache,
   return out;
 }
 
-FieldElement EvaluateBooleanTableAtEqualityTable(const vec_ZZ_pE &table,
-                                                 const vec_ZZ_pE &eq_table,
-                                                 const char *func_name) {
-  if (table.length() != eq_table.length()) {
-    LogicError(
-        (std::string(func_name) + ": equality table length mismatch").c_str());
-  }
-  FieldElement acc = FieldElement(0);
-  for (long i = 0; i < table.length(); ++i) {
-    acc += table[i] * eq_table[i];
-  }
-  return acc;
-}
-
 FieldElement EvaluateGStarAtSuffixPoint(
     const RingSwitchSuffixCoordCache &suffix_cache, const vec_ZZ_pE &eq_prefix,
     const std::vector<FieldElement> &suffix_point,
@@ -1201,6 +1187,8 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
     }
   }
 
+  FieldElement final_t_star = FieldElement(0);
+  FieldElement final_g_star = FieldElement(0);
   out.rprime_suffix.resize(static_cast<std::size_t>(params.ell_prime));
   if (params.ell_prime > 0) {
     ScopedTimer timer(
@@ -1233,23 +1221,28 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
                   ": honest product sumcheck chain is inconsistent")
                      .c_str());
     }
+    final_t_star = sumcheck.FinalFValueOrThrow();
+    if (checked_path) {
+      final_g_star = sumcheck.FinalGValueOrThrow();
+    }
+  } else {
+    final_t_star = commit_artifacts.t_packed_table[0];
+    if (checked_path) {
+      final_g_star = g_table[0];
+    }
   }
 
   {
     ScopedTimer timer(
         prof ? &prof->ring_switch_outer_prove_final_check_ns : nullptr,
         prof ? &prof->ring_switch_outer_prove_final_check_calls : nullptr);
-    out.proof.t_star = EvalMultilinearMonomialCoeffs(
-        commit_artifacts.t_packed_monomial_coeffs, out.rprime_suffix);
+    out.proof.t_star = final_t_star;
     if (checked_path) {
-      const vec_ZZ_pE eq_suffix = EqualityTableFromPoint(out.rprime_suffix);
-      const FieldElement g_star = EvaluateBooleanTableAtEqualityTable(
-          g_table, eq_suffix, "ProveOuterEvalFromCommitArtifactsInternal");
       const FieldElement final_sumcheck_claim =
           (params.ell_prime == 0)
               ? initial_claim
               : out.proof.h_by_level[0].Eval(out.rprime_suffix[0]);
-      if (final_sumcheck_claim != out.proof.t_star * g_star) {
+      if (final_sumcheck_claim != out.proof.t_star * final_g_star) {
         LogicError((std::string(func_name) + ": honest Equality Check 3 failed")
                        .c_str());
       }

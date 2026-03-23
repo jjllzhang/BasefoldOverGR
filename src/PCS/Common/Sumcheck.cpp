@@ -302,6 +302,22 @@ void ProductSumcheckProver::ReceiveChallenge(const FieldElement &r_kminus1) {
   --cur_k_;
 }
 
+FieldElement ProductSumcheckProver::FinalFValueOrThrow() const {
+  if (cur_k_ != 0 || f_eval_table_.length() != 1) {
+    LogicError("ProductSumcheckProver::FinalFValueOrThrow: prover must be at "
+               "final singleton state");
+  }
+  return f_eval_table_[0];
+}
+
+FieldElement ProductSumcheckProver::FinalGValueOrThrow() const {
+  if (cur_k_ != 0 || g_eval_table_.length() != 1) {
+    LogicError("ProductSumcheckProver::FinalGValueOrThrow: prover must be at "
+               "final singleton state");
+  }
+  return g_eval_table_[0];
+}
+
 SumcheckProver::SumcheckProver(const FieldVec &f_coeffs,
                                const std::vector<FieldElement> &z)
     : SumcheckProver(BuildSumcheckMonomialPrecomputation(f_coeffs), z) {}

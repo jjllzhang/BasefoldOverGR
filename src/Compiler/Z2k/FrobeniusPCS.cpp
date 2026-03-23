@@ -1066,6 +1066,8 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
     }
   }
 
+  FieldElement final_t_star = FieldElement(0);
+  FieldElement final_g_star = FieldElement(0);
   out.rprime_suffix.resize(static_cast<std::size_t>(params.ell_prime));
   if (params.ell_prime > 0) {
     ScopedTimer timer(prof ? &prof->frobenius_outer_prove_sumcheck_ns
@@ -1100,6 +1102,16 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
                   ": honest product sumcheck chain is inconsistent")
                      .c_str());
     }
+    final_t_star = sumcheck.FinalFValueOrThrow();
+    if (checked_path) {
+      final_g_star = sumcheck.FinalGValueOrThrow();
+    }
+  } else {
+    final_t_star = commit_artifacts.t_packed_table[0];
+    if (checked_path) {
+      final_g_star =
+          ComputeFinalGStar(lambda_by_i, suffix_orbit, out.rprime_suffix);
+    }
   }
 
   {
@@ -1107,16 +1119,13 @@ OuterProveEvalResult ProveOuterEvalFromCommitArtifactsInternal(
                            : nullptr,
                       prof ? &prof->frobenius_outer_prove_final_check_calls
                            : nullptr);
-    out.proof.t_star = EvalMultilinearMonomialCoeffs(
-        commit_artifacts.t_packed_monomial_coeffs, out.rprime_suffix);
+    out.proof.t_star = final_t_star;
     if (checked_path) {
-      const FieldElement g_star =
-          ComputeFinalGStar(lambda_by_i, suffix_orbit, out.rprime_suffix);
       const FieldElement final_sumcheck_claim =
           (params.ell_prime == 0)
               ? initial_claim
               : out.proof.h_by_level[0].Eval(out.rprime_suffix[0]);
-      if (final_sumcheck_claim != out.proof.t_star * g_star) {
+      if (final_sumcheck_claim != out.proof.t_star * final_g_star) {
         LogicError((std::string(func_name) +
                     ": honest Equality Check 3 failed")
                        .c_str());
