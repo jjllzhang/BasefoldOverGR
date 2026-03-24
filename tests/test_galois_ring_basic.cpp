@@ -90,6 +90,27 @@ ZZ_pX MakeGR42Degree4Modulus() {
   return F;
 }
 
+ZZ_pX MakeGR2P16Degree128Modulus() {
+  ZZ_pX F;
+  SetCoeff(F, 128, 1);
+  SetCoeff(F, 7, 1);
+  SetCoeff(F, 2, 1);
+  SetCoeff(F, 1, 1);
+  SetCoeff(F, 0, 1);
+  return F;
+}
+
+const vector<ZZ> &TeichOrder128Factors() {
+  static const vector<ZZ> factors = []() {
+    vector<ZZ> out = {to_ZZ(3),      to_ZZ(5),      to_ZZ(17),
+                      to_ZZ(257),    to_ZZ(641),    to_ZZ(65537),
+                      to_ZZ(274177), to_ZZ(6700417)};
+    out.push_back(to_ZZ("67280421310721"));
+    return out;
+  }();
+  return factors;
+}
+
 FrobeniusBasisParams MakeFrobeniusParams(long r) {
   FrobeniusBasisParams params;
   params.p = to_ZZ(2);
@@ -634,6 +655,40 @@ void TestFindTeichmullerGenerator_Smoke() {
   CHECK(g != one);
 }
 
+void TestFindTeichmullerGenerator_GR2P16Degree128_Smoke() {
+  const ZZ p = to_ZZ(2);
+  const long k = 16;
+  const long s = 128;
+  const ZZ mod = power(p, k);
+  testutil::PrintInfo(
+      "FindTeichmullerGenerator smoke: p=2, k=16, s=128, F=x^128+x^7+x^2+x+1");
+
+  ZZ_pPush p_push(mod);
+  const ZZ_pX F = MakeGR2P16Degree128Modulus();
+  ZZ_pEPush e_push(F);
+
+  const ZZ modulus_before = ZZ_p::modulus();
+  const ZZ_pX modulus_poly_before = ZZ_pE::modulus().val();
+  const long degree_before = ZZ_pE::degree();
+
+  const ZZ_pE g = FindTeichmullerGenerator(p, k, s, F);
+
+  CHECK_EQ(ZZ_p::modulus(), modulus_before);
+  CHECK(ZZ_pE::initialized());
+  CHECK_EQ(ZZ_pE::degree(), degree_before);
+  CHECK_EQ(ZZ_pE::modulus().val(), modulus_poly_before);
+
+  ZZ_pE one;
+  set(one);
+  const ZZ order = power(p, s) - ZZ(1);
+  CHECK_EQ(power(g, order), one);
+  CHECK(g != one);
+  for (const ZZ &q : TeichOrder128Factors()) {
+    CHECK_MSG(power(g, order / q) != one,
+              "TestFindTeichmullerGenerator_GR2P16Degree128_Smoke: generator order is not exact");
+  }
+}
+
 void TestFrobeniusBasis_GR42Degree2() {
   const ZZ p = to_ZZ(2);
   const long k = 2;
@@ -712,6 +767,7 @@ int main() {
     RUN_TEST(TestHenselLift_Smoke);
     RUN_TEST(TestPrimitiveElement_Smoke);
     RUN_TEST(TestFindTeichmullerGenerator_Smoke);
+    RUN_TEST(TestFindTeichmullerGenerator_GR2P16Degree128_Smoke);
     RUN_TEST(TestFrobeniusBasis_GR42Degree2);
     RUN_TEST(TestFrobeniusBasis_GR42Degree4);
   } catch (const exception &e) {
