@@ -19,6 +19,12 @@ namespace fs = std::filesystem;
 constexpr const char *kRingF64 =
     "1,1,1,0,0,1,1,1,0,1,1,1,1,0,1,1,0,0,1,0,1,0,0,0,1,0,1,0,0,0,0,0,1,1,0,1,0,"
     "0,0,0,0,0,0,1,0,0,1,1,1,0,1,0,1,0,0,1,1,0,0,0,0,0,1,0,1";
+constexpr const char *kRingF128 =
+    "1,1,1,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
+    "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
+    "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
+    "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
+    "1";
 
 fs::path g_executable_dir;
 
@@ -230,6 +236,41 @@ void TestRingSwitchBenchOuterCommit_DefaultPresetForGR2p16r64() {
       "TestRingSwitchBenchOuterCommit_DefaultPresetForGR2p16r64");
 }
 
+void TestRingSwitchBenchCommit_DefaultPresetForGR2p16r128() {
+  testutil::PrintInfo("Ring-switch bench CLI: commit smoke run picks the "
+                      "GR(2^16,128) commit-like preset");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_commit";
+  ExpectCommandSuccessContains(
+      exe,
+      {"--ell", "8", "--kappa", "7", "--warmup", "0", "--reps", "1",
+       "--ring-mod", "65536", "--ring-p", "2", "--ring-F", kRingF128,
+       "--ring-zeta", "0,1"},
+      {"[ring-switch commit]",
+       "basis mode default (bench-fixed commit-like preset)",
+       "default alpha preset poly", "default beta preset lower_64",
+       "packing mean", "commit  mean"},
+      "TestRingSwitchBenchCommit_DefaultPresetForGR2p16r128");
+}
+
+void TestRingSwitchBenchEval_DefaultPresetForGR2p16r128() {
+  testutil::PrintInfo("Ring-switch bench CLI: eval smoke run picks the "
+                      "GR(2^16,128) eval-like preset");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_ring_switch_eval";
+  ExpectCommandSuccessContains(
+      exe,
+      {"--ell", "8", "--kappa", "7", "--queries", "2", "--warmup", "0",
+       "--reps", "1", "--ring-mod", "65536", "--ring-p", "2", "--ring-F",
+       kRingF128, "--ring-zeta", "0,1"},
+      {"[ring-switch eval]",
+       "basis mode default (bench-fixed eval-like preset)",
+       "default alpha preset poly", "default beta preset lower_64",
+       "outer commit mean", "backend commit mean", "commit total mean",
+       "prove-phase mean", "verifier mean"},
+      "TestRingSwitchBenchEval_DefaultPresetForGR2p16r128");
+}
+
 void TestRingSwitchBenchEval_DefaultPresetForGR2p32r64() {
   testutil::PrintInfo("Ring-switch bench CLI: eval smoke run picks the "
                       "GR(2^32,64) eval-like preset");
@@ -346,7 +387,9 @@ int main(int argc, char **argv) {
   TestRingSwitchBenchOuterProve_HelpTextIsStable();
   TestRingSwitchBenchCommit_DefaultPresetForGR2p16r64();
   TestRingSwitchBenchOuterCommit_DefaultPresetForGR2p16r64();
+  TestRingSwitchBenchCommit_DefaultPresetForGR2p16r128();
   TestRingSwitchBenchEval_DefaultPresetForGR2p32r64();
+  TestRingSwitchBenchEval_DefaultPresetForGR2p16r128();
   TestRingSwitchBenchBackendEval_DefaultPresetForGR2p32r64();
   TestRingSwitchBenchEval_CheckedFlagAccepted();
   TestRingSwitchBenchEval_ProfiledBackendVerifyFlagAccepted();

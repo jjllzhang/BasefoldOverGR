@@ -331,7 +331,7 @@ inline GaloisRingBasisData BuildBenchFixedPolynomialBasisDataOrThrow(
 }
 
 inline std::vector<long> BuildBenchShiftListFromMask(unsigned shift_mask) {
-  static const long kShiftOptions[] = {1, 2, 4, 8, 16, 32};
+  static const long kShiftOptions[] = {1, 2, 4, 8, 16, 32, 64};
   std::vector<long> shifts;
   for (std::size_t i = 0; i < std::size(kShiftOptions); ++i) {
     if ((shift_mask & (1u << i)) != 0u) {
@@ -395,11 +395,31 @@ inline bool MatchesBenchRingSwitchF64DefaultContext(const ContextSpec &context,
          context.scalar_modulus == power2_ZZ(64);
 }
 
+inline bool MatchesBenchRingSwitchF128DefaultContext(const ContextSpec &context,
+                                                     const ZZ_pX &F) {
+  if (context.base_prime != ZZ(2) || context.scalar_modulus <= 0 ||
+      NTL::deg(F) != 128) {
+    return false;
+  }
+  const ZZ_pX expected_F = BuildZZpX(ParseCoeffList(
+      "1,1,1,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
+      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
+      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
+      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
+      "1"));
+  return F == expected_F && context.scalar_modulus == power2_ZZ(16);
+}
+
 inline void SelectBenchDefaultBasisPresetSpecsOrThrow(
     const ContextSpec &context, const ZZ_pX &F, BenchDefaultBasisPreset preset,
     BenchShiftBasisSpec &alpha_spec, BenchShiftBasisSpec &beta_spec) {
   alpha_spec = BenchShiftBasisSpec();
   beta_spec = BenchShiftBasisSpec();
+  if (MatchesBenchRingSwitchF128DefaultContext(context, F)) {
+    beta_spec.name = "lower_64";
+    beta_spec.shift_mask = 1u << 6;
+    return;
+  }
   if (!MatchesBenchRingSwitchF64DefaultContext(context, F)) {
     return;
   }
@@ -539,7 +559,7 @@ inline void PrintProvidedBasisFlagHelp(std::ostream &os, const char *indent) {
 
 inline void PrintBasisCliNotes(std::ostream &os, const char *indent) {
   os << indent
-     << "Default mode uses hardcoded bench presets for selected GR(2^k,64) contexts and polynomial fallback elsewhere.\n"
+     << "Default mode uses hardcoded bench presets for selected GR(2^k,r) contexts and polynomial fallback elsewhere.\n"
      << indent
      << "In provided mode, basis elements are entered in polynomial-basis coordinates.\n"
      << indent

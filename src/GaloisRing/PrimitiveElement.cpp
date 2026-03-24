@@ -85,6 +85,35 @@ std::vector<ZZ> UniquePrimeFactorsU64(unsigned long long n) {
   return factors;
 }
 
+std::vector<ZZ> UniquePrimeFactorsKnownLargeOrder(const ZZ &n) {
+  // 2^128 - 1 = 3 * 5 * 17 * 257 * 641 * 65537 * 274177 * 6700417 *
+  //            67280421310721.
+  const ZZ mersenne_128 = power(ZZ(2), 128) - ZZ(1);
+  if (n == mersenne_128) {
+    return {
+        ZZ(3),
+        ZZ(5),
+        ZZ(17),
+        ZZ(257),
+        ZZ(641),
+        ZZ(65537),
+        ZZ(274177),
+        ZZ(6700417),
+        conv<ZZ>("67280421310721"),
+    };
+  }
+  return {};
+}
+
+std::vector<ZZ> UniquePrimeFactorsOrThrow(const ZZ &n, const std::string &label,
+                                          const std::string &fn_name) {
+  const std::vector<ZZ> known_large = UniquePrimeFactorsKnownLargeOrder(n);
+  if (!known_large.empty()) {
+    return known_large;
+  }
+  return UniquePrimeFactorsU64(PositiveZZToU64Checked(n, label, fn_name));
+}
+
 bool HasExactOrder(const ZZ_pE &a, const ZZ &order,
                    const std::vector<ZZ> &prime_factors) {
   if (a == 0 || order <= 0)
@@ -167,10 +196,9 @@ ZZ_pE FindTeichmullerGenerator(ZZ p, long k, long s, const ZZ_pX &F,
   const ZZ projection_exp_zz = power(p, k - 1);
   const ZZ subgroup_order_zz = power(p, s) - ZZ(1);
 
-  const unsigned long long subgroup_order_u64 = PositiveZZToU64Checked(
-      subgroup_order_zz, "p^s-1", "FindTeichmullerGenerator");
   const std::vector<ZZ> subgroup_order_factors =
-      UniquePrimeFactorsU64(subgroup_order_u64);
+      UniquePrimeFactorsOrThrow(subgroup_order_zz, "p^s-1",
+                                "FindTeichmullerGenerator");
 
   ZZ_p::init(q3);
   ValidateExtensionPolynomial(F, s, "FindTeichmullerGenerator");
