@@ -1,0 +1,13 @@
+family,context_id,context_label,mode,d,poly_dim,c,k0,lambda,gamma,queries,commit_mean_ms,open_mean_ms,prove_mean_ms,verifier_mean_ms,proof_size_kb,proof_size_bytes,status,error
+ligero_based,ligero-gr-2p16-162,Ligero-based over GR(2^16;162),ring,6,64,,,,,12,,,569,84,150,153600,,
+ligero_based,ligero-gr-2p16-162,Ligero-based over GR(2^16;162),ring,7,128,,,,,9,,,983,99,164,167936,,
+ligero_based,ligero-gr-2p16-162,Ligero-based over GR(2^16;162),ring,8,256,,,,,6,,,2377,126,174,178176,,
+ligero_based,ligero-gr-2p16-162,Ligero-based over GR(2^16;162),ring,9,512,,,,,5,,,5727,205,191,195584,,
+ligero_based,ligero-gr-2p16-162,Ligero-based over GR(2^16;162),ring,10,1024,,,,,3,,,17229,297,198,202752,,
+ligero_based,ligero-gr-2p16-162,Ligero-based over GR(2^16;162),ring,11,2048,,,,,3,,,49059,828,222,227328,,
+ligero_based,ligero-gr-2p16-162,Ligero-based over GR(2^16;162),ring,12,4096,,,,,2,,,136278,1562,232,237568,,
+fri_based,fri-gr-2p16-162,FRI-based over GR(2^16;162),ring,3,8,,,,,149,,,9089,447,422,432128,,
+fri_based,fri-gr-2p16-162,FRI-based over GR(2^16;162),ring,4,16,,,,,173,,,10553,519,490,501760,,
+fri_based,fri-gr-2p16-162,FRI-based over GR(2^16;162),ring,5,32,,,,,247,,,15067,741,700,716800,,
+fri_based,fri-gr-2p16-162,FRI-based over GR(2^16;162),ring,6,64,,,,,194,,,38412,970,831,850944,,
+fri_based,fri-gr-2p16-162,FRI-based over GR(2^16;162),ring,7,128,,,,,329,,,65142,1645,1410,1443840,,
