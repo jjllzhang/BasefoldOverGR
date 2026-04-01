@@ -672,13 +672,14 @@ def plot_benchmark_metrics(
     output_prefix: str = "benchmark",
     proof_size_column: str | None = None,
     metrics_to_plot: Sequence[str] | None = None,
+    legend_mode: str = "auto",
 ) -> Tuple[List[Path], List[str]]:
     metric_catalog = {**METRIC_CATALOG, "proof_size": PROOF_SIZE_METRIC}
     selected_names = list(metrics_to_plot) if metrics_to_plot else DEFAULT_METRIC_NAMES
     metrics = [metric_catalog[name] for name in selected_names]
     metric_keys = [metric.key for metric in metrics]
     include_source_label = len(csv_paths) > 1
-    split_legend = _should_split_legend(csv_paths)
+    split_legend = _should_split_legend(csv_paths, legend_mode)
     inline_legend_ncols = _inline_legend_ncols(csv_paths)
     compiler_overlap_style = _compiler_overlap_style(csv_paths)
     series_list: List[SeriesData] = []
@@ -741,7 +742,12 @@ def _default_output_prefix(csv_paths: Sequence[Path], requested_prefix: str) -> 
     return requested_prefix
 
 
-def _should_split_legend(csv_paths: Sequence[Path]) -> bool:
+def _should_split_legend(csv_paths: Sequence[Path], legend_mode: str) -> bool:
+    if legend_mode == "split":
+        return True
+    if legend_mode == "inline":
+        return False
+
     return not (
         len(csv_paths) == 1
         and csv_paths[0].name in {"backend_eval_results.csv", "compiler_eval_results.csv"}
@@ -798,6 +804,16 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Metrics to plot. Use names from: commit, open, prover, verifier, proof_size. "
             "Supports comma-separated tokens."
+        ),
+    )
+    parser.add_argument(
+        "--legend-mode",
+        choices=("auto", "inline", "split"),
+        default="auto",
+        help=(
+            "Legend placement mode. 'auto' keeps the previous behavior, "
+            "'inline' always draws the legend inside the plot, and 'split' "
+            "always writes a separate *_legend.png."
         ),
     )
     return parser.parse_args()
@@ -865,6 +881,7 @@ def main() -> int:
         output_prefix=output_prefix,
         proof_size_column=args.proof_size_column,
         metrics_to_plot=selected_metrics,
+        legend_mode=args.legend_mode,
     )
 
     if output_paths:
