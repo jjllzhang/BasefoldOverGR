@@ -502,17 +502,19 @@ def plot_metric_vs_constraints(
     compiler_overlap_style: bool = False,
 ) -> PlotResult | None:
     fig, ax = plt.subplots(figsize=(10, 6))
-    plotted_count = 0
     all_x_values: List[float] = []
     all_y_values: List[float] = []
     legend_entries: List[LegendEntry] = []
+    visible_series = [
+        (series, series.points_by_metric.get(metric.key, []))
+        for series in series_list
+        if series.points_by_metric.get(metric.key, [])
+    ]
+    plotted_count = len(visible_series)
 
     marker_cycle = cycle(["s", "o", "D", "v", "^", "P", "X", "<", ">"])
 
-    for idx, series in enumerate(series_list):
-        points = series.points_by_metric.get(metric.key, [])
-        if not points:
-            continue
+    for idx, (series, points) in enumerate(visible_series):
         x_values = [x for x, _ in points]
         y_values = [y for _, y in points]
         all_x_values.extend(x_values)
@@ -520,25 +522,44 @@ def plot_metric_vs_constraints(
 
         marker = next(marker_cycle)
         linestyle = "-"
-        markevery: int | tuple[int, int] = 1
+        linewidth = 2
+        markersize = 6
+        markerfacecolor = "white"
+        markeredgewidth = 1.4
+        alpha = 0.95
+        plot_x_values = x_values
+        zorder = 3 + idx
         if compiler_overlap_style:
-            # Keep data coordinates exact while making nearly identical compiler
-            # curves distinguishable via alternating markers and line styles.
-            linestyle = "-" if idx % 2 == 0 else "--"
-            markevery = (idx % 2, 2)
+            # Keep coordinates exact while separating nearly identical
+            # compiler curves via line style and marker treatment.
+            lower_label = series.label.lower()
+            if "ring switch" in lower_label:
+                linestyle = (0, (4.5, 2.2))
+                linewidth = 2.2
+                markersize = 6.8
+                markerfacecolor = "none"
+                markeredgewidth = 1.8
+                alpha = 0.98
+                zorder = 10 + idx
+            else:
+                linestyle = "-"
+                linewidth = 2.4
+                markersize = 7.2
+                markerfacecolor = "white"
+                markeredgewidth = 1.6
+                alpha = 0.9
         (line,) = ax.plot(
-            x_values,
+            plot_x_values,
             y_values,
             marker=marker,
-            linewidth=2,
-            markersize=6,
-            markerfacecolor="white",
-            markeredgewidth=1.4,
+            linewidth=linewidth,
+            markersize=markersize,
+            markerfacecolor=markerfacecolor,
+            markeredgewidth=markeredgewidth,
             linestyle=linestyle,
-            alpha=0.95,
-            markevery=markevery,
+            alpha=alpha,
             label=series.label,
-            zorder=3 + idx,
+            zorder=zorder,
         )
         line.set_path_effects(
             [pe.Stroke(linewidth=3.2, foreground="white", alpha=0.85), pe.Normal()]
@@ -565,6 +586,8 @@ def plot_metric_vs_constraints(
         x_max = max(all_x_values)
         x_min_pow = 2 ** math.floor(math.log2(x_min))
         x_max_pow = 2 ** math.ceil(math.log2(x_max))
+        if compiler_overlap_style:
+            x_min_pow = max(x_min_pow, 2 ** 7)
         if x_max_pow <= x_min_pow:
             x_max_pow = x_min_pow * 2
         ax.set_xlim(x_min_pow, x_max_pow)
@@ -576,6 +599,8 @@ def plot_metric_vs_constraints(
                 if x > 0 and abs(math.log2(x) - round(math.log2(x))) <= 1e-8
             }
         )
+        if power_ticks:
+            power_ticks = [tick for tick in power_ticks if tick >= x_min_pow]
         if power_ticks:
             ax.set_xticks(power_ticks)
     ax.set_xscale("log", base=2)
