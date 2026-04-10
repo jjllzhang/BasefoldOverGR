@@ -43,6 +43,15 @@ class SeriesData:
 
 
 @dataclass(frozen=True)
+class CsvInputSpec:
+    csv_path: Path
+    include_families: Tuple[str, ...] = ()
+    exclude_families: Tuple[str, ...] = ()
+    include_context_ids: Tuple[str, ...] = ()
+    exclude_context_ids: Tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class LegendEntry:
     label: str
     color: str
@@ -53,6 +62,13 @@ class LegendEntry:
 class PlotResult:
     plot_path: Path
     legend_entries: Tuple[LegendEntry, ...]
+
+
+@dataclass(frozen=True)
+class FigureJob:
+    output_prefix: str
+    input_specs: Tuple[CsvInputSpec, ...]
+    legend_mode: str = "auto"
 
 
 METRIC_CATALOG = {
@@ -148,6 +164,21 @@ def _parse_power_of_two(raw: str | None) -> int | None:
     if value & (value - 1):
         raise ValueError(f"poly_dim must be a power of two, got {value}")
     return value
+
+
+def _row_matches_spec(row: dict[str, str], input_spec: CsvInputSpec) -> bool:
+    family = (row.get("family") or "").strip()
+    context_id = (row.get("context_id") or "").strip()
+
+    if input_spec.include_families and family not in input_spec.include_families:
+        return False
+    if input_spec.exclude_families and family in input_spec.exclude_families:
+        return False
+    if input_spec.include_context_ids and context_id not in input_spec.include_context_ids:
+        return False
+    if input_spec.exclude_context_ids and context_id in input_spec.exclude_context_ids:
+        return False
+    return True
 
 
 _EXT_CHALLENGE_MARKER_RE = re.compile(
@@ -342,37 +373,38 @@ def _series_label(
 ) -> str:
     special_label = _special_series_label(rows)
     if special_label is not None:
-        return special_label
-
-    backend_label = _backend_series_label(csv_path, rows)
-    if backend_label is not None:
-        return backend_label
-
-    compiler_label = _compiler_series_label(csv_path, rows)
-    if compiler_label is not None:
-        return compiler_label
-
-    parts: List[str] = []
-    for field in split_fields:
-        values = _stable_values(rows, field)
-        if len(values) != 1:
-            continue
-        rendered = _format_split_field_value(csv_path, field, next(iter(values)))
-        if rendered:
-            parts.append(rendered)
-
-    if not parts:
-        display_names = _stable_values(rows, "display_name")
-        if len(display_names) == 1:
-            parts.append(next(iter(display_names)))
+        label = special_label
+    else:
+        backend_label = _backend_series_label(csv_path, rows)
+        if backend_label is not None:
+            label = backend_label
         else:
-            families = _stable_values(rows, "family")
-            if len(families) == 1:
-                family_label = _display_family_name(next(iter(families)))
-                if family_label:
-                    parts.append(family_label)
+            compiler_label = _compiler_series_label(csv_path, rows)
+            if compiler_label is not None:
+                label = compiler_label
+            else:
+                parts: List[str] = []
+                for field in split_fields:
+                    values = _stable_values(rows, field)
+                    if len(values) != 1:
+                        continue
+                    rendered = _format_split_field_value(csv_path, field, next(iter(values)))
+                    if rendered:
+                        parts.append(rendered)
 
-    label = " | ".join(parts) if parts else csv_path.stem
+                if not parts:
+                    display_names = _stable_values(rows, "display_name")
+                    if len(display_names) == 1:
+                        parts.append(next(iter(display_names)))
+                    else:
+                        families = _stable_values(rows, "family")
+                        if len(families) == 1:
+                            family_label = _display_family_name(next(iter(families)))
+                            if family_label:
+                                parts.append(family_label)
+
+                label = " | ".join(parts) if parts else csv_path.stem
+
     if include_source_label:
         return f"{csv_path.stem} | {label}"
     return label
@@ -408,11 +440,12 @@ def _format_power_of_ten(value: float, _pos: int) -> str:
 
 
 def load_series_from_csv(
-    csv_path: Path,
+    input_spec: CsvInputSpec,
     metric_keys: Iterable[str],
     proof_size_column: str | None = None,
     include_source_label: bool = False,
 ) -> List[SeriesData]:
+    csv_path = input_spec.csv_path
     metric_keys = list(metric_keys)
     valid_rows: List[dict[str, str]] = []
 
@@ -443,6 +476,8 @@ def load_series_from_csv(
         for row_index, row in enumerate(reader, start=2):
             status = (row.get("status") or "ok").strip().lower()
             if status not in ("ok", "success", ""):
+                continue
+            if not _row_matches_spec(row, input_spec):
                 continue
 
             try:
@@ -700,26 +735,40 @@ def render_legend_image(
 
 
 def plot_benchmark_metrics(
-    csv_paths: Sequence[Path],
+    csv_paths: Sequence[Path] | None,
     output_dir: Path,
     output_prefix: str = "benchmark",
     proof_size_column: str | None = None,
     metrics_to_plot: Sequence[str] | None = None,
     legend_mode: str = "auto",
+    input_specs: Sequence[CsvInputSpec] | None = None,
+    include_source_label: bool | None = None,
 ) -> Tuple[List[Path], List[str]]:
     metric_catalog = {**METRIC_CATALOG, "proof_size": PROOF_SIZE_METRIC}
     selected_names = list(metrics_to_plot) if metrics_to_plot else DEFAULT_METRIC_NAMES
     metrics = [metric_catalog[name] for name in selected_names]
     metric_keys = [metric.key for metric in metrics]
-    include_source_label = len(csv_paths) > 1
-    split_legend = _should_split_legend(csv_paths, legend_mode)
-    inline_legend_ncols = _inline_legend_ncols(csv_paths)
-    compiler_overlap_style = _compiler_overlap_style(csv_paths)
+
+    resolved_csv_paths = list(csv_paths or [])
+    resolved_input_specs: Tuple[CsvInputSpec, ...]
+    if input_specs is None:
+        resolved_input_specs = tuple(CsvInputSpec(csv_path=path) for path in resolved_csv_paths)
+    else:
+        resolved_input_specs = tuple(input_specs)
+        if not resolved_csv_paths:
+            resolved_csv_paths = [spec.csv_path for spec in resolved_input_specs]
+
+    if include_source_label is None:
+        include_source_label = len(resolved_csv_paths) > 1
+
+    split_legend = _should_split_legend(resolved_csv_paths, legend_mode)
+    inline_legend_ncols = _inline_legend_ncols(resolved_csv_paths)
+    compiler_overlap_style = _compiler_overlap_style(resolved_csv_paths)
     series_list: List[SeriesData] = []
-    for csv_path in csv_paths:
+    for input_spec in resolved_input_specs:
         series_list.extend(
             load_series_from_csv(
-                csv_path,
+                input_spec,
                 metric_keys,
                 proof_size_column=proof_size_column,
                 include_source_label=include_source_label,
@@ -759,6 +808,99 @@ def plot_benchmark_metrics(
             stale_path.unlink()
 
     return output_paths, skipped_metrics
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _build_split_pcs_over_galois_ring_jobs() -> Tuple[FigureJob, ...]:
+    results_new_dir = (_repo_root() / "results-new").resolve()
+    fri_ligero_csv = (results_new_dir / "fri_ligero_based_eval_results.csv").resolve()
+    jobs: List[FigureJob] = []
+    for thread_dir, prefix_suffix in (("1-thread", "1_thread"), ("8-thread", "8_threads")):
+        backend_csv = (results_new_dir / thread_dir / "backend_eval_results.csv").resolve()
+        jobs.append(
+            FigureJob(
+                output_prefix=f"comparison_with_Basefold_{prefix_suffix}",
+                input_specs=(
+                    CsvInputSpec(
+                        csv_path=backend_csv,
+                        include_families=("basefold",),
+                        exclude_context_ids=("ring-gr-2p16-162",),
+                    ),
+                ),
+            )
+        )
+        jobs.append(
+            FigureJob(
+                output_prefix=f"comparison_with_JLXYY25_{prefix_suffix}",
+                input_specs=(
+                    CsvInputSpec(
+                        csv_path=backend_csv,
+                        include_families=("basefold",),
+                        include_context_ids=("ring-gr-2p16-162",),
+                    ),
+                    CsvInputSpec(
+                        csv_path=fri_ligero_csv,
+                        include_families=("ligero_based",),
+                    ),
+                    CsvInputSpec(
+                        csv_path=fri_ligero_csv,
+                        include_families=("fri_based",),
+                    ),
+                ),
+                legend_mode="inline",
+            )
+        )
+    return tuple(jobs)
+
+
+def _delete_matching_plots(output_dir: Path, patterns: Sequence[str]) -> List[Path]:
+    removed_paths: List[Path] = []
+    seen_paths: set[Path] = set()
+    for pattern in patterns:
+        for path in sorted(output_dir.glob(pattern)):
+            if path in seen_paths:
+                continue
+            path.unlink()
+            removed_paths.append(path)
+            seen_paths.add(path)
+    return removed_paths
+
+
+def generate_split_pcs_over_galois_ring_figures(
+    output_dir: Path,
+    metrics_to_plot: Sequence[str] | None = None,
+) -> Tuple[List[Path], List[str], List[Path]]:
+    output_dir = output_dir.resolve()
+    removed_paths = _delete_matching_plots(
+        output_dir,
+        (
+            "PCSoverGaloisRing_*.png",
+            "comparison_with_Basefold_*.png",
+            "comparison_with_JLXYY25_*.png",
+        ),
+    )
+
+    output_paths: List[Path] = []
+    skipped_metrics: List[str] = []
+    for job in _build_split_pcs_over_galois_ring_jobs():
+        job_paths, job_skipped = plot_benchmark_metrics(
+            csv_paths=[spec.csv_path for spec in job.input_specs],
+            input_specs=job.input_specs,
+            output_dir=output_dir,
+            output_prefix=job.output_prefix,
+            metrics_to_plot=metrics_to_plot,
+            legend_mode=job.legend_mode,
+            include_source_label=False,
+        )
+        output_paths.extend(job_paths)
+        skipped_metrics.extend(
+            f"{job.output_prefix}:{metric_name}" for metric_name in job_skipped
+        )
+
+    return output_paths, skipped_metrics, removed_paths
 
 
 def _default_output_prefix(csv_paths: Sequence[Path], requested_prefix: str) -> str:
@@ -805,7 +947,7 @@ def _parse_args() -> argparse.Namespace:
             "Plot commit/open/prover/verifier/proof-size vs number of constraints from one or more benchmark CSV files. Each line in a figure is one experiment, and a single CSV is automatically split when display_name, family, context_id, or mode varies."
         )
     )
-    parser.add_argument("inputs", nargs="+", help="Input CSV file paths.")
+    parser.add_argument("inputs", nargs="*", help="Input CSV file paths.")
     parser.add_argument(
         "-o",
         "--output-dir",
@@ -847,6 +989,15 @@ def _parse_args() -> argparse.Namespace:
             "Legend placement mode. 'auto' keeps the previous behavior, "
             "'inline' always draws the legend inside the plot, and 'split' "
             "always writes a separate *_legend.png."
+        ),
+    )
+    parser.add_argument(
+        "--generate-split-pcs-over-galois-ring-figures",
+        action="store_true",
+        help=(
+            "Regenerate the tracked results-new/figures comparison plots for "
+            "PCS over Galois rings, split by thread count into Basefold and "
+            "JLXYY25 comparison groups."
         ),
     )
     return parser.parse_args()
@@ -900,8 +1051,46 @@ def _select_metrics(args: argparse.Namespace) -> List[str]:
 def main() -> int:
     args = _parse_args()
     selected_metrics = _select_metrics(args)
-    csv_paths = [Path(path).expanduser().resolve() for path in args.inputs]
+    if args.generate_split_pcs_over_galois_ring_figures:
+        if args.inputs:
+            raise ValueError(
+                "--generate-split-pcs-over-galois-ring-figures does not accept positional input CSVs."
+            )
 
+        default_output_dir = Path("result/plots")
+        if Path(args.output_dir) == default_output_dir:
+            output_dir = (_repo_root() / "results-new" / "figures").resolve()
+        else:
+            output_dir = Path(args.output_dir).expanduser().resolve()
+
+        output_paths, skipped_metrics, removed_paths = generate_split_pcs_over_galois_ring_figures(
+            output_dir=output_dir,
+            metrics_to_plot=selected_metrics,
+        )
+
+        if removed_paths:
+            print("Removed plots:")
+            for removed_path in removed_paths:
+                print(removed_path)
+
+        if output_paths:
+            print("Generated plots:")
+            for output_path in output_paths:
+                print(output_path)
+        else:
+            print("Generated plots: none")
+
+        if skipped_metrics:
+            print("Skipped metrics with no valid data:")
+            for metric in skipped_metrics:
+                print(metric)
+
+        return 0
+
+    if not args.inputs:
+        raise ValueError("Provide at least one input CSV, or use --generate-split-pcs-over-galois-ring-figures.")
+
+    csv_paths = [Path(path).expanduser().resolve() for path in args.inputs]
     missing_files = [str(path) for path in csv_paths if not path.exists()]
     if missing_files:
         raise FileNotFoundError(f"Input file(s) not found: {', '.join(missing_files)}")
