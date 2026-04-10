@@ -1,10 +1,40 @@
 # BasefoldOverGR
 
-C++ implementations over finite fields and Galois rings for BaseFold-style encoding, IOPP/PCS, and `Z_{2^k}` compiler benchmarks.
+For the Chinese version, see [README_zh.md](README_zh.md).
 
-The benchmark workflow in this repo is centered on [scripts/run_release_c4_lambda128.sh](scripts/run_release_c4_lambda128.sh).
+BasefoldOverGR contains C++ implementations of BaseFold-style encoding, IOPP,
+and PCS over finite fields and Galois rings, together with `Z_{2^k}` compiler
+benchmarks for ring-switch and Frobenius variants.
 
-## Repository Structure
+The main benchmark entrypoint is
+[scripts/run_release_c4_lambda128.sh](scripts/run_release_c4_lambda128.sh).
+It auto-configures a Release build in `build-release/` and writes fresh sweep
+outputs under `results/` unless `OUT_DIR` is set explicitly.
+
+## Build and Test
+
+Requirements:
+
+- CMake 3.16 or newer
+- A C++17 compiler
+- NTL and GMP
+- OpenMP if you want multithreaded benches
+- `python3` and `matplotlib` for
+  [scripts/plot_benchmark_results.py](scripts/plot_benchmark_results.py)
+
+Manual build and test:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+The sweep script manages its own `build-release/` tree. Local directories such
+as `build/`, `build-release/`, `results/`, and `.venv/` are git-ignored and may
+exist in a working tree without being part of the tracked repository layout.
+
+## Repository Layout
 
 ```text
 .
@@ -12,59 +42,72 @@ The benchmark workflow in this repo is centered on [scripts/run_release_c4_lambd
 ├── README.md
 ├── README_zh.md
 ├── LICENSE
-├── bench/
-│   ├── bench_basefold_pcs_*.cpp
-│   ├── bench_z2k_ring_switch_*.cpp
-│   ├── bench_z2k_frobenius_*.cpp
-│   ├── calc_iopp_params.cpp
-│   └── exp_params_release_c4_lambda128.md
-├── include/
-├── src/
-├── tests/
+├── bench/                      # benchmark binaries and calc_iopp_params
+├── include/                    # public headers
+├── src/                        # library implementation
+├── tests/                      # unit tests and CLI/path hygiene checks
 ├── scripts/
 │   ├── run_release_c4_lambda128.sh
+│   ├── run_backend_eval_single_thread_7contexts.sh
 │   └── plot_benchmark_results.py
-├── results-legacy/
-├── build/             # generated
-├── build-release/     # generated
-└── results/           # generated benchmark outputs
+├── FRI_Ligero-based_results.md # tracked FRI/Ligero baseline tables
+├── results-new/                # tracked current-format CSVs and figures
+└── results-legacy/             # tracked older CSVs and plots
 ```
 
-## Running Benchmarks
+Tracked data currently lives in:
 
-`scripts/run_release_c4_lambda128.sh` is configured entirely through environment variables. It configures/builds `build-release` automatically and writes outputs to `results/release_c4_lambda128_sweep_<RUN_ID>/` unless `OUT_DIR` is set explicitly.
+- `results-new/1-thread/backend_eval_results.csv`
+- `results-new/8-thread/backend_eval_results.csv`
+- `results-new/8-thread/compiler_eval_results.csv`
+- `results-new/fri_ligero_based_eval_results.csv`
+- `results-new/figures/*.png`
+- `results-legacy/` for older CSV names and `*_vs_d.png` plots
 
-### Default BaseFold Release Sweep
+## Benchmark Workflows
 
-```bash
-scripts/run_release_c4_lambda128.sh
-```
+`scripts/run_release_c4_lambda128.sh` is fully environment-variable driven.
+Current suites are:
+
+- `basefold_release`
+- `compiler_eval_ring_switch`
+- `compiler_eval_frobenius`
+- `compiler_outer_commit_ring_switch`
+- `compiler_outer_commit_frobenius`
 
 Current defaults:
 
-- `RUN_SUITE=basefold_release`
-- `CONTEXTS=all`
-- `D_MIN=3`
-- `D_MAX=29`
 - `C=4`
 - `K0=1`
 - `LAMBDA=128`
+- `D_MIN=3`, `D_MAX=29`
 - `COMMIT_WARMUP=1`, `COMMIT_REPS=3`
-- `EVAL_WARMUP=1`, `EVAL_REPS=3` (shared eval-loop warmup/reps for prove + verify)
+- `EVAL_WARMUP=1`, `EVAL_REPS=3`
 - `BENCH_THREADS=8`
+- `CONTEXTS=all` (14 contexts)
 
-### Run One BaseFold Context with a Smaller `d` Range
+When `BENCH_THREADS > 0`, the runner also exports:
+
+- `OMP_NUM_THREADS`
+- `BASEFOLD_MERKLE_MAX_THREADS`
+- `BASEFOLD_VERIFY_QUERY_MAX_THREADS`
+
+to the same value. Set `BENCH_THREADS=0` if you want to keep the runtime's
+default threading policy.
+
+Representative commands:
 
 ```bash
+# Default BaseFold release sweep
+scripts/run_release_c4_lambda128.sh
+
+# One BaseFold context with a smaller d range
 CONTEXTS=field-prime128-ext \
 D_MIN=10 D_MAX=20 \
 BENCH_THREADS=1 \
 scripts/run_release_c4_lambda128.sh
-```
 
-### Run Ring-Switch Compiler Eval
-
-```bash
+# Ring-switch compiler full eval
 RUN_SUITE=compiler_eval_ring_switch \
 CONTEXTS=ring-gr-2p16-64-ext \
 COMPILER_KAPPA=6 \
@@ -73,42 +116,11 @@ COMPILER_ELL_MAX=12 \
 EVAL_WARMUP=0 EVAL_REPS=1 \
 BENCH_THREADS=1 \
 scripts/run_release_c4_lambda128.sh
-```
 
-Notes:
-
-- Compiler suites currently support ring contexts only.
-- The selected ring context must satisfy `deg(F) = 2^COMPILER_KAPPA`.
-- Compiler benches currently build only `K0=1` backends; `K0 != 1` rows are emitted as `status=unsupported_k0`.
-- In `bench_z2k_ring_switch_eval`, default verifier split is measured as standalone outer replay plus standalone backend-only verify; `--profiled-backend-verify` restores the old subcall-timed split.
-
-### Run Frobenius Compiler Eval
-
-```bash
-RUN_SUITE=compiler_eval_frobenius \
-CONTEXTS=ring-gr-2p16-64-ext \
-COMPILER_KAPPA=6 \
-COMPILER_ELL_MIN=9 \
-COMPILER_ELL_MAX=12 \
-EVAL_WARMUP=0 EVAL_REPS=1 \
-BENCH_THREADS=1 \
-scripts/run_release_c4_lambda128.sh
-```
-
-Notes:
-
-- Compiler suites currently support ring contexts only.
-- The selected ring context must satisfy `deg(F) = 2^COMPILER_KAPPA`.
-- Compiler benches currently build only `K0=1` backends; `K0 != 1` rows are emitted as `status=unsupported_k0`.
-- `RUN_SUITE=compiler_eval_frobenius` still skips `GR(2^2,r)` contexts and emits `status=disabled_gr2p2_context`.
-- In `bench_z2k_frobenius_eval`, default verifier split is measured as standalone outer replay plus standalone backend-only verify; `--profiled-backend-verify` restores the old subcall-timed split.
-
-### Run Compiler Outer Commit Only
-
-```bash
+# Frobenius compiler outer-commit only
 RUN_SUITE=compiler_outer_commit_frobenius \
-CONTEXTS=ring-gr-2p16-64-ext \
-COMPILER_KAPPA=6 \
+CONTEXTS=ring-gr-2p16-128-ext \
+COMPILER_KAPPA=7 \
 COMPILER_ELL_MIN=9 \
 COMPILER_ELL_MAX=12 \
 EVAL_WARMUP=0 EVAL_REPS=1 \
@@ -116,42 +128,106 @@ BENCH_THREADS=1 \
 scripts/run_release_c4_lambda128.sh
 ```
 
-Notes:
+Important current constraints:
 
-- Outer-commit suites currently support ring contexts only.
+- Compiler suites accept ring contexts only.
 - The selected ring context must satisfy `deg(F) = 2^COMPILER_KAPPA`.
-- Outer-commit suites currently build only `K0=1` backends; `K0 != 1` rows are emitted as `status=unsupported_k0`.
-- `RUN_SUITE=compiler_outer_commit_frobenius` still skips `GR(2^2,r)` contexts and emits `status=disabled_gr2p2_context`.
-- Outer-commit rows reuse the compiler `ell` sweep and `calc_iopp_params` metadata from compiler eval, but the timed region records only `bench_z2k_*_outer_commit`.
+- Current compiler benches support `K0=1` only.
+- Frobenius compiler suites skip `GR(2^2,r)` contexts and emit
+  `status=disabled_gr2p2_context`.
+- Sweep CSV `queries` are derived from `calc_iopp_params` by parsing
+  `l_min_for_IOPP`.
 
-### Most Useful Environment Variables
+Useful environment variables:
 
-- `RUN_SUITE`: `basefold_release`, `compiler_eval_ring_switch`, `compiler_eval_frobenius`, `compiler_outer_commit_ring_switch`, `compiler_outer_commit_frobenius`
-- `CONTEXTS`: `all` or a comma-separated subset of supported contexts
-- `D_MIN`, `D_MAX`: BaseFold sweep range, used by `basefold_release`
-- `COMPILER_KAPPA`, `COMPILER_ELL_MIN`, `COMPILER_ELL_MAX`: required by compiler suites
-- Compiler suites accept ring contexts only and require `deg(F) = 2^COMPILER_KAPPA`
-- `K0`: BaseFold message base dimension, default `1`
-- Compiler suites currently require `K0=1`
-- `BENCH_THREADS`: threads used inside each bench process
-- `OUT_DIR`: explicit output directory
-- `BUILD_DIR`: explicit build directory
-- `ISOLATE_BUILD_DIR=1`: use `build-release-<RUN_ID>` instead of the shared `build-release`
-- `CMD_TIMEOUT_SEC`: per-benchmark timeout, default `0` means no timeout
-- `CONTINUE_ON_ERROR`: keep sweeping after per-point failures, default `1`
+- `CONTEXTS` for selecting a subset of contexts
+- `COMPILER_KAPPA`, `COMPILER_ELL_MIN`, `COMPILER_ELL_MAX` for compiler suites
+- `OUT_DIR`, `OUT_ROOT`, `RUN_ID`, `TIMESTAMP` for output placement
+- `BUILD_DIR`, `ISOLATE_BUILD_DIR`, `PIN_BUILD` for build-tree control
+- `CPU_PIN_MODE`, `CPU_SET`, `RUN_SLOT`, `RUN_SLOTS_TOTAL`,
+  `USE_SMT_IN_SLOT` for CPU pinning
+- `CMD_TIMEOUT_SEC`, `CONTINUE_ON_ERROR` for failure handling
 
-The full environment-variable reference and supported context list are in [bench/exp_params_release_c4_lambda128.md](bench/exp_params_release_c4_lambda128.md).
+The full per-context parameter table and environment-variable reference are in
+[bench/exp_params_release_c4_lambda128.md](bench/exp_params_release_c4_lambda128.md).
+
+### Concurrent Single-Thread Backend Sweep
+
+[scripts/run_backend_eval_single_thread_7contexts.sh](scripts/run_backend_eval_single_thread_7contexts.sh)
+launches seven single-thread `basefold_release` runs in parallel, pins each
+child to one CPU, and merges the child CSVs into one combined
+`backend_eval_results.csv`.
+
+Default example:
+
+```bash
+scripts/run_backend_eval_single_thread_7contexts.sh
+```
+
+This helper expects `bash`, `lscpu`, `python3`, and `taskset`.
 
 ## Output Files
 
-Each run writes:
+The run directory defaults to `results/release_c4_lambda128_sweep_<RUN_ID>/`.
+Depending on `RUN_SUITE`, it can contain:
 
-- `backend_eval_results.csv`: BaseFold release rows from `bench_basefold_pcs_commit` and `bench_basefold_pcs_eval`
-- `compiler_eval_results.csv`: compiler-eval rows for the selected family (`ring_switch` or `frobenius`), including `outer_proof_size_*` and `total_proof_size_*`
-- `compiler_outer_commit_results.csv`: written only for `RUN_SUITE=compiler_outer_commit_ring_switch` or `RUN_SUITE=compiler_outer_commit_frobenius`; records `outer_commit_mean_ms` and backend-input size for the selected family
-- `RESULTS.md`: markdown summary table
-- `logs/*.log`: raw logs for `calc_iopp_params` and benchmark binaries
+- `backend_eval_results.csv` for `basefold_release`
+- `compiler_eval_results.csv` for `compiler_eval_ring_switch` and
+  `compiler_eval_frobenius`
+- `compiler_outer_commit_results.csv` for
+  `compiler_outer_commit_ring_switch` and
+  `compiler_outer_commit_frobenius`
+- `RESULTS.md` for markdown summaries
+- `logs/*.log` for raw `calc_iopp_params` and benchmark logs
 
-Note:
+`backend_eval_results.csv` uses the current backend schema:
 
-- `RUN_SUITE=compiler_eval_frobenius` and `RUN_SUITE=compiler_outer_commit_frobenius` do not execute Frobenius rows on `GR(2^2,r)` contexts; those rows are emitted as `status=disabled_gr2p2_context`.
+- `commit_mean_ms`
+- `open_mean_ms`
+- `prove_mean_ms`
+- `verifier_mean_ms`
+- `proof_size_kb`
+- `proof_size_bytes`
+
+`compiler_eval_results.csv` uses the current compiler schema, including:
+
+- `outer_commit_mean_ms`
+- `backend_commit_mean_ms`
+- `commit_total_mean_ms`
+- `open_total_mean_ms`
+- `prove_total_mean_ms`
+- `verify_total_mean_ms`
+- `outer_proof_size_kb`
+- `total_proof_size_kb`
+
+## Plotting CSV Results
+
+`scripts/plot_benchmark_results.py` reads one or more benchmark CSV files and
+plots `commit`, `open`, `prover`, `verifier`, and `proof_size` against the
+number of constraints.
+
+If you omit `-o`, the script writes PNG files to `result/plots`. Use `-o` when
+you want to regenerate the tracked figures under `results-new/figures`.
+
+Examples:
+
+```bash
+# Regenerate the tracked single-thread backend figures
+python3 scripts/plot_benchmark_results.py \
+  results-new/1-thread/backend_eval_results.csv \
+  -o results-new/figures \
+  --prefix PCSoverGaloisRing_1_thread
+
+# Regenerate the tracked 8-thread compiler figures
+python3 scripts/plot_benchmark_results.py \
+  results-new/8-thread/compiler_eval_results.csv \
+  -o results-new/figures \
+  --prefix PCSoverZ2K_8_threads
+```
+
+Useful plotting options:
+
+- `--metrics commit prover verifier proof_size`
+- `--proof-size-column <column>`
+- `--legend-mode auto|inline|split`
+- Multi-input mode for overlaying several CSVs in one figure
