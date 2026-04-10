@@ -162,6 +162,11 @@ _SPECIAL_FAMILY_LABELS = {
     "ligero_based": "Ligero-PCS",
 }
 
+_FAMILY_DISPLAY_NAMES = {
+    "frobenius": "Frobenius map",
+    "ring_switch": "Ring-switching",
+}
+
 _BACKEND_CONTEXT_DOMAIN_LABELS = {
     "field-255": r"$\mathbb{F}_{2^{255}-19}$",
     "field-f2p256": r"$\mathbb{F}_{2^{256}}$",
@@ -208,6 +213,9 @@ def _context_series_label(csv_path: Path, labels: set[str]) -> str:
 def _display_family_name(raw_family: str | None) -> str | None:
     if not raw_family:
         return None
+    mapped_name = _FAMILY_DISPLAY_NAMES.get(raw_family)
+    if mapped_name is not None:
+        return mapped_name
     words = raw_family.replace("_", " ").split()
     if not words:
         return None
@@ -222,7 +230,7 @@ def _math_gr_label(raw_label: str) -> str | None:
 
     left = re.sub(r"\^(\d+)", r"^{\1}", match.group(1).strip())
     right = match.group(2).strip()
-    return rf"$GR({left}, {right})$"
+    return rf"$\mathrm{{GR}}({left}, {right})$"
 
 
 def _math_z2k_label(raw_label: str) -> str | None:
@@ -533,7 +541,7 @@ def plot_metric_vs_constraints(
             # Keep coordinates exact while separating nearly identical
             # compiler curves via line style and marker treatment.
             lower_label = series.label.lower()
-            if "ring switch" in lower_label:
+            if "ring switch" in lower_label or "ring-switch" in lower_label:
                 linestyle = (0, (4.5, 2.2))
                 linewidth = 2.2
                 markersize = 6.8
