@@ -140,6 +140,10 @@ RING2P16_P="${RING2P16_P:-2}"
 RING2P16_F="${RING2P16_F:-$RING_F_162_DEFAULT}"
 RING2P16_ZETA="${RING2P16_ZETA:-0,1}"  # x
 
+RING2P32_MOD="${RING2P32_MOD:-4294967296}"  # 2^32
+RING2P32_P="${RING2P32_P:-2}"
+RING2P32_ZETA="${RING2P32_ZETA:-0,1}"  # x
+
 RING2P2_MOD="${RING2P2_MOD:-4}"  # 2^2
 RING2P2_P="${RING2P2_P:-2}"
 RING2P2_F="${RING2P2_F:-$RING_F_162_DEFAULT}"
@@ -157,6 +161,8 @@ ENABLE_F3_40_EXT=0
 ENABLE_F3_81_EXT=0
 ENABLE_RING2P16_64_EXT=0
 ENABLE_RING2P16_128_EXT=0
+ENABLE_RING2P32_64_EXT=0
+ENABLE_RING2P32_128_EXT=0
 ENABLE_RING2P2_64_EXT=0
 ENABLE_RING2P2_128_EXT=0
 SELECTED_CONTEXT_COUNT=0
@@ -314,6 +320,8 @@ if [[ "$CONTEXTS" == "all" ]]; then
   ENABLE_F3_81_EXT=1
   ENABLE_RING2P16_64_EXT=1
   ENABLE_RING2P16_128_EXT=1
+  ENABLE_RING2P32_64_EXT=1
+  ENABLE_RING2P32_128_EXT=1
   ENABLE_RING2P2_64_EXT=1
   ENABLE_RING2P2_128_EXT=1
 else
@@ -357,6 +365,12 @@ else
       ring-gr-2p16-128-ext)
         ENABLE_RING2P16_128_EXT=1
         ;;
+      ring-gr-2p32-64-ext)
+        ENABLE_RING2P32_64_EXT=1
+        ;;
+      ring-gr-2p32-128-ext)
+        ENABLE_RING2P32_128_EXT=1
+        ;;
       ring-gr-2p2-64-ext)
         ENABLE_RING2P2_64_EXT=1
         ;;
@@ -367,7 +381,7 @@ else
         ;;
       *)
         echo "Unknown context in CONTEXTS: $token" >&2
-        echo "Valid: field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162,field-prime64-ext,field-f2p64-ext,field-prime128-ext,field-f2p128-ext,field-f3p40-ext,field-f3p81-ext,ring-gr-2p16-64-ext,ring-gr-2p16-128-ext,ring-gr-2p2-64-ext,ring-gr-2p2-128-ext,all" >&2
+        echo "Valid: field-255,ring-gr-2p16-162,field-f2p256,ring-gr-2p2-162,field-prime64-ext,field-f2p64-ext,field-prime128-ext,field-f2p128-ext,field-f3p40-ext,field-f3p81-ext,ring-gr-2p16-64-ext,ring-gr-2p16-128-ext,ring-gr-2p32-64-ext,ring-gr-2p32-128-ext,ring-gr-2p2-64-ext,ring-gr-2p2-128-ext,all" >&2
         exit 2
         ;;
     esac
@@ -399,7 +413,7 @@ if (( ENABLE_F3_81_EXT )); then
   fi
 fi
 
-SELECTED_CONTEXT_COUNT=$((ENABLE_FIELD255 + ENABLE_RING2P16_162 + ENABLE_F2_256 + ENABLE_RING2P2_162 + ENABLE_FIELD64_EXT + ENABLE_F2_64_EXT + ENABLE_FIELD128_EXT + ENABLE_F2_128_EXT + ENABLE_F3_40_EXT + ENABLE_F3_81_EXT + ENABLE_RING2P16_64_EXT + ENABLE_RING2P16_128_EXT + ENABLE_RING2P2_64_EXT + ENABLE_RING2P2_128_EXT))
+SELECTED_CONTEXT_COUNT=$((ENABLE_FIELD255 + ENABLE_RING2P16_162 + ENABLE_F2_256 + ENABLE_RING2P2_162 + ENABLE_FIELD64_EXT + ENABLE_F2_64_EXT + ENABLE_FIELD128_EXT + ENABLE_F2_128_EXT + ENABLE_F3_40_EXT + ENABLE_F3_81_EXT + ENABLE_RING2P16_64_EXT + ENABLE_RING2P16_128_EXT + ENABLE_RING2P32_64_EXT + ENABLE_RING2P32_128_EXT + ENABLE_RING2P2_64_EXT + ENABLE_RING2P2_128_EXT))
 
 mkdir -p "$OUT_DIR/logs"
 RUN_SUITE="${RUN_SUITE:-basefold_release}"
@@ -973,6 +987,20 @@ run_one_context_d() {
       context_extension_degree="$(poly_degree_from_coeff_list "$RING_F_128")"
       phase_extra_args+=(--use-extension-challenges --ring-challenge-ext "$CHALLENGE_GR_128_EXT_DEG2")
       ;;
+    ring-gr-2p32-64-ext)
+      calc_p="2"
+      calc_r="64"
+      calc_m="3"
+      context_extension_degree="$(poly_degree_from_coeff_list "$RING_F_64")"
+      phase_extra_args+=(--use-extension-challenges --ring-challenge-ext "$CHALLENGE_RING_EXT_DEG3")
+      ;;
+    ring-gr-2p32-128-ext)
+      calc_p="2"
+      calc_r="128"
+      calc_m="2"
+      context_extension_degree="$(poly_degree_from_coeff_list "$RING_F_128")"
+      phase_extra_args+=(--use-extension-challenges --ring-challenge-ext "$CHALLENGE_GR_128_EXT_DEG2")
+      ;;
     ring-gr-2p2-64-ext)
       calc_p="2"
       calc_r="64"
@@ -1121,6 +1149,20 @@ resolve_compiler_context_metadata() {
       COMPILER_CONTEXT_CALC_M="2"
       COMPILER_CONTEXT_EXTENSION_DEGREE="$(poly_degree_from_coeff_list "$RING_F_128")"
       COMPILER_CONTEXT_SCALAR_MODULUS="$RING2P16_MOD"
+      ;;
+    ring-gr-2p32-64-ext)
+      COMPILER_CONTEXT_CALC_P="2"
+      COMPILER_CONTEXT_CALC_R="64"
+      COMPILER_CONTEXT_CALC_M="3"
+      COMPILER_CONTEXT_EXTENSION_DEGREE="$(poly_degree_from_coeff_list "$RING_F_64")"
+      COMPILER_CONTEXT_SCALAR_MODULUS="$RING2P32_MOD"
+      ;;
+    ring-gr-2p32-128-ext)
+      COMPILER_CONTEXT_CALC_P="2"
+      COMPILER_CONTEXT_CALC_R="128"
+      COMPILER_CONTEXT_CALC_M="2"
+      COMPILER_CONTEXT_EXTENSION_DEGREE="$(poly_degree_from_coeff_list "$RING_F_128")"
+      COMPILER_CONTEXT_SCALAR_MODULUS="$RING2P32_MOD"
       ;;
     ring-gr-2p2-64-ext)
       COMPILER_CONTEXT_CALC_P="2"
@@ -1347,6 +1389,22 @@ if (( RUN_BASEFOLD_RELEASE )); then
         --ring-F "$RING_F_128" \
         --ring-zeta "$RING2P16_ZETA"
     fi
+    if (( ENABLE_RING2P32_64_EXT )); then
+      run_one_context_d \
+        "ring-gr-2p32-64-ext" "GR(2^32,64) (ext-challenge)" "ring" "$d" \
+        --ring-mod "$RING2P32_MOD" \
+        --ring-p "$RING2P32_P" \
+        --ring-F "$RING_F_64" \
+        --ring-zeta "$RING2P32_ZETA"
+    fi
+    if (( ENABLE_RING2P32_128_EXT )); then
+      run_one_context_d \
+        "ring-gr-2p32-128-ext" "GR(2^32,128) (ext-challenge)" "ring" "$d" \
+        --ring-mod "$RING2P32_MOD" \
+        --ring-p "$RING2P32_P" \
+        --ring-F "$RING_F_128" \
+        --ring-zeta "$RING2P32_ZETA"
+    fi
     if (( ENABLE_RING2P2_64_EXT )); then
       run_one_context_d \
         "ring-gr-2p2-64-ext" "GR(2^2,64) (ext-challenge)" "ring" "$d" \
@@ -1407,6 +1465,22 @@ if (( RUN_COMPILER_EVAL || RUN_COMPILER_OUTER_COMMIT )); then
         --ring-p "$RING2P16_P" \
         --ring-F "$RING_F_128" \
         --ring-zeta "$RING2P16_ZETA"
+    fi
+    if (( ENABLE_RING2P32_64_EXT )); then
+      run_one_context_compiler_suite_ell \
+        "ring-gr-2p32-64-ext" "GR(2^32,64) (ext-challenge)" "$compiler_suite_family" "$compiler_ell" \
+        --ring-mod "$RING2P32_MOD" \
+        --ring-p "$RING2P32_P" \
+        --ring-F "$RING_F_64" \
+        --ring-zeta "$RING2P32_ZETA"
+    fi
+    if (( ENABLE_RING2P32_128_EXT )); then
+      run_one_context_compiler_suite_ell \
+        "ring-gr-2p32-128-ext" "GR(2^32,128) (ext-challenge)" "$compiler_suite_family" "$compiler_ell" \
+        --ring-mod "$RING2P32_MOD" \
+        --ring-p "$RING2P32_P" \
+        --ring-F "$RING_F_128" \
+        --ring-zeta "$RING2P32_ZETA"
     fi
     if (( ENABLE_RING2P2_64_EXT )); then
       run_one_context_compiler_suite_ell \

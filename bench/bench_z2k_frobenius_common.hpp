@@ -129,6 +129,7 @@ struct FrobeniusBenchPresetDescriptor {
   long a0 = 0;
   long a1 = 0;
   long exponent = 0;
+  const char *candidate_coeffs = nullptr;
 };
 
 inline const char *FrobeniusBenchPresetFamilyName(
@@ -696,6 +697,57 @@ inline const char *HardcodedFrobeniusBenchTeichGR2P64Eval() {
          "-992480368530444889";
 }
 
+inline const char *HardcodedFrobeniusBenchTeichGR2P32R128() {
+  return "3716288834,2353436592,3522129224,888517094,3184132589,3784147901,6165255"
+         "8,705775513,1053138420,1504173479,3595204784,2683400846,1577788884,41485"
+         "61933,2570641818,3024059690,2552213114,2016800545,1262612299,13496973,14"
+         "61328535,1661045160,1997401209,2484293711,1614716496,461489640,462371518"
+         ",3880191079,1759294722,3808135555,113368563,2902205342,4209336773,163140"
+         "9636,861915748,1934757153,1076106912,2748549131,2279118961,1772382056,41"
+         "77595306,2989764411,2218276887,1277067827,4085238965,2832076674,42476968"
+         "72,1529716533,1622493208,4051972178,1857318834,3912971848,3497264982,172"
+         "5218331,3641283471,4010385324,3998776666,1374372495,3939137672,729224184"
+         ",1298554806,2662032745,288048941,3340909164,1666374744,341679257,1210532"
+         "530,4154054892,2923100085,4221278742,1668048376,2706424609,3995608248,20"
+         "56484586,3800323267,2666917835,1762533479,453877021,3375042499,407070345"
+         "3,3739756301,1955926776,523064418,3482352136,3490790453,1367167047,28944"
+         "59311,1022208149,682507600,4061220361,3542012840,3134470268,4264326323,3"
+         "650938398,2695870721,3299702105,186109810,2559367748,3656573835,17343292"
+         "36,2031217180,1235918423,3460356837,594148745,1096658012,434009851,29698"
+         "76673,1648111075,3907539855,2998315690,953163755,107312955,3675764366,25"
+         "65262976,1354654133,1075286569,4072662259,3899494510,1485875851,25170916"
+         "89,1014955438,4027150574,916660662,3748535616,1906034142,341976211,19286"
+         "68485,150786548";
+}
+
+inline const char *HardcodedFrobeniusBenchCandidateGR2P32R128Commit() {
+  return "39298,33974,27924,44033,31673,33371,31356,20067,25659,13146,59890,23719,"
+         "28154,38752,35638,20305,35087,24070,51814,50278,6929,13039,58929,40007,6"
+         "2491,63798,64136,40785,58820,10000,64050,4817,48720,24721,45418,45657,35"
+         "974,65318,29899,27156,64978,34879,6627,59528,3816,8871,45778,59633,15979"
+         ",34697,16050,60926,36654,51060,46883,39789,30721,6849,34579,59685,49309,"
+         "32531,46675,30930,63994,60199,8515,14128,24958,63987,1421,36760,38146,58"
+         "362,33709,14178,38522,7378,28572,44660,65410,37837,20168,34920,4105,2323"
+         "5,19542,22639,864,60226,7556,33175,39870,45874,23262,16374,26163,18044,5"
+         "2445,29422,35647,42017,56586,29484,52110,65515,45035,35740,31388,16269,1"
+         "2913,48292,396,13754,62735,13967,3381,37835,42530,22055,36036,3676,63464"
+         ",5706,2121,25837,18070,7157";
+}
+
+inline const char *HardcodedFrobeniusBenchCandidateGR2P32R128Eval() {
+  return "47609,22093,20200,38420,15024,37764,14593,21862,48976,18413,28199,47492,"
+         "64302,47458,54769,5568,6387,9953,1347,61466,53130,53250,19253,47920,5456"
+         "3,49717,46315,42383,7958,15960,9653,64516,61927,8890,45466,23957,6460,10"
+         "108,61306,54065,3884,18226,28614,6138,36505,32061,56616,32829,19101,4535"
+         ",56537,31463,29709,63204,906,57513,48920,19032,20918,37851,47099,20845,3"
+         "4567,38154,39473,27801,533,31484,59964,54420,57739,10192,29817,55466,337"
+         "76,5979,7605,44640,15397,16963,50696,41891,64385,40816,30152,3579,5758,9"
+         "150,48047,39379,48325,37914,1504,61800,52904,26080,21200,30964,5018,1154"
+         "5,48851,2053,41665,32618,58999,56040,61786,58884,31203,56170,53125,43679"
+         ",33816,30459,12321,36517,48717,41889,44728,54095,36178,17457,20395,8468,"
+         "35548,60572,59061,33066";
+}
+
 inline bool LookupHardcodedFrobeniusBenchPresetDescriptor(
     long ring_power, long extension_degree, FrobeniusBenchPresetFamily family,
     FrobeniusBenchPresetDescriptor *out) {
@@ -727,19 +779,27 @@ inline bool LookupHardcodedFrobeniusBenchPresetDescriptor(
               return false;
           }
         case 128:
-          if (ring_power == 16) {
-            *out = FrobeniusBenchPresetDescriptor{
-                16, 128, family,
-                basefold_bench_z2k_frobenius_r128_presets::
-                    HardcodedFrobeniusBenchTeichGR2P16R128(),
-                basefold_bench_z2k_frobenius_r128_presets::
-                    HardcodedFrobeniusBenchBetaGR2P16R128Commit(),
-                basefold_bench_z2k_frobenius_r128_presets::
-                    HardcodedFrobeniusBenchAlphaGR2P16R128Commit(),
-                0, 0, 0};
-            return true;
+          switch (ring_power) {
+            case 16:
+              *out = FrobeniusBenchPresetDescriptor{
+                  16, 128, family,
+                  basefold_bench_z2k_frobenius_r128_presets::
+                      HardcodedFrobeniusBenchTeichGR2P16R128(),
+                  basefold_bench_z2k_frobenius_r128_presets::
+                      HardcodedFrobeniusBenchBetaGR2P16R128Commit(),
+                  basefold_bench_z2k_frobenius_r128_presets::
+                      HardcodedFrobeniusBenchAlphaGR2P16R128Commit(),
+                  0, 0, 0};
+              return true;
+            case 32:
+              *out = FrobeniusBenchPresetDescriptor{
+                  32, 128, family, HardcodedFrobeniusBenchTeichGR2P32R128(),
+                  nullptr, nullptr, 0, 0, 0,
+                  HardcodedFrobeniusBenchCandidateGR2P32R128Commit()};
+              return true;
+            default:
+              return false;
           }
-          return false;
         default:
           return false;
       }
@@ -766,19 +826,27 @@ inline bool LookupHardcodedFrobeniusBenchPresetDescriptor(
               return false;
           }
         case 128:
-          if (ring_power == 16) {
-            *out = FrobeniusBenchPresetDescriptor{
-                16, 128, family,
-                basefold_bench_z2k_frobenius_r128_presets::
-                    HardcodedFrobeniusBenchTeichGR2P16R128(),
-                basefold_bench_z2k_frobenius_r128_presets::
-                    HardcodedFrobeniusBenchBetaGR2P16R128Eval(),
-                basefold_bench_z2k_frobenius_r128_presets::
-                    HardcodedFrobeniusBenchAlphaGR2P16R128Eval(),
-                0, 0, 0};
-            return true;
+          switch (ring_power) {
+            case 16:
+              *out = FrobeniusBenchPresetDescriptor{
+                  16, 128, family,
+                  basefold_bench_z2k_frobenius_r128_presets::
+                      HardcodedFrobeniusBenchTeichGR2P16R128(),
+                  basefold_bench_z2k_frobenius_r128_presets::
+                      HardcodedFrobeniusBenchBetaGR2P16R128Eval(),
+                  basefold_bench_z2k_frobenius_r128_presets::
+                      HardcodedFrobeniusBenchAlphaGR2P16R128Eval(),
+                  0, 0, 0};
+              return true;
+            case 32:
+              *out = FrobeniusBenchPresetDescriptor{
+                  32, 128, family, HardcodedFrobeniusBenchTeichGR2P32R128(),
+                  nullptr, nullptr, 0, 0, 0,
+                  HardcodedFrobeniusBenchCandidateGR2P32R128Eval()};
+              return true;
+            default:
+              return false;
           }
-          return false;
         default:
           return false;
       }
@@ -870,9 +938,11 @@ inline bool TrySelectHardcodedFrobeniusBenchBasisOrThrow(
         BuildPowerBasisContextOrThrow(spec.base_prime, extension_degree,
                                       teichmuller_generator);
     const ZZ_pE candidate =
-        BaseRingConstant(to_ZZ(preset.a0)) +
-        BaseRingConstant(to_ZZ(preset.a1)) *
-            NTL::power(teichmuller_generator, preset.exponent);
+        (preset.candidate_coeffs != nullptr)
+            ? BuildZZpE(ParseCoeffList(preset.candidate_coeffs))
+            : (BaseRingConstant(to_ZZ(preset.a0)) +
+               BaseRingConstant(to_ZZ(preset.a1)) *
+                   NTL::power(teichmuller_generator, preset.exponent));
     if (!TryPromoteNormalBasisCandidateOrThrow(power_ctx, extension_degree,
                                                candidate, &normal_basis)) {
       LogicError((std::string(func_name) +
@@ -890,7 +960,8 @@ inline bool TrySelectHardcodedFrobeniusBenchBasisOrThrow(
           ? FrobeniusBenchBasisOrigin::kHardcodedCommitLike
           : FrobeniusBenchBasisOrigin::kHardcodedEvalLike;
   selection->summary.has_preset_descriptor =
-      (preset.beta_coeffs == nullptr && preset.alpha_coeffs == nullptr);
+      (preset.beta_coeffs == nullptr && preset.alpha_coeffs == nullptr &&
+       preset.candidate_coeffs == nullptr);
   if (selection->summary.has_preset_descriptor) {
     selection->summary.preset_a0 = preset.a0;
     selection->summary.preset_a1 = preset.a1;

@@ -282,6 +282,21 @@ void TestFrobeniusBenchCommit_HardcodedPresetForGR2P16_128() {
       "TestFrobeniusBenchCommit_HardcodedPresetForGR2P16_128");
 }
 
+void TestFrobeniusBenchCommit_HardcodedPresetForGR2P32_128() {
+  testutil::PrintInfo(
+      "Frobenius bench CLI: commit GR(2^32,128) hits the hardcoded commit-like preset");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_frobenius_commit";
+  ExpectCommandSuccessContains(
+      exe,
+      {"--ell", "8", "--kappa", "7", "--warmup", "0", "--reps", "1",
+       "--seed", "43", "--ring-mod", "4294967296", "--ring-p", "2",
+       "--ring-F", kRingF128, "--ring-zeta", "0,1"},
+      {"[frobenius commit]", "basis mode bench-hardcoded preferred-normal",
+       "basis preset commit-like", "anti-opt checksum"},
+      "TestFrobeniusBenchCommit_HardcodedPresetForGR2P32_128");
+}
+
 void TestFrobeniusBenchOuterCommit_SmokeRunPrintsStableFields() {
   testutil::PrintInfo(
       "Frobenius bench CLI: outer commit smoke run prints stable result fields");
@@ -449,6 +464,40 @@ void TestFrobeniusBenchEval_HardcodedPresetForGR2P16_128() {
 #endif
 }
 
+void TestFrobeniusBenchEval_HardcodedPresetForGR2P32_128() {
+  testutil::PrintInfo(
+      "Frobenius bench CLI: eval GR(2^32,128) hits the hardcoded eval-like preset");
+
+  const fs::path exe = g_executable_dir / "bench_z2k_frobenius_eval";
+#if defined(__unix__) || defined(__APPLE__)
+  const CommandResult result =
+      RunCommandCapture(exe, {"--ell", "8", "--kappa", "7", "--warmup", "0",
+                              "--reps", "1", "--queries", "2", "--seed",
+                              "47", "--ring-mod", "4294967296", "--ring-p",
+                              "2", "--ring-F", kRingF128, "--ring-zeta",
+                              "0,1"});
+  CHECK_MSG(result.exited && result.exit_code == 0,
+            "TestFrobeniusBenchEval_HardcodedPresetForGR2P32_128: command failed with output:\n" +
+                result.output);
+  if (g_test_failure_count != 0) {
+    return;
+  }
+
+  const std::vector<std::string> needles = {
+      "[frobenius eval]", "basis mode bench-hardcoded preferred-normal",
+      "basis preset eval-like", "outer commit mean", "backend commit mean",
+      "commit total mean", "proof size", "anti-opt checksum"};
+  for (const std::string &needle : needles) {
+    CHECK_MSG(result.output.find(needle) != std::string::npos,
+              "TestFrobeniusBenchEval_HardcodedPresetForGR2P32_128: missing output needle '" +
+                  needle + "' in:\n" + result.output);
+  }
+#else
+  testutil::PrintInfo(
+      "TestFrobeniusBenchEval_HardcodedPresetForGR2P32_128: skipped subprocess assertion on this platform");
+#endif
+}
+
 void TestFrobeniusBenchEval_CheckedFlagAccepted() {
   testutil::PrintInfo(
       "Frobenius bench CLI: eval accepts --checked and still prints stable fields");
@@ -609,11 +658,13 @@ int main(int argc, char **argv) {
   RUN_TEST(TestFrobeniusBenchCommit_SmokeRunPrintsStableFields);
   RUN_TEST(TestFrobeniusBenchCommit_HardcodedPresetForGR2P16_64);
   RUN_TEST(TestFrobeniusBenchCommit_HardcodedPresetForGR2P16_128);
+  RUN_TEST(TestFrobeniusBenchCommit_HardcodedPresetForGR2P32_128);
   RUN_TEST(TestFrobeniusBenchOuterCommit_SmokeRunPrintsStableFields);
   RUN_TEST(TestFrobeniusBenchBackendEval_SmokeRunPrintsStableFieldsAndSizes);
   RUN_TEST(TestFrobeniusBenchEval_SmokeRunPrintsStableFieldsAndSizes);
   RUN_TEST(TestFrobeniusBenchEval_HardcodedPresetForGR2P32_64);
   RUN_TEST(TestFrobeniusBenchEval_HardcodedPresetForGR2P16_128);
+  RUN_TEST(TestFrobeniusBenchEval_HardcodedPresetForGR2P32_128);
   RUN_TEST(TestFrobeniusBenchEval_CheckedFlagAccepted);
   RUN_TEST(TestFrobeniusBenchEval_ProfiledBackendVerifyFlagAccepted);
   RUN_TEST(TestFrobeniusBenchOuterProve_SmokeRunPrintsStableFieldsAndSizes);

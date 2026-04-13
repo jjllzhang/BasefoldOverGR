@@ -84,7 +84,26 @@ suite 有：
 - `COMMIT_WARMUP=1`，`COMMIT_REPS=3`
 - `EVAL_WARMUP=1`，`EVAL_REPS=3`
 - `BENCH_THREADS=8`
-- `CONTEXTS=all`（当前共 14 个 context）
+- `CONTEXTS=all`（当前共 16 个 context）
+
+当前 context id：
+
+- `field-255`
+- `ring-gr-2p16-162`
+- `field-f2p256`
+- `ring-gr-2p2-162`
+- `field-prime64-ext`
+- `field-f2p64-ext`
+- `field-prime128-ext`
+- `field-f2p128-ext`
+- `field-f3p40-ext`
+- `field-f3p81-ext`
+- `ring-gr-2p16-64-ext`
+- `ring-gr-2p16-128-ext`
+- `ring-gr-2p32-64-ext`
+- `ring-gr-2p32-128-ext`
+- `ring-gr-2p2-64-ext`
+- `ring-gr-2p2-128-ext`
 
 当 `BENCH_THREADS > 0` 时，脚本还会把下面三个环境变量一起设为同一个值：
 
@@ -106,9 +125,9 @@ D_MIN=10 D_MAX=20 \
 BENCH_THREADS=1 \
 scripts/run_release_c4_lambda128.sh
 
-# Ring-switch compiler full eval
+# 在 GR(2^32,64) 上跑 Ring-switch compiler full eval
 RUN_SUITE=compiler_eval_ring_switch \
-CONTEXTS=ring-gr-2p16-64-ext \
+CONTEXTS=ring-gr-2p32-64-ext \
 COMPILER_KAPPA=6 \
 COMPILER_ELL_MIN=9 \
 COMPILER_ELL_MAX=12 \
@@ -116,9 +135,9 @@ EVAL_WARMUP=0 EVAL_REPS=1 \
 BENCH_THREADS=1 \
 scripts/run_release_c4_lambda128.sh
 
-# 只跑 Frobenius compiler outer commit
-RUN_SUITE=compiler_outer_commit_frobenius \
-CONTEXTS=ring-gr-2p16-128-ext \
+# 在 GR(2^32,128) 上跑 Frobenius compiler full eval
+RUN_SUITE=compiler_eval_frobenius \
+CONTEXTS=ring-gr-2p32-128-ext \
 COMPILER_KAPPA=7 \
 COMPILER_ELL_MIN=9 \
 COMPILER_ELL_MAX=12 \
